@@ -112,14 +112,8 @@ public partial class MainWindow : Window
         _hotkeyMgr = new HotkeyManager(this);
         ApplyHotkeys();
 
-        // Restore the persisted speed multiplier. If non-default, start the
-        // loop so the game sees the saved value immediately — otherwise the
-        // user would have to click APPLY every session.
-        AppPrefs.Load();
-        _speedMultiplier = AppPrefs.SpeedMultiplier;
         TxtGameSpeed.Text = _speedMultiplier.ToString("0.##",
             System.Globalization.CultureInfo.InvariantCulture);
-        if (_speedMultiplier != 1.0f) RefreshAkLoop();
     }
 
     // Called on startup AND whenever the user rebinds a combo in SettingsView.
@@ -469,8 +463,6 @@ public partial class MainWindow : Window
         TxtGameSpeed.Text = v.ToString("0.##",
             System.Globalization.CultureInfo.InvariantCulture);
         _speedMultiplier = v;
-        AppPrefs.SpeedMultiplier = v;
-        AppPrefs.Save();
         if (v == 1.0f && _cachedWorldInfo != 0)
             AKWrite(_cachedWorldInfo + OFF_WI_TIMEDILATION, FloatBits(1.0f));
         RefreshAkLoop();
