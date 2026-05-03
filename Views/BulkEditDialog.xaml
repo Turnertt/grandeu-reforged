@@ -1,0 +1,323 @@
+<Window x:Class="Modinator.Views.BulkEditDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:beh="clr-namespace:Modinator.Behaviors"
+        Title="Bulk Edit"
+        Width="440" Height="650"
+        MinWidth="400" MinHeight="500"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Style="{StaticResource ModernWindowStyle}">
+
+    <DockPanel>
+        <!-- Bottom button bar -->
+        <Border DockPanel.Dock="Bottom"
+                Background="{StaticResource SurfaceBrush}"
+                Padding="16,10"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="BtnMax" Content="MAX" Padding="16,7" Height="32" Click="BtnMax_Click"
+                            ToolTip="Apply configured max stats to every selected item. Each item is evaluated individually." />
+                    <Button x:Name="BtnMaxConfig" Content="&#xE713;"
+                            FontFamily="Segoe MDL2 Assets" FontSize="12"
+                            Padding="8,7" Height="32" Margin="2,0,0,0"
+                            Click="BtnMaxConfig_Click"
+                            ToolTip="Configure max stats (shared with Item editor)" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="CANCEL" IsCancel="True" Padding="16,7" Height="32" Click="BtnCancel_Click" />
+                    <Button Content="APPLY" IsDefault="True" Style="{StaticResource AccentButton}" Padding="16,7" Height="32" Margin="8,0,0,0" Click="BtnApply_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Scrollable form -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,16">
+            <StackPanel MaxWidth="560">
+
+                <!-- Header -->
+                <TextBlock x:Name="TxtHeader"
+                           Text="Bulk Edit"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           FontSize="15" FontWeight="SemiBold"
+                           Margin="0,0,0,4" />
+                <TextBlock Text="Only changed fields will be applied to all selected items."
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="11"
+                           Margin="0,0,0,16" />
+
+                <!-- STATS -->
+                <TextBlock Text="STATS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Hero Stats" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,2" />
+                            <TextBlock Text="Applied to all 6 hero stats" Foreground="{StaticResource TextMutedBrush}" FontSize="10" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtHeroStats" Text="0" beh:NumericInput.Mode="Int" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Tower Stats" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,2" />
+                            <TextBlock Text="Applied to all 4 tower stats" Foreground="{StaticResource TextMutedBrush}" FontSize="10" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtTowerStats" Text="0" beh:NumericInput.Mode="Int" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- RESISTANCES -->
+                <TextBlock Text="RESISTANCES" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="Resistances" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,2" />
+                        <TextBlock Text="Applied to all 4 resistances" Foreground="{StaticResource TextMutedBrush}" FontSize="10" Margin="0,0,0,4" />
+                        <TextBox x:Name="TxtResistances" Text="0" beh:NumericInput.Mode="Int" />
+                    </StackPanel>
+                </Border>
+
+                <!-- DAMAGE -->
+                <TextBlock Text="DAMAGE" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Damage" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_damage.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtDamage" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="4,0,4,0">
+                            <TextBlock Text="Ranged Damage" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_ranged.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtRangedDamage" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Margin="8,0,0,0">
+                            <TextBlock Text="Elemental Damage" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_damage.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtElementalDamage" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- BONUSES -->
+                <TextBlock Text="BONUSES" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
+                            <TextBlock Text="Blocking" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_blocking.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtBlocking" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,0,0,8">
+                            <TextBlock Text="Knockback" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_knockback.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtKnockback" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,8">
+                            <TextBlock Text="Charge Speed" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_chargespeed.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtChargeSpeed" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,8">
+                            <TextBlock Text="Shots/Second" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_shotspersec.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtShotsPerSecond" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,8,8">
+                            <TextBlock Text="Projectiles" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_projectiles.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtProjectiles" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="8,0,0,8">
+                            <TextBlock Text="Projectile Speed" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_projspeed.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtProjectileSpeed" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="3" Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Clip Ammo" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_clipammo.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtClipAmmo" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="3" Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Reload Speed" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_reload.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtReloadSpeed" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- VISUAL -->
+                <TextBlock Text="VISUAL" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Draw Scale (float)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtDrawScale" Text="0" beh:NumericInput.Mode="Float" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Swing Speed (float)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtSwingSpeed" Text="0" beh:NumericInput.Mode="Float" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- COLORS -->
+                <TextBlock Text="COLORS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,8">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="Color 1 Override" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" VerticalAlignment="Center" />
+                            <Button x:Name="BtnPickColor1" Content="Pick..." Padding="10,4" Margin="8,0,0,0" Click="BtnPickColor1_Click" DockPanel.Dock="Right" />
+                            <Border x:Name="Color1Preview" Width="32" Height="20" CornerRadius="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="8,0,0,0" DockPanel.Dock="Right" />
+                        </DockPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="R" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtColor1R" Text="0" TextChanged="Color1_Changed" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="4,0,4,0">
+                                <TextBlock Text="G" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtColor1G" Text="0" TextChanged="Color1_Changed" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Margin="8,0,0,0">
+                                <TextBlock Text="B" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtColor1B" Text="0" TextChanged="Color1_Changed" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="Color 2 Override" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" VerticalAlignment="Center" />
+                            <Button x:Name="BtnPickColor2" Content="Pick..." Padding="10,4" Margin="8,0,0,0" Click="BtnPickColor2_Click" DockPanel.Dock="Right" />
+                            <Border x:Name="Color2Preview" Width="32" Height="20" CornerRadius="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="8,0,0,0" DockPanel.Dock="Right" />
+                        </DockPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="R" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtColor2R" Text="0" TextChanged="Color2_Changed" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="4,0,4,0">
+                                <TextBlock Text="G" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtColor2G" Text="0" TextChanged="Color2_Changed" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Margin="8,0,0,0">
+                                <TextBlock Text="B" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtColor2B" Text="0" TextChanged="Color2_Changed" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- IDENTITY -->
+                <TextBlock Text="IDENTITY" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Description" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtDescription" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Forger Name" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtForgerName" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- LEVEL -->
+                <TextBlock Text="LEVEL" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
+                            <TextBlock Text="Level" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtLevel" Text="0" beh:NumericInput.Mode="Int" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,0,0,8">
+                            <TextBlock Text="Max Level" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtMaxLevel" Text="0" beh:NumericInput.Mode="Int" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Stored Mana" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/mana_icon.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtStoredMana" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Level Requirement (byte)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtLevelRequirement" Text="0" beh:NumericInput.Mode="Byte" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

@@ -1,0 +1,245 @@
+<Window x:Class="Modinator.Views.ColorPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Color Forge"
+        Width="420" Height="700"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource ModernWindowStyle}">
+
+    <Grid Margin="20,12,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ═══ Preview — the hero element ═══ -->
+        <Border Grid.Row="0" Height="120" CornerRadius="10"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                Margin="0,0,0,16" ClipToBounds="True">
+            <Grid>
+                <!-- Checkerboard hint for transparency context -->
+                <Border CornerRadius="10" Opacity="0.03">
+                    <Border.Background>
+                        <DrawingBrush TileMode="Tile" Viewport="0,0,16,16" ViewportUnits="Absolute">
+                            <DrawingBrush.Drawing>
+                                <DrawingGroup>
+                                    <GeometryDrawing Brush="#ffffff" Geometry="M0,0 H8 V8 H0z M8,8 H16 V16 H8z" />
+                                </DrawingGroup>
+                            </DrawingBrush.Drawing>
+                        </DrawingBrush>
+                    </Border.Background>
+                </Border>
+
+                <!-- Glow layer — simulates HDR bloom -->
+                <Border x:Name="GlowLayer" CornerRadius="10" Opacity="0.5">
+                    <Border.Effect>
+                        <BlurEffect Radius="40" />
+                    </Border.Effect>
+                </Border>
+
+                <!-- Solid color fill -->
+                <Border x:Name="PreviewFill" CornerRadius="10" />
+
+                <!-- Overlay info -->
+                <StackPanel VerticalAlignment="Bottom" Margin="14,0,14,10">
+                    <TextBlock x:Name="TxtPreviewInfo"
+                               Text="R: 0  G: 0  B: 0"
+                               FontFamily="Consolas, Cascadia Code, monospace"
+                               FontSize="11"
+                               Foreground="White" Opacity="0.7" />
+                    <TextBlock x:Name="TxtPreviewFloat"
+                               Text="HDR: 0.00, 0.00, 0.00"
+                               FontFamily="Consolas, Cascadia Code, monospace"
+                               FontSize="10"
+                               Foreground="White" Opacity="0.45" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ═══ Base Color ═══ -->
+        <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+            <StackPanel>
+                <DockPanel Margin="0,0,0,10">
+                    <TextBlock Text="BASE COLOR"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="10" FontWeight="Bold"
+                               VerticalAlignment="Center" />
+                    <Border x:Name="BaseColorSwatch"
+                            DockPanel.Dock="Right"
+                            Width="24" Height="18" CornerRadius="3"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1" />
+                </DockPanel>
+
+                <!-- Color spectrum: SV square + Hue bar -->
+                <Grid Height="140" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="24" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Saturation/Value square -->
+                    <Border Grid.Column="0" CornerRadius="4" ClipToBounds="True"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                        <Canvas x:Name="SvCanvas" Background="Red"
+                                MouseLeftButtonDown="SvCanvas_MouseDown"
+                                MouseMove="SvCanvas_MouseMove"
+                                MouseLeftButtonUp="SvCanvas_MouseUp">
+                            <!-- White gradient left to right -->
+                            <Canvas.OpacityMask>
+                                <DrawingBrush>
+                                    <DrawingBrush.Drawing>
+                                        <DrawingGroup>
+                                            <GeometryDrawing Brush="White" Geometry="M0,0 H1 V1 H0z" />
+                                        </DrawingGroup>
+                                    </DrawingBrush.Drawing>
+                                </DrawingBrush>
+                            </Canvas.OpacityMask>
+                            <Rectangle x:Name="SvWhiteOverlay" Fill="White"
+                                       Canvas.Left="0" Canvas.Top="0" />
+                            <Rectangle x:Name="SvBlackOverlay"
+                                       Canvas.Left="0" Canvas.Top="0">
+                                <Rectangle.Fill>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="Transparent" Offset="0" />
+                                        <GradientStop Color="Black" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
+                            <!-- Crosshair indicator -->
+                            <Ellipse x:Name="SvCrosshair" Width="12" Height="12"
+                                     Stroke="White" StrokeThickness="2"
+                                     Fill="Transparent" IsHitTestVisible="False" />
+                        </Canvas>
+                    </Border>
+
+                    <!-- Hue bar -->
+                    <Border Grid.Column="2" CornerRadius="4" ClipToBounds="True"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                        <Canvas x:Name="HueCanvas"
+                                MouseLeftButtonDown="HueCanvas_MouseDown"
+                                MouseMove="HueCanvas_MouseMove"
+                                MouseLeftButtonUp="HueCanvas_MouseUp">
+                            <Canvas.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#FF0000" Offset="0.000" />
+                                    <GradientStop Color="#FFFF00" Offset="0.167" />
+                                    <GradientStop Color="#00FF00" Offset="0.333" />
+                                    <GradientStop Color="#00FFFF" Offset="0.500" />
+                                    <GradientStop Color="#0000FF" Offset="0.667" />
+                                    <GradientStop Color="#FF00FF" Offset="0.833" />
+                                    <GradientStop Color="#FF0000" Offset="1.000" />
+                                </LinearGradientBrush>
+                            </Canvas.Background>
+                            <!-- Hue indicator -->
+                            <Border x:Name="HueIndicator" Height="4"
+                                    Background="White" CornerRadius="2"
+                                    IsHitTestVisible="False" />
+                        </Canvas>
+                    </Border>
+                </Grid>
+
+                <!-- RGB text inputs -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="R" Foreground="#e06060" FontSize="11"
+                                   FontWeight="SemiBold" Margin="0,0,0,3" />
+                        <TextBox x:Name="TxtR" Text="255" TextChanged="OnBaseChanged" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="G" Foreground="#60c060" FontSize="11"
+                                   FontWeight="SemiBold" Margin="0,0,0,3" />
+                        <TextBox x:Name="TxtG" Text="255" TextChanged="OnBaseChanged" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="4">
+                        <TextBlock Text="B" Foreground="#6080e0" FontSize="11"
+                                   FontWeight="SemiBold" Margin="0,0,0,3" />
+                        <TextBox x:Name="TxtB" Text="255" TextChanged="OnBaseChanged" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Intensity ═══ -->
+        <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+            <StackPanel>
+                <DockPanel Margin="0,0,0,6">
+                    <TextBlock Text="INTENSITY"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="10" FontWeight="Bold"
+                               VerticalAlignment="Center" />
+                    <TextBox x:Name="TxtIntensity" Text="1.00"
+                             DockPanel.Dock="Right"
+                             Width="60" FontSize="11"
+                             TextChanged="OnIntensityTextChanged" />
+                    <TextBlock x:Name="TxtIntensityHint"
+                               DockPanel.Dock="Right"
+                               Text="normal"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="10" FontStyle="Italic"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0" />
+                </DockPanel>
+                <Slider x:Name="SliderIntensity"
+                        Minimum="0" Maximum="1000" Value="100"
+                        TickFrequency="100" IsSnapToTickEnabled="False"
+                        ValueChanged="OnIntensitySliderChanged" />
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Saturation ═══ -->
+        <Border Grid.Row="3" Background="{StaticResource SurfaceBrush}"
+                CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+            <StackPanel>
+                <DockPanel Margin="0,0,0,6">
+                    <TextBlock Text="SATURATION"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="10" FontWeight="Bold"
+                               VerticalAlignment="Center" />
+                    <TextBox x:Name="TxtSaturation" Text="0.00"
+                             DockPanel.Dock="Right"
+                             Width="60" FontSize="11"
+                             TextChanged="OnSaturationTextChanged" />
+                </DockPanel>
+                <Slider x:Name="SliderSaturation"
+                        Minimum="0" Maximum="500" Value="0"
+                        TickFrequency="50" IsSnapToTickEnabled="False"
+                        ValueChanged="OnSaturationSliderChanged" />
+                <TextBlock Text="Keeps hue from washing out at high intensity. 0 = pure RGB scale."
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="10" Margin="0,4,0,0"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <!-- Spacer -->
+        <Border Grid.Row="4" />
+
+        <!-- ═══ Action buttons ═══ -->
+        <StackPanel Grid.Row="5" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Cancel" Padding="18,7"
+                    Click="BtnCancel_Click" />
+            <Button Content="APPLY COLOR"
+                    Style="{StaticResource AccentButton}"
+                    Padding="18,7" Margin="10,0,0,0"
+                    Click="BtnOk_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

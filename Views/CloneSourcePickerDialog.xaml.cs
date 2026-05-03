@@ -1,0 +1,280 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+
+namespace Modinator.Views;
+
+// Lists the *real* items from the last Forge scan for the Clone From
+// feature on ItemEditView. These are the ones the player actually owns
+// (EquipmentID1/ID2 != 0), not every item-shaped address in memory.
+// Returns the picked address via PickedAddress, or null on cancel.
+public partial class CloneSourcePickerDialog : Window
+{
+    public int? PickedAddress { get; private set; }
+
+    private readonly List<Row> _all;
+    private readonly int _excludeAddress;
+    private readonly EquipmentType? _sacrificialType;
+    private bool _suppressFilterEvent;
+
+    internal CloneSourcePickerDialog(int excludeAddress = 0, EquipmentType? sacrificialType = null)
+    {
+        InitializeComponent();
+        _excludeAddress = excludeAddress;
+        _sacrificialType = sacrificialType;
+        _all = BuildRows();
+        PopulateCombos();
+        ApplyAllFilters();
+        TxtFilter.Focus();
+    }
+
+    // Walk the entire forge snapshot, re-read each item fresh so the
+    // stats shown match memory right now, and skip the sacrificial so
+    // the user can't pick their own address. Non-real entries are kept
+    // but flagged — the checkbox in the UI gates whether they appear.
+    private List<Row> BuildRows()
+    {
+        var rows = new List<Row>();
+        int size = Marshal.SizeOf(typeof(ItemNative));
+        var snap = ForgeViewerView.LastSnapshot;
+
+        foreach (var s in snap)
+        {
+            if (s.Address == _excludeAddress) continue;
+            try
+            {
+                byte[] data = Base.Instance.ReadMemory(s.Address, size);
+                var native = Base.Push<ItemNative>(data);
+                var user = Base.ItemToUser(native);
+                string name = Base.ReadUni<ItemNative>(s.Address, "EquipmentName") ?? "";
+                if (string.IsNullOrWhiteSpace(name)) name = s.Name;
+                if (string.IsNullOrWhiteSpace(name)) name = "(unnamed)";
+
+                rows.Add(new Row
+                {
+                    Address = s.Address,
+                    AddressText = Base.AddressToString(s.Address),
+                    Quality = user.Quality2.ToString(),
+                    QualityRank = QualityRank(user.Quality2),
+                    Name = name,
+                    Forger = s.ForgerName ?? "",
+                    Type = user.EquipmentType.ToString(),
+                    TypeEnum = user.EquipmentType,
+                    Level = user.Level,
+                    IsReal = s.IsRealInstance,
+                });
+            }
+            catch { /* skip unreadable entries */ }
+        }
+        return rows;
+    }
+
+    // ── Combo setup ───────────────────────────────────────────────
+
+    private void PopulateCombos()
+    {
+        _suppressFilterEvent = true;
+
+        // Type: "All" + every distinct type present in the snapshot so
+        // the user isn't presented with types they don't actually own.
+        CboType.Items.Add(new TypeEntry(null, "All types"));
+        foreach (var t in _all.Select(r => r.TypeEnum).Distinct().OrderBy(t => t.ToString()))
+            CboType.Items.Add(new TypeEntry(t, t.ToString()));
+        CboType.SelectedIndex = 0;
+
+        // Quality: matches the Forge Viewer's thresholds.
+        CboQuality.Items.Add(new QualityEntry(-1, "Any quality"));
+        CboQuality.Items.Add(new QualityEntry(16, "Ultimate"));
+        CboQuality.Items.Add(new QualityEntry(15, "Supreme+"));
+        CboQuality.Items.Add(new QualityEntry(14, "Transcendent+"));
+        CboQuality.Items.Add(new QualityEntry(13, "Mythical+"));
+        CboQuality.Items.Add(new QualityEntry(12, "Godly+"));
+        CboQuality.Items.Add(new QualityEntry(11, "Legendary+"));
+        CboQuality.Items.Add(new QualityEntry(10, "Epic+"));
+        CboQuality.SelectedIndex = 0;
+
+        // Sort: quality desc by default, then common alternatives.
+        CboSort.Items.Add(new SortEntry(SortMode.QualityDesc,  "Quality (best first)"));
+        CboSort.Items.Add(new SortEntry(SortMode.LevelDesc,    "Level (high to low)"));
+        CboSort.Items.Add(new SortEntry(SortMode.NameAsc,      "Name (A-Z)"));
+        CboSort.Items.Add(new SortEntry(SortMode.TypeAsc,      "Type (A-Z)"));
+        CboSort.SelectedIndex = 0;
+
+        // If we know the sacrificial's type and at least one row matches,
+        // pre-select that type — the common case is cloning within a type.
+        if (_sacrificialType is EquipmentType st &&
+            _all.Any(r => r.TypeEnum == st))
+        {
+            for (int i = 0; i < CboType.Items.Count; i++)
+            {
+                if (CboType.Items[i] is TypeEntry te && te.Type == st)
+                { CboType.SelectedIndex = i; break; }
+            }
+        }
+
+        _suppressFilterEvent = false;
+    }
+
+    // ── Filtering / sorting ───────────────────────────────────────
+
+    private void ApplyAllFilters()
+    {
+        string needle = (TxtFilter.Text ?? "").Trim();
+        EquipmentType? typeFilter = (CboType.SelectedItem as TypeEntry)?.Type;
+        int qualityMin = (CboQuality.SelectedItem as QualityEntry)?.MinRank ?? -1;
+        SortMode mode = (CboSort.SelectedItem as SortEntry)?.Mode ?? SortMode.QualityDesc;
+
+        bool realOnly = ChkRealOnly.IsChecked == true;
+        IEnumerable<Row> q = _all;
+        if (realOnly) q = q.Where(r => r.IsReal);
+        if (typeFilter is EquipmentType t) q = q.Where(r => r.TypeEnum == t);
+        if (qualityMin >= 0) q = q.Where(r => r.QualityRank >= qualityMin);
+        if (needle.Length > 0)
+        {
+            q = q.Where(r =>
+                (r.Name ?? "").IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (r.Forger ?? "").IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (r.Type ?? "").IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (r.Quality ?? "").IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        var list = q.ToList();
+        switch (mode)
+        {
+            case SortMode.LevelDesc:
+                list.Sort((a, b) => b.Level.CompareTo(a.Level)); break;
+            case SortMode.NameAsc:
+                list.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase)); break;
+            case SortMode.TypeAsc:
+                list.Sort((a, b) =>
+                {
+                    int c = string.Compare(a.Type, b.Type, StringComparison.OrdinalIgnoreCase);
+                    if (c != 0) return c;
+                    return b.QualityRank.CompareTo(a.QualityRank);
+                });
+                break;
+            default:
+                list.Sort((a, b) =>
+                {
+                    int c = b.QualityRank.CompareTo(a.QualityRank);
+                    if (c != 0) return c;
+                    return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                });
+                break;
+        }
+
+        Lv.ItemsSource = list;
+        LblCount.Text = $"{list.Count} of {_all.Count} shown";
+    }
+
+    // ── Event handlers ────────────────────────────────────────────
+
+    private void TxtFilter_TextChanged(object sender, TextChangedEventArgs e) => ApplyAllFilters();
+
+    private void Filter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressFilterEvent) return;
+        ApplyAllFilters();
+    }
+
+    private void ChkRealOnly_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressFilterEvent) return;
+        ApplyAllFilters();
+    }
+
+    private void BtnMatchCurrent_Click(object sender, RoutedEventArgs e)
+    {
+        if (_sacrificialType is not EquipmentType st) return;
+        for (int i = 0; i < CboType.Items.Count; i++)
+        {
+            if (CboType.Items[i] is TypeEntry te && te.Type == st)
+            { CboType.SelectedIndex = i; return; }
+        }
+    }
+
+    private void BtnClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressFilterEvent = true;
+        TxtFilter.Text = "";
+        CboType.SelectedIndex = 0;
+        CboQuality.SelectedIndex = 0;
+        CboSort.SelectedIndex = 0;
+        ChkRealOnly.IsChecked = true;
+        _suppressFilterEvent = false;
+        ApplyAllFilters();
+    }
+
+    private void Lv_DoubleClick(object sender, MouseButtonEventArgs e) => BtnOk_Click(sender, null!);
+
+    private void BtnOk_Click(object sender, RoutedEventArgs? e)
+    {
+        if (Lv.SelectedItem is not Row r)
+        {
+            MessageBox.Show(this, "Pick an item first.", "Clone", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        PickedAddress = r.Address;
+        DialogResult = true;
+    }
+
+    private void BtnCancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
+
+    // ── Helpers ──────────────────────────────────────────────────
+
+    private static int QualityRank(Quality2 q) => q switch
+    {
+        Quality2.Ultimate => 16, Quality2.Supreme => 15, Quality2.Transcendent => 14,
+        Quality2.Mythical => 13, Quality2.Godly => 12, Quality2.Legendary => 11,
+        Quality2.Epic => 10, Quality2.Amazing => 9, Quality2.Powerful => 8,
+        Quality2.Shining => 7, Quality2.Polished => 6, Quality2.Sturdy => 5,
+        Quality2.Solid => 4, Quality2.Stocky => 3, Quality2.Worn => 2,
+        Quality2.Torn => 1, Quality2.Cursed => 0, _ => -1,
+    };
+
+    // ── Data types ───────────────────────────────────────────────
+
+    private class Row
+    {
+        public int Address { get; set; }
+        public string AddressText { get; set; } = "";
+        public string Quality { get; set; } = "";
+        public int QualityRank { get; set; }
+        public string Name { get; set; } = "";
+        public string Forger { get; set; } = "";
+        public string Type { get; set; } = "";
+        public EquipmentType TypeEnum { get; set; }
+        public int Level { get; set; }
+        public bool IsReal { get; set; }
+    }
+
+    private class TypeEntry
+    {
+        public EquipmentType? Type;
+        public string Label;
+        public TypeEntry(EquipmentType? type, string label) { Type = type; Label = label; }
+        public override string ToString() => Label;
+    }
+
+    private class QualityEntry
+    {
+        public int MinRank;
+        public string Label;
+        public QualityEntry(int minRank, string label) { MinRank = minRank; Label = label; }
+        public override string ToString() => Label;
+    }
+
+    private enum SortMode { QualityDesc, LevelDesc, NameAsc, TypeAsc }
+
+    private class SortEntry
+    {
+        public SortMode Mode;
+        public string Label;
+        public SortEntry(SortMode mode, string label) { Mode = mode; Label = label; }
+        public override string ToString() => Label;
+    }
+}

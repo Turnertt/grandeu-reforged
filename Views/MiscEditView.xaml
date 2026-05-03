@@ -1,0 +1,55 @@
+<UserControl x:Class="Modinator.Views.MiscEditView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:beh="clr-namespace:Modinator.Behaviors">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Height="2"
+                Background="{StaticResource EditAccentBrush}" />
+        <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
+                Padding="16,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid>
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="BtnBack" Content="&#x2190;  BACK"
+                            Style="{StaticResource GhostButton}"
+                            Padding="14,6" Click="BtnBack_Click" />
+                    <Button x:Name="BtnRefresh" Content="REFRESH" Padding="16,7" Margin="8,0,0,0" Click="BtnRefresh_Click" />
+                    <Button x:Name="BtnUpdate" Content="UPDATE" Style="{StaticResource AccentButton}"
+                            Padding="16,7" Margin="8,0,0,0" Click="BtnUpdate_Click" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusText" Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <Border Background="{StaticResource EditAccentSubtleBrush}"
+                            BorderBrush="{StaticResource EditAccentBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="8,4"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="11" Foreground="{StaticResource EditAccentBrush}"
+                                       Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="EDIT · MISC"
+                                       Foreground="{StaticResource EditAccentBrush}"
+                                       FontSize="10.5" FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,16">
+            <StackPanel MaxWidth="400">
+                <TextBlock Text="VALUE" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12">
+                    <StackPanel>
+                        <TextBlock Text="Value" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                        <TextBox x:Name="TxtValue" Text="0" beh:NumericInput.Mode="Int" />
+                        <TextBlock x:Name="TxtFloatLabel" Text="(Floating Point Value)"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11"
+                                   Margin="0,6,0,0" Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

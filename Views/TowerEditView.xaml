@@ -1,0 +1,156 @@
+<UserControl x:Class="Modinator.Views.TowerEditView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:beh="clr-namespace:Modinator.Behaviors">
+
+    <DockPanel>
+        <!-- Edit mode accent strip -->
+        <Border DockPanel.Dock="Top" Height="2"
+                Background="{StaticResource EditAccentBrush}" />
+        <!-- Top action bar -->
+        <Border DockPanel.Dock="Top"
+                Background="{StaticResource SurfaceBrush}"
+                Padding="16,10"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1">
+            <Grid>
+                <StackPanel Orientation="Horizontal">
+                    <Button x:Name="BtnBack"
+                            Content="&#x2190;  BACK"
+                            Style="{StaticResource GhostButton}"
+                            Padding="14,6"
+                            Click="BtnBack_Click" />
+                    <Button x:Name="BtnRefresh"
+                            Content="REFRESH"
+                            Padding="16,7"
+                            Margin="8,0,0,0"
+                            Click="BtnRefresh_Click" />
+                    <Button x:Name="BtnUpdate"
+                            Content="UPDATE"
+                            Style="{StaticResource AccentButton}"
+                            Padding="16,7"
+                            Margin="8,0,0,0"
+                            Click="BtnUpdate_Click" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusText"
+                               Text=""
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Margin="0,0,12,0" />
+                    <Border Background="{StaticResource EditAccentSubtleBrush}"
+                            BorderBrush="{StaticResource EditAccentBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="8,4"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets"
+                                       FontSize="11" Foreground="{StaticResource EditAccentBrush}"
+                                       Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="EDIT · TOWER"
+                                       Foreground="{StaticResource EditAccentBrush}"
+                                       FontSize="10.5" FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Scrollable form area -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      Padding="20,16">
+            <StackPanel MaxWidth="560">
+
+                <!-- HP -->
+                <TextBlock Text="HP" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Current HP" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/tower_health.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtCurrentHP" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Max HP" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/tower_health.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtMaxHP" Text="0" beh:NumericInput.Mode="Int" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Attack -->
+                <TextBlock Text="ATTACK" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,8,8">
+                            <TextBlock Text="Damage (float)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/weapon_damage.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtAttackDamage" Text="0" beh:NumericInput.Mode="Float" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,0,0,8">
+                            <TextBlock Text="Rate (float)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/tower_speed.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtAttackRate" Text="0" beh:NumericInput.Mode="Float" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Range (float)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <DockPanel>
+                                <Image Source="/Assets/Icons/tower_range.png" Width="22" Height="22" DockPanel.Dock="Left" Margin="0,0,8,0" RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center" />
+                                <TextBox x:Name="TxtAttackRange" Text="0" beh:NumericInput.Mode="Float" />
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Arc (float)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtAttackArc" Text="0" beh:NumericInput.Mode="Float" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Upgrades -->
+                <TextBlock Text="UPGRADES" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Upgrade Level" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtUpgradeLevel" Text="0" beh:NumericInput.Mode="Float" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Max Upgrades" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtMaxUpgrades" Text="0" beh:NumericInput.Mode="Int" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

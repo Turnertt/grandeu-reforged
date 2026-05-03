@@ -1,0 +1,244 @@
+<UserControl x:Class="Modinator.Views.ForgeViewerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{StaticResource BackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="2" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Mode accent strip -->
+        <Border Grid.Row="0" Background="{StaticResource AccentBrush}" />
+
+        <!-- ═══════════════════════════════════════════════════════════
+             THE FORGE — Command Bar
+             ═══════════════════════════════════════════════════════════ -->
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#2b2d31" Offset="0" />
+                    <GradientStop Color="#252629" Offset="1" />
+                </LinearGradientBrush>
+            </Border.Background>
+
+            <StackPanel Margin="18,14,18,14">
+
+                <!-- Row 1: Actions + Status -->
+                <DockPanel>
+                    <!-- Mode badge + status — right side -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <TextBlock x:Name="LblStatus"
+                                   Text="Click SCAN ALL to populate the forge view."
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="10.5" FontStyle="Italic"
+                                   VerticalAlignment="Center"
+                                   Margin="16,0,12,0" />
+                        <Border Background="{StaticResource AccentSubtleBrush}"
+                                BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                                CornerRadius="4" Padding="8,4"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11" Foreground="{StaticResource AccentBrush}"
+                                           Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="FORGE VIEWER"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           FontSize="10.5" FontWeight="Bold"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Action buttons -->
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="BtnScan"
+                                Style="{StaticResource AccentButton}"
+                                Padding="18,7" Height="32"
+                                Click="BtnScan_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="BtnScanIcon"
+                                           Text="&#xE71E;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="12" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                <TextBlock x:Name="BtnScanLabel"
+                                           Text="SCAN ALL" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button x:Name="BtnSelectAll"
+                                Padding="14,7" Height="32"
+                                Margin="8,0,0,0"
+                                IsEnabled="False"
+                                ToolTip="Select every item matching the current filters. Requires a specific Type."
+                                Click="BtnSelectAll_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="BtnSelectAllIcon"
+                                           Text="&#xE762;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock x:Name="BtnSelectAllLabel"
+                                           Text="SELECT ALL" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button x:Name="BtnBulk"
+                                Padding="14,7" Height="32"
+                                Margin="8,0,0,0"
+                                IsEnabled="False"
+                                Click="BtnBulk_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="BULK EDIT" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button x:Name="BtnReset"
+                                Padding="14,7" Height="32"
+                                Margin="8,0,0,0"
+                                ToolTip="Clear cached scan and filters; requires a fresh SCAN ALL."
+                                Click="BtnReset_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7A7;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="RESET" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- Row 2: Search bar -->
+                <Grid Margin="0,12,0,0">
+                    <TextBox x:Name="TxtSearch"
+                             TextChanged="TxtSearch_TextChanged"
+                             Padding="10,7"
+                             FontSize="12" />
+                    <!-- Watermark — separate TextBlocks so icon font doesn't bleed into text -->
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="12,0,0,0"
+                                IsHitTestVisible="False">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Text, ElementName=TxtSearch}" Value="">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Search items by name, description, or level..."
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="11.5" Opacity="0.6"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row 3: Filters + Pagination -->
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Filters -->
+                    <WrapPanel Grid.Column="0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
+                            <TextBlock Text="Type"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="10" FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0" />
+                            <ComboBox x:Name="CboType"
+                                      Width="140"
+                                      SelectionChanged="Filter_Changed" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
+                            <TextBlock Text="Quality"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="10" FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0" />
+                            <ComboBox x:Name="CboQuality"
+                                      Width="130"
+                                      SelectionChanged="Filter_Changed" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
+                            <TextBlock Text="Sort"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="10" FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0" />
+                            <ComboBox x:Name="CboSort"
+                                      Width="190"
+                                      SelectionChanged="Filter_Changed" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
+                            <TextBlock Text="Folder"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="10" FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0" />
+                            <ComboBox x:Name="CboFolder"
+                                      Width="170"
+                                      SelectionChanged="Filter_Changed" />
+                        </StackPanel>
+
+                        <CheckBox x:Name="ChkRealOnly"
+                                  Content="Real items only"
+                                  IsChecked="True"
+                                  VerticalAlignment="Center"
+                                  Margin="4,3,0,3"
+                                  FontSize="11"
+                                  Checked="ChkRealOnly_Changed"
+                                  Unchecked="ChkRealOnly_Changed" />
+                    </WrapPanel>
+
+                    <!-- Pagination — right aligned -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Button x:Name="BtnPrev"
+                                Padding="10,5" Height="28"
+                                Click="BtnPrev_Click">
+                            <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                        </Button>
+                        <TextBlock x:Name="LblPage"
+                                   Text="Page 0 / 0"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   FontSize="11" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Margin="12,0"
+                                   MinWidth="70"
+                                   TextAlignment="Center" />
+                        <Button x:Name="BtnNext"
+                                Padding="10,5" Height="28"
+                                Click="BtnNext_Click">
+                            <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+            </StackPanel>
+        </Border>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             Card Grid — the forge table
+             ═══════════════════════════════════════════════════════════ -->
+        <ScrollViewer x:Name="CardScroller"
+                      Grid.Row="2"
+                      VerticalScrollBarVisibility="Auto"
+                      Padding="12">
+            <WrapPanel x:Name="CardPanel"
+                       Margin="6" />
+        </ScrollViewer>
+
+    </Grid>
+</UserControl>

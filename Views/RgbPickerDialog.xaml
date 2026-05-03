@@ -1,0 +1,157 @@
+<Window x:Class="Modinator.Views.RgbPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pick Color"
+        Width="420" Height="460"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Style="{StaticResource ModernWindowStyle}">
+
+    <Grid Margin="20,12,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ═══ Preview ═══ -->
+        <Border Grid.Row="0" Height="80" CornerRadius="10"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                Margin="0,0,0,14" ClipToBounds="True">
+            <Grid>
+                <Border x:Name="PreviewFill" CornerRadius="10" />
+                <TextBlock x:Name="TxtPreviewInfo"
+                           Text="R: 0  G: 0  B: 0"
+                           FontFamily="Consolas, Cascadia Code, monospace"
+                           FontSize="11"
+                           Foreground="White" Opacity="0.75"
+                           VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                           Margin="14,0,0,10" />
+                <TextBlock x:Name="TxtPreviewHex"
+                           Text="#000000"
+                           FontFamily="Consolas, Cascadia Code, monospace"
+                           FontSize="11"
+                           Foreground="White" Opacity="0.75"
+                           VerticalAlignment="Bottom" HorizontalAlignment="Right"
+                           Margin="0,0,14,10" />
+            </Grid>
+        </Border>
+
+        <!-- ═══ Spectrum + Hue bar ═══ -->
+        <Grid Grid.Row="1" Height="180" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="28" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Saturation / Value square -->
+            <Border Grid.Column="0" CornerRadius="4" ClipToBounds="True"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                <Canvas x:Name="SvCanvas" Background="Red"
+                        MouseLeftButtonDown="SvCanvas_MouseDown"
+                        MouseMove="SvCanvas_MouseMove"
+                        MouseLeftButtonUp="SvCanvas_MouseUp">
+                    <Rectangle x:Name="SvWhiteOverlay"
+                               Canvas.Left="0" Canvas.Top="0">
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="White" Offset="0" />
+                                <GradientStop Color="Transparent" Offset="1" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <Rectangle x:Name="SvBlackOverlay"
+                               Canvas.Left="0" Canvas.Top="0">
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="Transparent" Offset="0" />
+                                <GradientStop Color="Black" Offset="1" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <Ellipse x:Name="SvCrosshair" Width="12" Height="12"
+                             Stroke="White" StrokeThickness="2"
+                             Fill="Transparent" IsHitTestVisible="False" />
+                </Canvas>
+            </Border>
+
+            <!-- Hue bar -->
+            <Border Grid.Column="2" CornerRadius="4" ClipToBounds="True"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                <Canvas x:Name="HueCanvas"
+                        MouseLeftButtonDown="HueCanvas_MouseDown"
+                        MouseMove="HueCanvas_MouseMove"
+                        MouseLeftButtonUp="HueCanvas_MouseUp">
+                    <Canvas.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#FF0000" Offset="0.000" />
+                            <GradientStop Color="#FFFF00" Offset="0.167" />
+                            <GradientStop Color="#00FF00" Offset="0.333" />
+                            <GradientStop Color="#00FFFF" Offset="0.500" />
+                            <GradientStop Color="#0000FF" Offset="0.667" />
+                            <GradientStop Color="#FF00FF" Offset="0.833" />
+                            <GradientStop Color="#FF0000" Offset="1.000" />
+                        </LinearGradientBrush>
+                    </Canvas.Background>
+                    <Border x:Name="HueIndicator" Height="4"
+                            Background="White" CornerRadius="2"
+                            IsHitTestVisible="False" />
+                </Canvas>
+            </Border>
+        </Grid>
+
+        <!-- ═══ RGB + Hex inputs ═══ -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="1.4*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="R" Foreground="#f87171" FontSize="11"
+                           FontWeight="SemiBold" Margin="0,0,0,3" />
+                <TextBox x:Name="TxtR" Text="0" TextChanged="OnBaseChanged" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="G" Foreground="#4ade80" FontSize="11"
+                           FontWeight="SemiBold" Margin="0,0,0,3" />
+                <TextBox x:Name="TxtG" Text="0" TextChanged="OnBaseChanged" />
+            </StackPanel>
+            <StackPanel Grid.Column="4">
+                <TextBlock Text="B" Foreground="#60a5fa" FontSize="11"
+                           FontWeight="SemiBold" Margin="0,0,0,3" />
+                <TextBox x:Name="TxtB" Text="0" TextChanged="OnBaseChanged" />
+            </StackPanel>
+            <StackPanel Grid.Column="6">
+                <TextBlock Text="HEX" Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="11" FontWeight="SemiBold" Margin="0,0,0,3" />
+                <TextBox x:Name="TxtHex" Text="000000"
+                         FontFamily="Consolas, Cascadia Code, monospace"
+                         MaxLength="7"
+                         TextChanged="OnHexChanged" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Spacer -->
+        <Border Grid.Row="3" />
+
+        <!-- ═══ Action buttons ═══ -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Cancel" Padding="18,6"
+                    Style="{StaticResource GhostButton}"
+                    Click="BtnCancel_Click" />
+            <Button Content="OK" Padding="18,6" Margin="8,0,0,0"
+                    Style="{StaticResource AccentButton}"
+                    Click="BtnOk_Click"
+                    IsDefault="True" />
+        </StackPanel>
+    </Grid>
+</Window>

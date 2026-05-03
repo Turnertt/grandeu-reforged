@@ -1,0 +1,1095 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+
+internal sealed class Base
+{
+	// UI decoupling events — the WPF layer subscribes to these.
+	public static event Action<string, string>? OnMessage;
+	public static event Action<List<int>>? OnResultsChanged;
+	public static event Action<int>? OnProgressChanged;
+	public static event Action<Track>? OnTrackRemoved;
+	public static event Func<Process[], Process?>? OnChooseProcess;
+
+	public static void RaiseResultsChanged(List<int> results) => OnResultsChanged?.Invoke(results);
+	public static void RaiseMessage(string message, string title) => OnMessage?.Invoke(message, title);
+
+	public enum Genus : byte
+	{
+		None,
+		Item,
+		Hero,
+		Misc,
+		Location,
+		Tower
+	}
+
+	internal struct Track
+	{
+		public int Address;
+
+		public Genus Genus;
+
+		public bool Freeze;
+
+		public Track(int _address, Genus _type)
+		{
+			this = default(Track);
+			Address = _address;
+			Genus = _type;
+		}
+
+		public static bool operator ==(Track r1, Track r2)
+		{
+			if (r1.Address != r2.Address || r1.Genus != r2.Genus)
+			{
+				return false;
+			}
+			return true;
+		}
+
+		public static bool operator !=(Track r1, Track r2)
+		{
+			if (r1.Address == r2.Address && r1.Genus == r2.Genus)
+			{
+				return false;
+			}
+			return true;
+		}
+	}
+
+	public delegate void GenericDG();
+
+	public static bool FullScan;
+
+	public static bool PauseScan;
+
+	public static bool SimulateG;
+
+	public static bool VacuumActors;
+
+	public static Vector VacuumVector;
+
+	public static int VacuumExclusion;
+
+	public static bool Renew = true;
+
+	public static int RenewTime = 5000;
+
+	public static DateTime RenewDate;
+
+	public static int FreezeTime = 5;
+
+	public static DateTime FreezeDate;
+
+	public static int SimulateTime = 1000;
+
+	public static DateTime SimulateDate;
+
+	public static List<int> ItemResults = new List<int>();
+
+	public static List<int> HeroResults = new List<int>();
+
+	public static List<int> MiscResults = new List<int>();
+
+	public static List<int> LocationResults = new List<int>();
+
+	public static List<int> TowerResults = new List<int>();
+
+	public static List<bool> MiscFloatTracks = new List<bool>();
+
+	public static List<float> LocationValues = new List<float>();
+
+	public static Dictionary<int, int> MiscFreeze = new Dictionary<int, int>();
+
+	public static Dictionary<int, float> LocationFreeze = new Dictionary<int, float>();
+
+	public static byte[] Search;
+
+	public static byte[] Mask;
+
+	public static LinearColorNative[] ColorTable1;
+
+	public static LinearColorNative[] ColorTable2;
+
+	public static Scanner Instance = new Scanner(ProgressChange);
+
+	private static MemoryStream MaskStream;
+
+	private static BinaryWriter MaskWriter;
+
+	private static UTF8Encoding UTF8 = new UTF8Encoding();
+
+	private static UnicodeEncoding Unicode = new UnicodeEncoding();
+
+	private static readonly string LogPath = System.IO.Path.Combine(
+		AppContext.BaseDirectory, "modinator_log.txt");
+
+	// Rotate when the log grows past ~2 MB so long running sessions don't
+	// leak disk. Only keep one rotated copy (.1) — we're not doing archaeology
+	// across sessions, just keeping the last couple MB of recent telemetry.
+	private const long LogRotateBytes = 2L * 1024 * 1024;
+	private static readonly object LogLock = new();
+
+	[System.Diagnostics.Conditional("DEBUG")]
+	public static void Log(string message)
+	{
+		try
+		{
+			lock (LogLock)
+			{
+				if (System.IO.File.Exists(LogPath)
+					&& new System.IO.FileInfo(LogPath).Length > LogRotateBytes)
+				{
+					string rotated = LogPath + ".1";
+					if (System.IO.File.Exists(rotated)) System.IO.File.Delete(rotated);
+					System.IO.File.Move(LogPath, rotated);
+				}
+				System.IO.File.AppendAllText(LogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
+			}
+		}
+		catch { }
+	}
+
+	public static IntPtr MainWindow;
+
+	private static Process LastProcess;
+
+	public static void RunFirstScan(int index, int step, GenericDG fail, GenericDG success, ref List<int> results)
+	{
+		try
+		{
+			if (PauseScan)
+			{
+				Instance.Suspend();
+			}
+			Instance.ScanPages();
+			if (FullScan)
+			{
+				Instance.FirstScan(Search, 0, 4, Mask);
+			}
+			else
+			{
+				Instance.FirstScan(Search, index, step, Mask);
+			}
+			results = new List<int>(Instance.Results);
+		}
+		catch (FormatException)
+		{
+			fail();
+			OnMessage?.Invoke("Did you set at least one value to search for?", "Error");
+			return;
+		}
+		finally
+		{
+			if (PauseScan)
+			{
+				Instance.Resume();
+			}
+		}
+		if (Instance.Results.Length == 0)
+		{
+			fail();
+			OnMessage?.Invoke("Unable to find what you're searching for.", "Notice");
+		}
+		else
+		{
+			success();
+		}
+	}
+
+	public static void RunNextScan(GenericDG fail, GenericDG success, ref List<int> results)
+	{
+		if (results.Count == 0)
+		{
+			fail();
+			OnMessage?.Invoke("Unable to find what you're searching for.", "Notice");
+			return;
+		}
+		try
+		{
+			if (PauseScan)
+			{
+				Instance.Suspend();
+			}
+			Instance.NextScan(Search, Mask);
+		}
+		catch (FormatException)
+		{
+			fail();
+			OnMessage?.Invoke("Did you set at least one value to search for?", "Error");
+			return;
+		}
+		finally
+		{
+			if (PauseScan)
+			{
+				Instance.Resume();
+			}
+		}
+		results = new List<int>(Instance.Results);
+		success();
+		if (Instance.Results.Length == 0)
+		{
+			fail();
+			OnMessage?.Invoke("Unable to find what you're searching for.", "Notice");
+		}
+	}
+
+	public static string GetDescription(int address, Genus type, bool isFloat)
+	{
+		string result;
+		try
+		{
+			switch (type)
+			{
+			case Genus.Item:
+			{
+				Log($"GetDescription: Item at 0x{address:X8}");
+				try
+				{
+					result = ReadUni<ItemNative>(address, "Description");
+					Log($"GetDescription: Description='{result}'");
+					if (string.IsNullOrEmpty(result))
+					{
+						result = ReadUni<ItemNative>(address, "EquipmentName");
+						Log($"GetDescription: EquipmentName='{result}'");
+					}
+					if (string.IsNullOrEmpty(result))
+					{
+						result = ReadUni<ItemNative>(address, "BaseEquipmentName");
+						Log($"GetDescription: BaseEquipmentName='{result}'");
+					}
+				}
+				catch (Exception ex)
+				{
+					Log($"GetDescription: ReadUni threw {ex.GetType().Name}: {ex.Message}");
+					result = string.Empty;
+				}
+				break;
+			}
+			case Genus.Hero:
+				result = ReadUni<HeroNative>(address, "HeroName");
+				break;
+			case Genus.Misc:
+			{
+				byte[] value5 = Instance.ReadMemory(address, 4);
+				result = ((!isFloat) ? BitConverter.ToInt32(value5, 0).ToString("N0") : BitConverter.ToSingle(value5, 0).ToString("N2"));
+				break;
+			}
+			case Genus.Location:
+			{
+				byte[] value = Instance.ReadMemory(address, 12);
+				float value2 = BitConverter.ToSingle(value, 0);
+				float value3 = BitConverter.ToSingle(value, 4);
+				float value4 = BitConverter.ToSingle(value, 8);
+				result = (ValidCoord(value2) ? (ValidCoord(value3) ? (ValidCoord(value4) ? string.Format("X: {0}, Y: {1}, Z: {2}", value2.ToString("N0"), value3.ToString("N0"), value4.ToString("N0")) : null) : null) : null);
+				break;
+			}
+			case Genus.Tower:
+			{
+				byte[] towerHp = Instance.ReadMemory(address, 8);
+				int cur = BitConverter.ToInt32(towerHp, 0);
+				int max = BitConverter.ToInt32(towerHp, 4);
+				result = string.Format("HP: {0}/{1}", cur.ToString("N0"), max.ToString("N0"));
+				break;
+			}
+			default:
+				result = string.Empty;
+				break;
+			}
+		}
+		catch (Exception)
+		{
+			result = null;
+		}
+		return result;
+	}
+
+	public static string Truncate(string name)
+	{
+		if (name.Length > 20)
+		{
+			return name.Remove(19) + "...";
+		}
+		return name;
+	}
+
+	private static bool ValidCoord(float value)
+	{
+		if (!(value <= 200000f) || !(value >= -200000f))
+		{
+			return false;
+		}
+		return true;
+	}
+
+	public static void HandleManaFreeze(int address, bool freeze)
+	{
+		if (freeze)
+		{
+			byte[] value = Instance.ReadMemory(address, 4);
+			int value2 = BitConverter.ToInt32(value, 0);
+			if (MiscFreeze.ContainsKey(address))
+			{
+				MiscFreeze[address] = value2;
+			}
+			else
+			{
+				MiscFreeze.Add(address, value2);
+			}
+		}
+		else if (MiscFreeze.ContainsKey(address))
+		{
+			MiscFreeze.Remove(address);
+		}
+	}
+
+	public static void PasteClone(int address, ItemNative cloneTo, ItemNative cloneFrom)
+	{
+		cloneFrom.EquipmentID1 = cloneTo.EquipmentID1;
+		cloneFrom.EquipmentID2 = cloneTo.EquipmentID2;
+		byte[] data = Push(cloneFrom);
+		Instance.WriteMemory(address, data);
+	}
+
+	public static void HandleLocationFreeze(int address, bool freeze)
+	{
+		if (freeze)
+		{
+			byte[] value = Instance.ReadMemory(address + 8, 4);
+			float value2 = BitConverter.ToSingle(value, 0);
+			if (LocationFreeze.ContainsKey(address))
+			{
+				LocationFreeze[address] = value2;
+			}
+			else
+			{
+				LocationFreeze.Add(address, value2);
+			}
+		}
+		else if (LocationFreeze.ContainsKey(address))
+		{
+			LocationFreeze.Remove(address);
+		}
+	}
+
+	public static void RemoveNoAccess(Track _track)
+	{
+		int address = _track.Address;
+		switch (_track.Genus)
+		{
+		case Genus.Item:
+			ItemResults.Remove(address);
+			ShowMainResults(ref ItemResults);
+			break;
+		case Genus.Hero:
+			HeroResults.Remove(address);
+			ShowMainResults(ref HeroResults);
+			break;
+		case Genus.Misc:
+		{
+			int num2 = MiscResults.IndexOf(address);
+			if (num2 != -1)
+			{
+				MiscResults.RemoveAt(num2);
+				MiscFloatTracks.RemoveAt(num2);
+				ShowMainResults(ref MiscResults);
+			}
+			if (MiscFreeze.ContainsKey(address))
+			{
+				MiscFreeze.Remove(address);
+			}
+			break;
+		}
+		case Genus.Location:
+		{
+			int num = LocationResults.IndexOf(address);
+			if (num != -1)
+			{
+				LocationResults.RemoveAt(num);
+				LocationValues.RemoveAt(num);
+				ShowMainResults(ref LocationResults);
+			}
+			if (LocationFreeze.ContainsKey(address))
+			{
+				LocationFreeze.Remove(address);
+			}
+			break;
+		}
+		case Genus.Tower:
+			TowerResults.Remove(address);
+			ShowMainResults(ref TowerResults);
+			break;
+		}
+		OnTrackRemoved?.Invoke(_track);
+	}
+
+	public static void ShowMainResults(ref List<int> results)
+	{
+		OnResultsChanged?.Invoke(results);
+	}
+
+	public static void ProgressChange(int value)
+	{
+		OnProgressChanged?.Invoke(value);
+	}
+
+	public static ItemNative ItemToNative(ItemSearch s)
+	{
+		ItemNative result = new ItemNative
+		{
+			StatModifiers = new int[10]
+		};
+		result.StatModifiers[0] = s.HeroHealth;
+		result.StatModifiers[1] = s.HeroSpeed;
+		result.StatModifiers[2] = s.HeroDamage;
+		result.StatModifiers[3] = s.HeroCasting;
+		result.StatModifiers[4] = s.HeroSkill1;
+		result.StatModifiers[5] = s.HeroSkill2;
+		result.StatModifiers[6] = s.TowerHealth;
+		result.StatModifiers[7] = s.TowerSpeed;
+		result.StatModifiers[8] = s.TowerDamage;
+		result.StatModifiers[9] = s.TowerRange;
+		result.DamageReductions = new DamageNative[4];
+		result.DamageReductions[0].Value = s.Generic;
+		result.DamageReductions[1].Value = s.Poison;
+		result.DamageReductions[2].Value = s.Fire;
+		result.DamageReductions[3].Value = s.Lightning;
+		result.WeaponKnockbackBonus = s.Knockback;
+		result.WeaponChargeSpeedBonus = s.ChargeSpeed;
+		result.WeaponNumberOfProjectilesBonus = s.NumberOfProjectiles;
+		result.WeaponSpeedOfProjectilesBonus = s.SpeedOfProjectiles;
+		result.WeaponReloadSpeedBonus = s.ReloadSpeed;
+		result.EquipmentType = s.EquipmentType;
+		result.Level = s.Level;
+		result.MaxEquipmentLevel = s.MaxLevel;
+		if (!string.IsNullOrEmpty(s.Description))
+		{
+			ref NativeArray description = ref result.Description;
+			description = new NativeArray(s.Description.Length + 1);
+		}
+		return result;
+	}
+
+	public static ItemNative ItemToNative(ItemUser s)
+	{
+		ItemNative result = new ItemNative
+		{
+			StatModifiers = new int[10]
+		};
+		result.StatModifiers[0] = s.HeroHealth;
+		result.StatModifiers[1] = s.HeroSpeed;
+		result.StatModifiers[2] = s.HeroDamage;
+		result.StatModifiers[3] = s.HeroCasting;
+		result.StatModifiers[4] = s.HeroSkill1;
+		result.StatModifiers[5] = s.HeroSkill2;
+		result.StatModifiers[6] = s.TowerHealth;
+		result.StatModifiers[7] = s.TowerSpeed;
+		result.StatModifiers[8] = s.TowerDamage;
+		result.StatModifiers[9] = s.TowerRange;
+		result.DamageReductions = new DamageNative[4];
+		ref DamageNative reference = ref result.DamageReductions[0];
+		reference = DamageToNative(s.Generic);
+		ref DamageNative reference2 = ref result.DamageReductions[1];
+		reference2 = DamageToNative(s.Poison);
+		ref DamageNative reference3 = ref result.DamageReductions[2];
+		reference3 = DamageToNative(s.Fire);
+		ref DamageNative reference4 = ref result.DamageReductions[3];
+		reference4 = DamageToNative(s.Lightning);
+		result.WeaponDamageBonus = s.Damage;
+		result.WeaponNumberOfProjectilesBonus = s.NumberOfProjectiles;
+		result.WeaponSpeedOfProjectilesBonus = s.SpeedOfProjectiles;
+		result.WeaponAdditionalDamage = DamageToNative(s.ElementalDamage);
+		result.WeaponDrawScaleMultiplier = s.DrawScale;
+		result.WeaponSwingSpeedMultiplier = s.SwingSpeed;
+		result.WeaponReloadSpeedBonus = s.ReloadSpeed;
+		result.WeaponKnockbackBonus = s.Knockback;
+		result.WeaponAltDamageBonus = s.RangedDamage;
+		result.WeaponBlockingBonus = s.Blocking;
+		result.WeaponClipAmmoBonus = s.ClipAmmo;
+		result.WeaponChargeSpeedBonus = s.ChargeSpeed;
+		result.WeaponShotsPerSecondBonus = s.ShotsPerSecond;
+		result.NameIndex_Base = s.Quality1;
+		result.NameIndex_QualityDescriptor = s.Quality2;
+		result.NameIndex_DamageReduction = s.Quality3;
+		result.Mystery = s.QualityFlag;
+		result.ManualLR = s.LevelRequirement;
+		result.PrimaryColorSet = IndexOfColor(ColorTable1, s.Color1);
+		result.SecondaryColorSet = IndexOfColor(ColorTable2, s.Color2);
+		result.PrimaryColorOverride = LinearColorToNative(s.Color1Override);
+		result.SecondaryColorOverride = LinearColorToNative(s.Color2Override);
+		result.MaximumSellWorth = s.MaximumValue;
+		result.MinimumSellWorth = s.MinimumValue;
+		result.MaxEquipmentLevel = s.MaxLevel;
+		result.Level = s.Level;
+		result.StoredMana = s.StoredMana;
+		result.EquipmentID1 = s.ID1;
+		result.EquipmentID2 = s.ID2;
+		result.MyRating = s.Rating;
+		result.MyRatingPercent = s.RatingPercent;
+		result.EquipmentType = s.EquipmentType;
+		int.TryParse(s.EquipmentTemplate, NumberStyles.HexNumber, null, out var result2);
+		result.EquipmentTemplate = result2;
+		return result;
+	}
+
+	public static ItemUser ItemToUser(ItemNative n)
+	{
+		ItemUser itemUser = new ItemUser();
+		itemUser.HeroHealth = n.StatModifiers[0];
+		itemUser.HeroSpeed = n.StatModifiers[1];
+		itemUser.HeroDamage = n.StatModifiers[2];
+		itemUser.HeroCasting = n.StatModifiers[3];
+		itemUser.HeroSkill1 = n.StatModifiers[4];
+		itemUser.HeroSkill2 = n.StatModifiers[5];
+		itemUser.TowerHealth = n.StatModifiers[6];
+		itemUser.TowerSpeed = n.StatModifiers[7];
+		itemUser.TowerDamage = n.StatModifiers[8];
+		itemUser.TowerRange = n.StatModifiers[9];
+		itemUser.Generic = new DamageUser(resist: true, n.DamageReductions[0]);
+		itemUser.Poison = new DamageUser(resist: true, n.DamageReductions[1]);
+		itemUser.Fire = new DamageUser(resist: true, n.DamageReductions[2]);
+		itemUser.Lightning = new DamageUser(resist: true, n.DamageReductions[3]);
+		itemUser.Damage = n.WeaponDamageBonus;
+		itemUser.RangedDamage = n.WeaponAltDamageBonus;
+		itemUser.ElementalDamage = new DamageUser(resist: false, n.WeaponAdditionalDamage);
+		itemUser.Blocking = n.WeaponBlockingBonus;
+		itemUser.Knockback = n.WeaponKnockbackBonus;
+		itemUser.ChargeSpeed = n.WeaponChargeSpeedBonus;
+		itemUser.ShotsPerSecond = n.WeaponShotsPerSecondBonus;
+		itemUser.NumberOfProjectiles = n.WeaponNumberOfProjectilesBonus;
+		itemUser.SpeedOfProjectiles = n.WeaponSpeedOfProjectilesBonus;
+		itemUser.ClipAmmo = n.WeaponClipAmmoBonus;
+		itemUser.ReloadSpeed = n.WeaponReloadSpeedBonus;
+		itemUser.Quality1 = n.NameIndex_Base;
+		itemUser.Quality2 = n.NameIndex_QualityDescriptor;
+		itemUser.Quality3 = n.NameIndex_DamageReduction;
+		itemUser.QualityFlag = n.Mystery;
+		itemUser.LevelRequirement = n.ManualLR;
+		itemUser.Color1Override = LinearColorToUser(n.PrimaryColorOverride);
+		itemUser.Color2Override = LinearColorToUser(n.SecondaryColorOverride);
+		itemUser.DrawScale = n.WeaponDrawScaleMultiplier;
+		itemUser.SwingSpeed = n.WeaponSwingSpeedMultiplier;
+		itemUser.ID1 = n.EquipmentID1;
+		itemUser.ID2 = n.EquipmentID2;
+		itemUser.Rating = n.MyRating;
+		itemUser.RatingPercent = n.MyRatingPercent;
+		itemUser.EquipmentType = n.EquipmentType;
+		itemUser.EquipmentTemplate = n.EquipmentTemplate.ToString("X");
+		itemUser.MaximumValue = n.MaximumSellWorth;
+		itemUser.MinimumValue = n.MinimumSellWorth;
+		itemUser.Level = n.Level;
+		itemUser.MaxLevel = n.MaxEquipmentLevel;
+		itemUser.StoredMana = n.StoredMana;
+		return itemUser;
+	}
+
+	public static HeroNative HeroToNative(HeroUserSearch s)
+	{
+		HeroNative result = new HeroNative
+		{
+			StatModifiers = new int[10]
+		};
+		result.StatModifiers[0] = s.HeroHealth;
+		result.StatModifiers[1] = s.HeroSpeed;
+		result.StatModifiers[2] = s.HeroDamage;
+		result.StatModifiers[3] = s.HeroCasting;
+		result.StatModifiers[4] = s.HeroSkill1;
+		result.StatModifiers[5] = s.HeroSkill2;
+		result.StatModifiers[6] = s.TowerHealth;
+		result.StatModifiers[7] = s.TowerSpeed;
+		result.StatModifiers[8] = s.TowerDamage;
+		result.StatModifiers[9] = s.TowerRange;
+		result.Level = s.Level;
+		result.Experience = s.Experience;
+		if (!string.IsNullOrEmpty(s.HeroName))
+		{
+			ref NativeArray heroName = ref result.HeroName;
+			heroName = new NativeArray(s.HeroName.Length + 1);
+		}
+		return result;
+	}
+
+	public static HeroNative HeroToNative(HeroUser s)
+	{
+		HeroNative result = new HeroNative
+		{
+			StatModifiers = new int[10]
+		};
+		result.StatModifiers[0] = s.HeroHealth;
+		result.StatModifiers[1] = s.HeroSpeed;
+		result.StatModifiers[2] = s.HeroDamage;
+		result.StatModifiers[3] = s.HeroCasting;
+		result.StatModifiers[4] = s.HeroSkill1;
+		result.StatModifiers[5] = s.HeroSkill2;
+		result.StatModifiers[6] = s.TowerHealth;
+		result.StatModifiers[7] = s.TowerSpeed;
+		result.StatModifiers[8] = s.TowerDamage;
+		result.StatModifiers[9] = s.TowerRange;
+		result.Color1 = HeroColorToNative(s.Color1);
+		result.Color2 = HeroColorToNative(s.Color2);
+		result.Color3 = HeroColorToNative(s.Color3);
+		result.Level = s.Level;
+		result.Experience = s.Experience;
+		if (s.HeroName != null)
+		{
+			ref NativeArray heroName = ref result.HeroName;
+			heroName = new NativeArray(s.HeroName.Length + 1);
+		}
+		return result;
+	}
+
+	public static HeroUser HeroToUser(HeroNative n)
+	{
+		HeroUser heroUser = new HeroUser();
+		heroUser.HeroHealth = n.StatModifiers[0];
+		heroUser.HeroSpeed = n.StatModifiers[1];
+		heroUser.HeroDamage = n.StatModifiers[2];
+		heroUser.HeroCasting = n.StatModifiers[3];
+		heroUser.HeroSkill1 = n.StatModifiers[4];
+		heroUser.HeroSkill2 = n.StatModifiers[5];
+		heroUser.TowerHealth = n.StatModifiers[6];
+		heroUser.TowerSpeed = n.StatModifiers[7];
+		heroUser.TowerDamage = n.StatModifiers[8];
+		heroUser.TowerRange = n.StatModifiers[9];
+		heroUser.Color1 = HeroColorToUser(n.Color1);
+		heroUser.Color2 = HeroColorToUser(n.Color2);
+		heroUser.Color3 = HeroColorToUser(n.Color3);
+		heroUser.Level = n.Level;
+		heroUser.Experience = n.Experience;
+		return heroUser;
+	}
+
+	public static TowerNative TowerToNative(TowerSearch s)
+	{
+		TowerNative result = default(TowerNative);
+		result.CurrentHP = s.CurrentHP;
+		result.MaxHP = s.MaxHP;
+		result.AttackDamage = s.AttackDamage;
+		result.AttackRate = s.AttackRate;
+		result.AttackRange = s.AttackRange;
+		return result;
+	}
+
+	public static TowerNative TowerToNative(TowerUser s, TowerNative existing)
+	{
+		existing.CurrentHP = s.CurrentHP;
+		existing.MaxHP = s.MaxHP;
+		existing.AttackDamage = s.AttackDamage;
+		existing.AttackRate = s.AttackRate;
+		existing.AttackRange = s.AttackRange;
+		existing.AttackArc = s.AttackArc;
+		existing.UpgradeLevel = s.UpgradeLevel;
+		existing.MaxUpgrades = s.MaxUpgrades;
+		return existing;
+	}
+
+	public static TowerUser TowerToUser(TowerNative n)
+	{
+		TowerUser towerUser = new TowerUser();
+		towerUser.CurrentHP = n.CurrentHP;
+		towerUser.MaxHP = n.MaxHP;
+		towerUser.AttackDamage = n.AttackDamage;
+		towerUser.AttackRate = n.AttackRate;
+		towerUser.AttackRange = n.AttackRange;
+		towerUser.AttackArc = n.AttackArc;
+		towerUser.UpgradeLevel = n.UpgradeLevel;
+		towerUser.MaxUpgrades = n.MaxUpgrades;
+		return towerUser;
+	}
+
+	public static void CreateTowerMask(TowerNative s)
+	{
+		MaskStream = new MemoryStream();
+		MaskWriter = new BinaryWriter(MaskStream);
+		Search = Push(s);
+		HandleMask(s.CurrentHP);
+		HandleMask(s.MaxHP);
+		HandleMaskFloat(s.AttackDamage);
+		MaskWriter.Write(new byte[4]);
+		HandleMaskFloat(s.AttackRate);
+		MaskWriter.Write(new byte[44]);
+		HandleMaskFloat(s.AttackRange);
+		MaskWriter.Write(new byte[Marshal.SizeOf(typeof(TowerNative)) - 68]);
+		Mask = MaskStream.ToArray();
+		MaskWriter.Close();
+	}
+
+	private static void HandleMaskFloat(float f)
+	{
+		if (f == 0f)
+		{
+			MaskWriter.Write(0);
+		}
+		else
+		{
+			MaskWriter.Write(-1);
+		}
+	}
+
+	private static DamageNative DamageToNative(DamageUser d)
+	{
+		return new DamageNative
+		{
+			DamageType = d.GetTypeValue(),
+			Value = d.Value
+		};
+	}
+
+	public static LinearColorNative LinearColorToNative(LinearColor s)
+	{
+		if (s == null)
+		{
+			return new LinearColorNative { A = 1f };
+		}
+		return new LinearColorNative
+		{
+			R = s.Rf,
+			G = s.Gf,
+			B = s.Bf,
+			A = s.Af
+		};
+	}
+
+	public static LinearColor LinearColorToUser(LinearColorNative n)
+	{
+		LinearColor linearColor = new LinearColor();
+		linearColor.Rf = n.R;
+		linearColor.Gf = n.G;
+		linearColor.Bf = n.B;
+		linearColor.Af = n.A;
+		return linearColor;
+	}
+
+	// Heroes use the standard (R, G, B, A) in-memory layout rather than the
+	// items' (A, R, G, B). Separate helpers so items and heroes don't collide.
+	public static HeroColorNative HeroColorToNative(LinearColor s)
+	{
+		return new HeroColorNative
+		{
+			R = s.Rf,
+			G = s.Gf,
+			B = s.Bf,
+			A = 1f
+		};
+	}
+
+	public static LinearColor HeroColorToUser(HeroColorNative n)
+	{
+		LinearColor linearColor = new LinearColor();
+		linearColor.Rf = n.R;
+		linearColor.Gf = n.G;
+		linearColor.Bf = n.B;
+		return linearColor;
+	}
+
+	public static void CreateItemMask(ItemNative s, bool useDamagePointers = false)
+	{
+		MaskStream = new MemoryStream();
+		MaskWriter = new BinaryWriter(MaskStream);
+		Search = Push(s);
+		MaskWriter.Write(new byte[8]);
+		int num = s.StatModifiers.Length - 1;
+		for (int i = 0; i <= num; i++)
+		{
+			HandleMask(s.StatModifiers[i]);
+		}
+		int num2 = s.DamageReductions.Length - 1;
+		for (int j = 0; j <= num2; j++)
+		{
+			if (useDamagePointers)
+			{
+				MaskWriter.Write(-1);
+			}
+			else
+			{
+				MaskWriter.Write(0u);
+			}
+			HandleMask(s.DamageReductions[j].Value);
+		}
+		MaskWriter.Write(0u);
+		HandleMask(s.WeaponNumberOfProjectilesBonus);
+		HandleMask(s.WeaponSpeedOfProjectilesBonus);
+		MaskWriter.Write(new byte[24]);
+		HandleMask(s.WeaponReloadSpeedBonus);
+		HandleMask(s.WeaponKnockbackBonus);
+		MaskWriter.Write(new byte[20]);
+		HandleMask(s.WeaponChargeSpeedBonus);
+		MaskWriter.Write(new byte[14]);
+		if (s.EquipmentType == EquipmentType.All || useDamagePointers)
+		{
+			MaskWriter.Write((byte)0);
+		}
+		else
+		{
+			MaskWriter.Write(byte.MaxValue);
+		}
+		MaskWriter.Write(new byte[73]);
+		HandleMask(s.MaxEquipmentLevel);
+		MaskWriter.Write(new byte[12]);
+		MaskWriter.Write(0);
+		HandleMask(s.Description.CurrentLength);
+		HandleMask(s.Description.MaximumLength);
+		MaskWriter.Write(new byte[164]);
+		MaskWriter.Write(new byte[12]);
+		MaskWriter.Write(new byte[12]);
+		MaskWriter.Write(0u);
+		HandleMask(s.Level);
+		MaskWriter.Write(new byte[36]);
+		Mask = MaskStream.ToArray();
+		MaskWriter.Close();
+	}
+
+	public static void CreateHeroMask(HeroNative s)
+	{
+		MaskStream = new MemoryStream();
+		MaskWriter = new BinaryWriter(MaskStream);
+		s.MaxLevel = 100;
+		s.MaxDemoLevel = 10;
+		Search = Push(s);
+		int num = s.StatModifiers.Length - 1;
+		for (int i = 0; i <= num; i++)
+		{
+			HandleMask(s.StatModifiers[i]);
+		}
+		HandleMask(s.Level);
+		MaskWriter.Write(s.MaxLevel);
+		MaskWriter.Write(s.MaxDemoLevel);
+		HandleMask(s.Experience);
+		MaskWriter.Write(new byte[40]);
+		MaskWriter.Write(0);
+		HandleMask(s.HeroName.CurrentLength);
+		HandleMask(s.HeroName.MaximumLength);
+		MaskWriter.Write(new byte[60]);
+		Mask = MaskStream.ToArray();
+		MaskWriter.Close();
+	}
+
+	public static void CreateMiscMask(decimal s, bool full)
+	{
+		MaskStream = new MemoryStream();
+		MaskWriter = new BinaryWriter(MaskStream);
+		MaskWriter.Write(Convert.ToInt32(s));
+		if (full)
+		{
+			MaskWriter.Write(1);
+		}
+		Search = MaskStream.ToArray();
+		MaskWriter.Close();
+		MaskStream = new MemoryStream();
+		MaskWriter = new BinaryWriter(MaskStream);
+		MaskWriter.Write(-1);
+		if (full)
+		{
+			MaskWriter.Write(-1);
+		}
+		Mask = MaskStream.ToArray();
+		MaskWriter.Close();
+	}
+
+	private static void HandleMask(int i)
+	{
+		if (i == 0)
+		{
+			MaskWriter.Write(0);
+		}
+		else
+		{
+			MaskWriter.Write(-1);
+		}
+	}
+
+	public static LinearColor SafeColorLookup(LinearColorNative[] arr, int index)
+	{
+		if (arr == null || arr.Length == 0)
+		{
+			return new LinearColor();
+		}
+		return LinearColorToUser(arr[Math.Min(index, arr.Length - 1)]);
+	}
+
+	public static byte IndexOfColor(LinearColorNative[] arr, LinearColor color)
+	{
+		if (arr == null || color == null)
+		{
+			return byte.MaxValue;
+		}
+		int num = arr.Length - 1;
+		for (int i = 0; i <= num; i++)
+		{
+			if (Math.Abs(arr[i].R - color.Rf) < 0.001f &&
+				Math.Abs(arr[i].G - color.Gf) < 0.001f &&
+				Math.Abs(arr[i].B - color.Bf) < 0.001f)
+			{
+				return (byte)i;
+			}
+		}
+		return byte.MaxValue;
+	}
+
+	public static LinearColorNative[] GetLinearColors(NativeArray arr)
+	{
+		List<LinearColorNative> list = new List<LinearColorNative>();
+		// Compare as unsigned — DunDefGame is LARGEADDRESSAWARE so high-bit
+		// addresses are valid user-mode pointers, not negative/invalid.
+		if (arr.CurrentLength < 1 || arr.CurrentLength > 4096 || (uint)arr.Address < 0x10000u)
+		{
+			return list.ToArray();
+		}
+		int num = Marshal.SizeOf(typeof(LinearColorNative));
+		byte[] array = Instance.ReadMemory(arr.Address, arr.CurrentLength * num);
+		int num2 = array.Length - 1;
+		int num3 = num;
+		for (int i = 0; ((num3 >> 31) ^ i) <= ((num3 >> 31) ^ num2); i += num3)
+		{
+			list.Add(new LinearColorNative
+			{
+				A = BitConverter.ToSingle(array, i),
+				R = BitConverter.ToSingle(array, i + 4),
+				G = BitConverter.ToSingle(array, i + 8),
+				B = BitConverter.ToSingle(array, i + 12)
+			});
+		}
+		return list.ToArray();
+	}
+
+	public static string ReadUni<T>(int address, string name)
+	{
+		int address2 = address + OffsetOf<T>(name);
+		byte[] value = Instance.ReadMemory(address2, 8);
+		int address3 = BitConverter.ToInt32(value, 0);
+		int num = BitConverter.ToInt32(value, 4);
+		if (num < 2 || address3 == 0 || num > 16384)
+		{
+			return string.Empty;
+		}
+		num = (num - 1) * 2;
+		value = Instance.ReadMemory(address3, num);
+		return Unicode.GetString(value);
+	}
+
+	public static string? ReadUniDirect(int stringPtr, int charCount)
+	{
+		if (stringPtr < 0x10000 || charCount <= 0 || charCount > 16384)
+			return null;
+		int byteCount = charCount * 2;
+		byte[] value = Instance.ReadMemory(stringPtr, byteCount);
+		return Unicode.GetString(value);
+	}
+
+	public static NativeArray WriteUni(int address, string name, string data)
+	{
+		// Old path: allocate new memory. Only used as fallback now.
+		byte[] array = ToUnicode(data);
+		int address2 = Instance.Alloc(array.Length + 2); // +2 for UTF-16 null terminator
+		Instance.WriteMemory(address2, array);
+		NativeArray result = new NativeArray(data.Length + 1);
+		result.Address = address2;
+		return result;
+	}
+
+	public static NativeArray WriteUniInPlace(NativeArray existing, string data)
+	{
+		// Write string directly into the existing buffer — never changes the pointer,
+		// so the game's memory manager won't crash trying to free/manage our memory.
+		if ((uint)existing.Address < 0x10000u)
+		{
+			Log($"WriteUniInPlace: skipped, invalid address 0x{existing.Address:X8}");
+			return existing;
+		}
+		if (existing.MaximumLength < data.Length + 1)
+		{
+			Log($"WriteUniInPlace: skipped, buffer too small (max={existing.MaximumLength}, need={data.Length + 1})");
+			return existing;
+		}
+		byte[] array = ToUnicode(data);
+		// UTF-16LE null terminator (2 zero bytes)
+		byte[] withNull = new byte[array.Length + 2];
+		Array.Copy(array, withNull, array.Length);
+		Instance.WriteMemory(existing.Address, withNull);
+		NativeArray result = existing;
+		result.CurrentLength = data.Length + 1;
+		Log($"WriteUniInPlace: wrote '{data}' ({withNull.Length} bytes) to 0x{existing.Address:X8}");
+		return result;
+	}
+
+	public static byte[] ToUnicode(string data)
+	{
+		byte[] bytes = UTF8.GetBytes(data);
+		return Encoding.Convert(UTF8, Unicode, bytes);
+	}
+
+	public static int OffsetOf<T>(string name)
+	{
+		return Marshal.OffsetOf(typeof(T), name).ToInt32();
+	}
+
+	public static byte[] Push<T>(T item) where T : struct
+	{
+		byte[] array = new byte[Marshal.SizeOf(typeof(T)) - 1 + 1];
+		IntPtr intPtr = Marshal.AllocCoTaskMem(array.Length);
+		if (!(intPtr == IntPtr.Zero))
+		{
+			Marshal.StructureToPtr(item, intPtr, fDeleteOld: true);
+			Marshal.Copy(intPtr, array, 0, array.Length);
+			Marshal.FreeCoTaskMem(intPtr);
+		}
+		return array;
+	}
+
+	public static T Push<T>(byte[] data) where T : struct
+	{
+		IntPtr intPtr = Marshal.AllocCoTaskMem(data.Length);
+		T result = default(T);
+		if (!(intPtr == IntPtr.Zero))
+		{
+			Marshal.Copy(data, 0, intPtr, data.Length);
+			result = (T)Marshal.PtrToStructure(intPtr, typeof(T));
+			Marshal.FreeCoTaskMem(intPtr);
+		}
+		return result;
+	}
+
+	public static string AddressToString(int pointer)
+	{
+		return "0x" + pointer.ToString("X").PadLeft(8, '0');
+	}
+
+	private static Process GetProcess()
+	{
+		Process[] processesByName = Process.GetProcessesByName("DunDefGame");
+		if (processesByName.Length == 1)
+		{
+			return processesByName[0];
+		}
+		if (processesByName.Length > 1)
+		{
+			// Let the WPF layer handle process selection via the event.
+			return OnChooseProcess?.Invoke(processesByName);
+		}
+		return null;
+	}
+
+	public static bool OpenProcess()
+	{
+		if (LastProcess != null && !LastProcess.HasExited)
+		{
+			return true;
+		}
+		Process process = GetProcess();
+		if (process == null)
+		{
+			OnMessage?.Invoke("Unable to find the 'DunDefGame.exe' process, is the game running?", "Error");
+			return false;
+		}
+		LastProcess = process;
+		MainWindow = LastProcess.MainWindowHandle;
+		Instance.OpenProcess(process.Id);
+		return true;
+	}
+}
