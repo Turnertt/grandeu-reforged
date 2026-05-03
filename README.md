@@ -1,6 +1,12 @@
+<p align="center">
+  <img src="Assets/app-icon.png" alt="Grandeu: Reforged icon" width="128" />
+</p>
+
 # Grandeu: Reforged
 
 A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite of the original WinForms tool *Grandeu 4.0.0.4*. The shipped binary is `GrandeuReforged.exe`.
+
+![Screenshot of the home screen](docs/screenshot.png)
 
 ## Features
 
@@ -49,7 +55,7 @@ bin\Release\net8.0-windows\win-x86\publish\GrandeuReforged.exe
 
 End-users need the **.NET 8 Desktop Runtime (x86)** installed (https://dotnet.microsoft.com/download/dotnet/8.0). The runtime is intentionally not bundled to keep the binary small (~820 KB).
 
-### Build gotchas
+### Build notes
 
 - `-p:SelfContained=false` **must** be passed as an MSBuild property (`-p:` prefix), not as the `--self-contained false` CLI flag. Recent SDKs silently ignore the CLI flag when `-r` is specified and produce a self-contained ~61 MB executable instead.
 - Do **not** add `-p:EnableCompressionInSingleFile=true`. Compression requires `SelfContained=true`; the SDK will hard-error `NETSDK1176` otherwise.
@@ -68,9 +74,9 @@ Output: `bin\Release\net8.0-windows\win-arm64\publish\GrandeuReforged.exe`. End-
 2. Run `GrandeuReforged.exe`. Administrator privileges may be required so it can open a handle to the game process.
 3. Pick a tool from the left sidebar.
 
-## A note on the binary name
+## Why "Reforged"?
 
-The executable is named `GrandeuReforged.exe`, not `Grandeu.exe`, because DD1 scans running process names for the exact filename `Grandeu.exe` and blocks the session if found. Internal branding (window title, About dialog) still reads "Grandeu: Reforged".
+It's a modern version of the original *Grandeu*. Same idea, rebuilt from scratch with a new UI and codebase.
 
 ## Project layout
 
