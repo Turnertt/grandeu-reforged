@@ -149,6 +149,17 @@
                     <!-- Filters -->
                     <WrapPanel Grid.Column="0" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
+                            <TextBlock Text="Source"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="10" FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0" />
+                            <ComboBox x:Name="CboSource"
+                                      Width="120"
+                                      SelectionChanged="Source_Changed" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
                             <TextBlock Text="Type"
                                        Foreground="{StaticResource TextMutedBrush}"
                                        FontSize="10" FontWeight="Bold"
@@ -191,15 +202,6 @@
                                       Width="170"
                                       SelectionChanged="Filter_Changed" />
                         </StackPanel>
-
-                        <CheckBox x:Name="ChkRealOnly"
-                                  Content="Real items only"
-                                  IsChecked="True"
-                                  VerticalAlignment="Center"
-                                  Margin="4,3,0,3"
-                                  FontSize="11"
-                                  Checked="ChkRealOnly_Changed"
-                                  Unchecked="ChkRealOnly_Changed" />
                     </WrapPanel>
 
                     <!-- Pagination — right aligned -->

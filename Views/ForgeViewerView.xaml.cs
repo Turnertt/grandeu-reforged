@@ -27,6 +27,7 @@ public partial class ForgeViewerView : UserControl
         public int FolderID;
         public int EquipmentID1;
         public int EquipmentID2;
+        public bool IsHero;
         public bool IsRealInstance => EquipmentID1 != 0 || EquipmentID2 != 0;
     }
 
@@ -69,6 +70,16 @@ public partial class ForgeViewerView : UserControl
         public override string ToString() => Label;
     }
 
+    private enum SourceMode { Forge, Hero, All }
+
+    private class SourceEntry
+    {
+        public SourceMode Mode;
+        public string Label;
+        public SourceEntry(SourceMode mode, string label) { Mode = mode; Label = label; }
+        public override string ToString() => Label;
+    }
+
     private enum SortMode
     {
         Quality, MaxLevelDesc, MaxLevelAsc, LevelDesc,
@@ -87,11 +98,13 @@ public partial class ForgeViewerView : UserControl
     // ── Constants & state ────────────────────────────────────────
 
     private const int PageSize = 60;
-    private const int FolderEntrySize = 24;
-    private const int FolderStringPtrOffset = 12;
 
     private List<int> forgeResults = new();
     private List<CachedItem> cachedItems = new();
+    // Addresses (he+0x38) that came from a hero's HeroEquipments rather
+    // than the forge ItemBox — used to tag snapshot items so the picker's
+    // Source dropdown can filter Forge vs Hero.
+    private readonly HashSet<int> _heroResultAddrs = new();
 
     // Snapshot of the most recent forge read, exposed so other views (the
     // Clone Source picker) can surface the "real items" list without having
@@ -111,6 +124,7 @@ public partial class ForgeViewerView : UserControl
         public Quality2 Quality { get; init; }
         public EquipmentType EquipmentType { get; init; }
         public int Level { get; init; }
+        public bool IsHero { get; init; }
         public bool IsRealInstance => EquipmentID1 != 0 || EquipmentID2 != 0;
     }
     private int currentPage;
@@ -124,6 +138,7 @@ public partial class ForgeViewerView : UserControl
     {
         InitializeComponent();
         _suppressFilterEvent = true;
+        PopulateSourceCombo();
         PopulateTypeCombo();
         PopulateQualityCombo();
         PopulateSortCombo();
@@ -131,6 +146,14 @@ public partial class ForgeViewerView : UserControl
     }
 
     // ── Combo population ─────────────────────────────────────────
+
+    private void PopulateSourceCombo()
+    {
+        CboSource.Items.Add(new SourceEntry(SourceMode.All,   "All"));
+        CboSource.Items.Add(new SourceEntry(SourceMode.Forge, "Forge"));
+        CboSource.Items.Add(new SourceEntry(SourceMode.Hero,  "Hero"));
+        CboSource.SelectedIndex = 0; // default: All (Forge + Hero)
+    }
 
     private void PopulateTypeCombo()
     {
@@ -183,37 +206,145 @@ public partial class ForgeViewerView : UserControl
 
     // ── Button handlers ──────────────────────────────────────────
 
-    private void BtnScan_Click(object sender, RoutedEventArgs e)
+    private void BtnScan_Click(object sender, RoutedEventArgs e) => RunForgeScan();
+
+    private void Source_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        // Changing the source changes the underlying item set (not just a
+        // view filter), so re-enumerate. Suppressed during ctor population.
+        if (_suppressFilterEvent) return;
+        RunForgeScan();
+    }
+
+    private void RunForgeScan()
     {
         if (!Base.OpenProcess()) return;
 
         BtnScan.IsEnabled = false;
-        LblStatus.Text = "Scanning...";
-
-        int[]? damagePointers = BootstrapDamagePointers();
-        if (damagePointers == null)
+        LblStatus.Text = "Reading items...";
+        try
         {
-            Base.RaiseMessage(
-                "Could not find any items in memory.\r\n\r\n" +
-                "Make sure the game is running and that your hero is in a map or lobby so items are loaded.",
-                "Forge Viewer");
-            BtnScan.IsEnabled = true;
-            LblStatus.Text = "Bootstrap scan found nothing.";
-            return;
+            List<int>? items = EnumerateItemAddresses();
+            if (items == null)
+            {
+                Base.RaiseMessage(
+                    "Could not reach the forge / hero items.\r\n\r\n" +
+                    "Make sure the game is running and your hero is in a map or the tavern " +
+                    "(items aren't loaded in menus / during loading).",
+                    "Forge Viewer");
+                LblStatus.Text = "Items not reachable.";
+                OnScanFail();
+                return;
+            }
+
+            forgeResults = items;
+            if (forgeResults.Count == 0) OnScanFail();
+            else OnScanSuccess();
         }
-
-        ItemNative s = new ItemNative
+        finally
         {
-            StatModifiers = new int[10],
-            DamageReductions = new DamageNative[4]
-        };
-        for (int i = 0; i < damagePointers.Length; i++)
-            s.DamageReductions[i].DamageType = damagePointers[i];
+            BtnScan.IsEnabled = true;
+        }
+    }
 
-        Base.CreateItemMask(s, useDamagePointers: true);
-        Base.RunFirstScan(0, 4, OnScanFail, OnScanSuccess, ref forgeResults);
+    // Authoritative enumeration — walks the HeroManager's own lists instead
+    // of scanning memory and guessing which structs are "real". Chain
+    // verified live 2026-05-15 (memdump forge_chain; Num matched the
+    // in-game forge count exactly):
+    //   playerPawn +0x22C → ADunDefPlayerController
+    //              +0x3B8 → Player (ULocalPlayer)
+    //              +0x194 → ViewportClient (UDunDefViewportClient)
+    //              +0xCFC → TheHeroManager (UDunDefHeroManager)
+    // Forge  = HeroManager.ItemBoxEquipments TArray @ +0x39C
+    // Hero   = HeroManager.ActiveHeroes TArray @ +0x36C, then each
+    //          UDunDefHero.HeroEquipments TArray @ +0x5B0
+    // Every element is a UHeroEquipment*; its inline ItemNative starts at
+    // +0x38 (same layout as forge items / floor drops), so we return
+    // he+0x38 and the existing ReadAllItems/ItemNative/edit pipeline is
+    // unchanged for both sources.
+    private List<int>? EnumerateItemAddresses()
+    {
+        int heroMgr = ResolveHeroManager();
+        if (!IsGamePtr(heroMgr)) return null;
 
-        BtnScan.IsEnabled = true;
+        var mode = (CboSource.SelectedItem as SourceEntry)?.Mode ?? SourceMode.Forge;
+        var list = new List<int>();
+        _heroResultAddrs.Clear();
+
+        if (mode == SourceMode.Forge || mode == SourceMode.All)
+            foreach (int he in ReadPtrArray(heroMgr + 0x39C))      // ItemBoxEquipments
+                list.Add(he + 0x38);
+
+        if (mode == SourceMode.Hero || mode == SourceMode.All)
+            foreach (int hero in ReadPtrArray(heroMgr + 0x36C))    // ActiveHeroes
+                foreach (int he in ReadPtrArray(hero + 0x5B0))     // UDunDefHero.HeroEquipments
+                {
+                    int addr = he + 0x38;
+                    list.Add(addr);
+                    _heroResultAddrs.Add(addr);
+                }
+
+        return list;
+    }
+
+    private int ResolveHeroManager()
+    {
+        if (Window.GetWindow(this) is not Modinator.MainWindow main) return 0;
+        int pawn = main.ResolvePlayerPawnAddress();
+        if (!IsGamePtr(pawn)) return 0;
+        int controller = RdPtr(pawn + 0x22C);
+        int player     = RdPtr(controller + 0x3B8);
+        int vpClient   = RdPtr(player + 0x194);
+        return RdPtr(vpClient + 0xCFC);
+    }
+
+    // Reads a UE3 TArray<T*> header (data ptr, Num, Max) at `tarrayAddr`
+    // and returns the live element pointers. Defensive Num cap; bad reads
+    // yield an empty list (a hero with no equipment, etc.).
+    private static List<int> ReadPtrArray(int tarrayAddr)
+    {
+        var result = new List<int>();
+        int dataPtr = RdPtr(tarrayAddr);
+        int num     = RdInt(tarrayAddr + 4);
+        if (!IsGamePtr(dataPtr) || num <= 0 || num > 200000) return result;
+
+        byte[]? arr;
+        try { arr = Base.Instance.ReadMemory(dataPtr, num * 4); }
+        catch { return result; }
+        if (arr == null || arr.Length < num * 4) return result;
+
+        for (int i = 0; i < num; i++)
+        {
+            int p = BitConverter.ToInt32(arr, i * 4);
+            if (IsGamePtr(p)) result.Add(p);
+        }
+        return result;
+    }
+
+    // DD1 is LARGEADDRESSAWARE on WOW64 — heap sits anywhere in
+    // [0x01000000, 0xFFFE0000). Matches MainWindow.IsHeapPtr.
+    private static bool IsGamePtr(int p)
+        => (uint)p >= 0x01000000u && (uint)p < 0xFFFE0000u;
+
+    private static int RdPtr(int addr)
+    {
+        if (!IsGamePtr(addr)) return 0;
+        try
+        {
+            byte[] b = Base.Instance.ReadMemory(addr, 4);
+            return (b != null && b.Length >= 4) ? BitConverter.ToInt32(b, 0) : 0;
+        }
+        catch { return 0; }
+    }
+
+    private static int RdInt(int addr)
+    {
+        try
+        {
+            byte[] b = Base.Instance.ReadMemory(addr, 4);
+            return (b != null && b.Length >= 4) ? BitConverter.ToInt32(b, 0) : 0;
+        }
+        catch { return 0; }
     }
 
     private void BtnExport_Click(object sender, RoutedEventArgs e)
@@ -254,8 +385,6 @@ public partial class ForgeViewerView : UserControl
 
     private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
     {
-        if (!IsTypeFilterSpecific()) return;
-
         var filtered = GetFilteredItems();
         if (filtered.Count == 0) return;
 
@@ -274,10 +403,11 @@ public partial class ForgeViewerView : UserControl
 
     private void BtnBulk_Click(object sender, RoutedEventArgs e)
     {
-        if (!IsTypeFilterSpecific() || selectedAddresses.Count == 0) return;
+        if (selectedAddresses.Count == 0) return;
 
+        // Mixed types are fine now — bulk MAX is class-aware per item.
         var typeEntry = CboType.SelectedItem as TypeEntry;
-        string typeLabel = typeEntry?.Label ?? "items";
+        string typeLabel = (typeEntry != null && !typeEntry.IsAll) ? typeEntry.Label : "selected items";
         var addresses = new List<int>(selectedAddresses);
 
         var dlg = new BulkEditDialog(addresses, typeLabel);
@@ -369,11 +499,6 @@ public partial class ForgeViewerView : UserControl
         currentPage = 0;
         selectedAddresses.Clear();
         PopulateCards();
-    }
-
-    private void ChkRealOnly_Changed(object sender, RoutedEventArgs e)
-    {
-        RepopulateFolderCombo();
     }
 
     // ── Bootstrap damage pointers ────────────────────────────────
@@ -490,6 +615,7 @@ public partial class ForgeViewerView : UserControl
     private void OnScanSuccess()
     {
         ReadAllItems();
+        ReadFolderNames();
         RepopulateFolderCombo();
         // Once we have a cache, flip the primary button into REFRESH mode —
         // pressing it just reruns the same scan path.
@@ -530,7 +656,8 @@ public partial class ForgeViewerView : UserControl
                     User = user,
                     FolderID = native.FolderID,
                     EquipmentID1 = native.EquipmentID1,
-                    EquipmentID2 = native.EquipmentID2
+                    EquipmentID2 = native.EquipmentID2,
+                    IsHero = _heroResultAddrs.Contains(address)
                 });
             }
             catch { }
@@ -556,147 +683,48 @@ public partial class ForgeViewerView : UserControl
                 Quality = ci.User.Quality2,
                 EquipmentType = ci.User.EquipmentType,
                 Level = ci.User.Level,
+                IsHero = ci.IsHero,
             });
         }
         LastSnapshot = snap;
     }
 
-    // ── Folder name reading from game memory ──────────────────────
+    // ── Folder names — authoritative (HeroManager.ItemFolders) ────
     //
-    // DD1 stores folder names as a contiguous array of 24-byte structs:
-    //   +0:  UObject pointer
-    //   +4:  flags (-1)
-    //   +8:  count (1)
-    //   +12: FString pointer (UTF-16)
-    //   +16: FString CurrentLength
-    //   +20: FString MaxLength
-    //
-    // We find the array by picking any item's FolderID, reading its folder
-    // name string, then scanning for a pointer to that string. Once we have
-    // one entry, we walk backwards/forwards to read the entire array.
+    // UDunDefHeroManager.ItemFolders is a TArray<FItemFolder> at
+    // HeroManager + 0x0098 (data, Num@+0x9C). FItemFolder (stride 24):
+    //   +0x00 ParentID  +0x04 FolderID  +0x08 FolderName (FString:
+    //   Data@+0x08, Num@+0x0C incl. null)  +0x14 Tag.
+    // SDK-confirmed + matches DD_ModMenu list_folders (hm->ItemFolders →
+    // f.FolderID / f.FolderName). Reuses the same verified HeroManager
+    // chain as the item enumeration — no scan, no heuristic.
 
     private void ReadFolderNames()
     {
         _folderNames.Clear();
-        if (cachedItems.Count == 0) return;
+        int heroMgr = ResolveHeroManager();
+        if (!IsGamePtr(heroMgr)) return;
 
-        try
+        int dataPtr = RdPtr(heroMgr + 0x98);   // ItemFolders TArray.Data
+        int num     = RdInt(heroMgr + 0x9C);   // ItemFolders TArray.Num
+        if (!IsGamePtr(dataPtr) || num <= 0 || num > 100000) return;
+
+        const int Stride = 24;                 // sizeof(FItemFolder)
+        byte[]? block;
+        try { block = Base.Instance.ReadMemory(dataPtr, num * Stride); }
+        catch { return; }
+        if (block == null || block.Length < num * Stride) return;
+
+        for (int i = 0; i < num; i++)
         {
-            // Strategy: pick a known item, read its name string address from memory,
-            // then search for a struct that contains a pointer to a printable UTF-16
-            // string with the FFFFFFFF 01 pattern at offsets +4/+8.
-            //
-            // We scan heap memory in 256KB chunks looking for two consecutive
-            // folder entries (24 bytes apart, both with FFFFFFFF01 at +4).
-
-            // Scan broadly through the game's address space
-            int chunkSize = 0x40000; // 256KB chunks
-            for (long page = 0x01000000; page < 0x7F000000; page += chunkSize)
-            {
-                byte[]? data = null;
-                try { data = Base.Instance.ReadMemory((int)page, chunkSize); }
-                catch { continue; }
-                if (data == null || data.Length < 48) continue;
-
-                for (int i = 0; i < data.Length - 48; i += 4)
-                {
-                    // Look for FFFFFFFF at this position
-                    if (data[i] != 0xFF || data[i+1] != 0xFF || data[i+2] != 0xFF || data[i+3] != 0xFF) continue;
-                    // Followed by 01000000
-                    if (data[i+4] != 0x01 || data[i+5] != 0x00 || data[i+6] != 0x00 || data[i+7] != 0x00) continue;
-
-                    // Check next entry 24 bytes later
-                    int n = i + FolderEntrySize;
-                    if (n + 8 >= data.Length) continue;
-                    if (data[n] != 0xFF || data[n+1] != 0xFF || data[n+2] != 0xFF || data[n+3] != 0xFF) continue;
-                    if (data[n+4] != 0x01 || data[n+5] != 0x00 || data[n+6] != 0x00 || data[n+7] != 0x00) continue;
-
-                    // Validate string pointers (at offset +8 from pattern = +12 from entry start)
-                    int strPtr1 = BitConverter.ToInt32(data, i + 8);
-                    int strLen1 = BitConverter.ToInt32(data, i + 12);
-                    int strPtr2 = BitConverter.ToInt32(data, n + 8);
-                    int strLen2 = BitConverter.ToInt32(data, n + 12);
-
-                    if (strPtr1 <= 0x10000 || strLen1 <= 0 || strLen1 > 256) continue;
-                    if (strPtr2 <= 0x10000 || strLen2 <= 0 || strLen2 > 256) continue;
-
-                    // Try to read the strings to confirm they're valid folder names
-                    string? name1 = Base.ReadUniDirect(strPtr1, strLen1 - 1);
-                    string? name2 = Base.ReadUniDirect(strPtr2, strLen2 - 1);
-                    if (name1 == null || name2 == null) continue;
-                    if (!IsPrintable(name1) || !IsPrintable(name2)) continue;
-
-                    // Found the array! Entry starts 4 bytes before the FFFFFFFF.
-                    int entryBase = (int)page + i - 4;
-                    var names = TryReadFolderArray(entryBase);
-                    if (names.Count >= 2)
-                    {
-                        _folderNames = names;
-                        return;
-                    }
-                }
-            }
+            int b = i * Stride;
+            int folderId = BitConverter.ToInt32(block, b + 0x04); // FItemFolder.FolderID
+            int strPtr   = BitConverter.ToInt32(block, b + 0x08); // FolderName.Data
+            int strLen   = BitConverter.ToInt32(block, b + 0x0C); // FolderName.Num (incl null)
+            if (!IsGamePtr(strPtr) || strLen <= 1 || strLen > 512) continue;
+            string? name = Base.ReadUniDirect(strPtr, strLen - 1);
+            if (!string.IsNullOrEmpty(name)) _folderNames[folderId] = name;
         }
-        catch { }
-    }
-
-    private static bool IsPrintable(string s)
-    {
-        foreach (char c in s)
-            if (char.IsControl(c) && c != '\n' && c != '\r') return false;
-        return s.Length > 0;
-    }
-
-    private Dictionary<int, string> TryReadFolderArray(int firstEntryAddr)
-    {
-        var names = new Dictionary<int, string>();
-
-        // Walk backwards to find the start of the array
-        int startAddr = firstEntryAddr;
-        for (int i = 0; i < 50; i++)
-        {
-            int prevAddr = startAddr - FolderEntrySize;
-            try
-            {
-                byte[] prevData = Base.Instance.ReadMemory(prevAddr + 4, 8);
-                if (prevData[0] == 0xFF && prevData[1] == 0xFF && prevData[2] == 0xFF && prevData[3] == 0xFF &&
-                    prevData[4] == 0x01 && prevData[5] == 0x00 && prevData[6] == 0x00 && prevData[7] == 0x00)
-                {
-                    startAddr = prevAddr;
-                }
-                else break;
-            }
-            catch { break; }
-        }
-
-        // Now read forward
-        for (int idx = 0; idx < 100; idx++)
-        {
-            int addr = startAddr + (idx * FolderEntrySize);
-            try
-            {
-                byte[] entry = Base.Instance.ReadMemory(addr, FolderEntrySize);
-                if (entry.Length < FolderEntrySize) break;
-
-                // Check the FFFFFFFF 01 pattern
-                if (entry[4] != 0xFF || entry[5] != 0xFF || entry[6] != 0xFF || entry[7] != 0xFF) break;
-                if (entry[8] != 0x01 || entry[9] != 0x00) break;
-
-                int strPtr = BitConverter.ToInt32(entry, FolderStringPtrOffset);
-                int strLen = BitConverter.ToInt32(entry, FolderStringPtrOffset + 4);
-
-                if (strPtr < 0x10000 || strLen <= 0 || strLen > 256) break;
-
-                string? name = Base.ReadUniDirect(strPtr, strLen - 1);
-                if (name != null && name.Length > 0)
-                {
-                    names[idx] = name;
-                }
-            }
-            catch { break; }
-        }
-
-        return names;
     }
 
     // ── Folder combo ─────────────────────────────────────────────
@@ -706,11 +734,9 @@ public partial class ForgeViewerView : UserControl
         _suppressFilterEvent = true;
         CboFolder.Items.Clear();
 
-        IEnumerable<CachedItem> source = cachedItems;
-        if (ChkRealOnly.IsChecked == true)
-            source = cachedItems.Where(ci => ci.IsRealInstance);
-
-        var scoped = source.ToList();
+        // Every cached item now comes from the authoritative
+        // ItemBoxEquipments enumeration — all real, no heuristic filter.
+        var scoped = cachedItems.ToList();
         var groups = scoped
             .GroupBy(ci => ci.FolderID)
             .Select(g => new { FolderID = g.Key, Count = g.Count() })
@@ -738,36 +764,21 @@ public partial class ForgeViewerView : UserControl
 
     // ── Filtering ────────────────────────────────────────────────
 
-    private bool IsTypeFilterSpecific()
-    {
-        return CboType.SelectedItem is TypeEntry t && !t.IsAll;
-    }
-
+    // Selection / bulk is always available now \u2014 bulk MAX is class-aware
+    // (each item maxed only with its compatible stats), so a mixed-type
+    // selection is safe; no need to filter to one equipment type first.
     private void UpdateBulkButton()
     {
-        bool typeSpecific = IsTypeFilterSpecific();
-        bool active = typeSpecific && selectedAddresses.Count > 0;
+        bool active = selectedAddresses.Count > 0;
         BtnBulk.IsEnabled = active;
         if (BtnBulk.Content is StackPanel sp && sp.Children.Count >= 2 && sp.Children[1] is TextBlock tb)
-        {
             tb.Text = active ? "BULK (" + selectedAddresses.Count + ")" : "BULK EDIT";
-        }
 
-        // Select All flips between SELECT ALL / CLEAR based on whether every
-        // currently-filtered item is already in the selection set.
-        BtnSelectAll.IsEnabled = typeSpecific;
-        if (typeSpecific)
-        {
-            var filtered = GetFilteredItems();
-            bool allSelected = filtered.Count > 0 && filtered.All(ci => selectedAddresses.Contains(ci.Address));
-            BtnSelectAllLabel.Text = allSelected ? "CLEAR" : "SELECT ALL";
-            BtnSelectAllIcon.Text = allSelected ? "\uE8E6" : "\uE762"; // ClearSelection / SelectAll glyphs
-        }
-        else
-        {
-            BtnSelectAllLabel.Text = "SELECT ALL";
-            BtnSelectAllIcon.Text = "\uE762";
-        }
+        BtnSelectAll.IsEnabled = true;
+        var filtered = GetFilteredItems();
+        bool allSelected = filtered.Count > 0 && filtered.All(ci => selectedAddresses.Contains(ci.Address));
+        BtnSelectAllLabel.Text = allSelected ? "CLEAR" : "SELECT ALL";
+        BtnSelectAllIcon.Text = allSelected ? "\uE8E6" : "\uE762"; // ClearSelection / SelectAll glyphs
     }
 
     // Toggle the "selected" look on a card without rebuilding anything else.
@@ -793,10 +804,9 @@ public partial class ForgeViewerView : UserControl
         int dashIdx = baseText.IndexOf('\u2014');
         if (dashIdx > 0) baseText = baseText.Substring(0, dashIdx).TrimEnd();
 
-        bool selMode = IsTypeFilterSpecific();
-        string sel = selMode && selectedAddresses.Count > 0
+        string sel = selectedAddresses.Count > 0
             ? "  \u2014  " + selectedAddresses.Count + " selected" : "";
-        string hint = selMode && selectedAddresses.Count == 0
+        string hint = selectedAddresses.Count == 0
             ? "  \u2014  Ctrl+click to select" : "";
         LblStatus.Text = baseText + sel + hint;
     }
@@ -804,9 +814,6 @@ public partial class ForgeViewerView : UserControl
     private List<CachedItem> GetFilteredItems()
     {
         IEnumerable<CachedItem> q = cachedItems;
-
-        if (ChkRealOnly.IsChecked == true)
-            q = q.Where(ci => ci.IsRealInstance);
 
         if (CboFolder.SelectedItem is FolderEntry folder && folder.FolderID != int.MinValue)
             q = q.Where(ci => ci.FolderID == folder.FolderID);
@@ -869,7 +876,7 @@ public partial class ForgeViewerView : UserControl
 
         int start = currentPage * PageSize;
         int end = Math.Min(start + PageSize, list.Count);
-        bool selectionMode = IsTypeFilterSpecific();
+        const bool selectionMode = true; // selection is always on (class-aware bulk MAX)
 
         for (int i = start; i < end; i++)
         {

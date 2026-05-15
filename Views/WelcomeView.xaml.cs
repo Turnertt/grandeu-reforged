@@ -10,6 +10,11 @@ namespace Modinator.Views;
 
 public partial class WelcomeView : UserControl
 {
+    // Latest DD1 Steam build this app was verified working on. DD1 patches
+    // ~weekly; bump this single string after a clean `sync_offsets.py`
+    // health check (see CLAUDE.md "Offset verification").
+    private const string CompatibleDdVersion = "10.6.14";
+
     private DispatcherTimer? _statusTimer;
 
     public WelcomeView()
@@ -25,6 +30,8 @@ public partial class WelcomeView : UserControl
         // auto-zero and added visual noise.
         var v = Assembly.GetExecutingAssembly().GetName().Version;
         if (v != null) VersionText.Text = $"v{v.Major}.{v.Minor}.{v.Build}";
+
+        CompatText.Text = $"Working as of DD1 v{CompatibleDdVersion}";
 
         UpdateConnectionStatus();
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };

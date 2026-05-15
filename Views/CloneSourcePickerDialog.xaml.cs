@@ -18,14 +18,19 @@ public partial class CloneSourcePickerDialog : Window
 
     private readonly List<Row> _all;
     private readonly int _excludeAddress;
-    private readonly EquipmentType? _sacrificialType;
     private bool _suppressFilterEvent;
 
-    internal CloneSourcePickerDialog(int excludeAddress = 0, EquipmentType? sacrificialType = null)
+    internal CloneSourcePickerDialog(
+        int excludeAddress = 0,
+        string? titleOverride = null,
+        string? promptOverride = null,
+        string? okButtonOverride = null)
     {
         InitializeComponent();
         _excludeAddress = excludeAddress;
-        _sacrificialType = sacrificialType;
+        if (titleOverride != null)    Title = titleOverride;
+        if (promptOverride != null)   LblPrompt.Text = promptOverride;
+        if (okButtonOverride != null) BtnOk.Content  = okButtonOverride;
         _all = BuildRows();
         PopulateCombos();
         ApplyAllFilters();
@@ -65,7 +70,7 @@ public partial class CloneSourcePickerDialog : Window
                     Type = user.EquipmentType.ToString(),
                     TypeEnum = user.EquipmentType,
                     Level = user.Level,
-                    IsReal = s.IsRealInstance,
+                    IsHero = s.IsHero,
                 });
             }
             catch { /* skip unreadable entries */ }
@@ -78,6 +83,13 @@ public partial class CloneSourcePickerDialog : Window
     private void PopulateCombos()
     {
         _suppressFilterEvent = true;
+
+        // Source: All / Forge box / Hero-equipped (the snapshot tags each
+        // item with its origin).
+        CboSource.Items.Add(new SourceEntry(null,  "All sources"));
+        CboSource.Items.Add(new SourceEntry(false, "Forge"));
+        CboSource.Items.Add(new SourceEntry(true,  "Hero"));
+        CboSource.SelectedIndex = 0;
 
         // Type: "All" + every distinct type present in the snapshot so
         // the user isn't presented with types they don't actually own.
@@ -104,18 +116,6 @@ public partial class CloneSourcePickerDialog : Window
         CboSort.Items.Add(new SortEntry(SortMode.TypeAsc,      "Type (A-Z)"));
         CboSort.SelectedIndex = 0;
 
-        // If we know the sacrificial's type and at least one row matches,
-        // pre-select that type — the common case is cloning within a type.
-        if (_sacrificialType is EquipmentType st &&
-            _all.Any(r => r.TypeEnum == st))
-        {
-            for (int i = 0; i < CboType.Items.Count; i++)
-            {
-                if (CboType.Items[i] is TypeEntry te && te.Type == st)
-                { CboType.SelectedIndex = i; break; }
-            }
-        }
-
         _suppressFilterEvent = false;
     }
 
@@ -128,9 +128,9 @@ public partial class CloneSourcePickerDialog : Window
         int qualityMin = (CboQuality.SelectedItem as QualityEntry)?.MinRank ?? -1;
         SortMode mode = (CboSort.SelectedItem as SortEntry)?.Mode ?? SortMode.QualityDesc;
 
-        bool realOnly = ChkRealOnly.IsChecked == true;
+        bool? heroFilter = (CboSource.SelectedItem as SourceEntry)?.Hero;
         IEnumerable<Row> q = _all;
-        if (realOnly) q = q.Where(r => r.IsReal);
+        if (heroFilter is bool h) q = q.Where(r => r.IsHero == h);
         if (typeFilter is EquipmentType t) q = q.Where(r => r.TypeEnum == t);
         if (qualityMin >= 0) q = q.Where(r => r.QualityRank >= qualityMin);
         if (needle.Length > 0)
@@ -181,30 +181,14 @@ public partial class CloneSourcePickerDialog : Window
         ApplyAllFilters();
     }
 
-    private void ChkRealOnly_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_suppressFilterEvent) return;
-        ApplyAllFilters();
-    }
-
-    private void BtnMatchCurrent_Click(object sender, RoutedEventArgs e)
-    {
-        if (_sacrificialType is not EquipmentType st) return;
-        for (int i = 0; i < CboType.Items.Count; i++)
-        {
-            if (CboType.Items[i] is TypeEntry te && te.Type == st)
-            { CboType.SelectedIndex = i; return; }
-        }
-    }
-
     private void BtnClearFilters_Click(object sender, RoutedEventArgs e)
     {
         _suppressFilterEvent = true;
         TxtFilter.Text = "";
+        CboSource.SelectedIndex = 0;
         CboType.SelectedIndex = 0;
         CboQuality.SelectedIndex = 0;
         CboSort.SelectedIndex = 0;
-        ChkRealOnly.IsChecked = true;
         _suppressFilterEvent = false;
         ApplyAllFilters();
     }
@@ -249,7 +233,16 @@ public partial class CloneSourcePickerDialog : Window
         public string Type { get; set; } = "";
         public EquipmentType TypeEnum { get; set; }
         public int Level { get; set; }
-        public bool IsReal { get; set; }
+        public bool IsHero { get; set; }
+    }
+
+    // null Hero = "All sources"; false = Forge box; true = Hero-equipped.
+    private class SourceEntry
+    {
+        public bool? Hero;
+        public string Label;
+        public SourceEntry(bool? hero, string label) { Hero = hero; Label = label; }
+        public override string ToString() => Label;
     }
 
     private class TypeEntry

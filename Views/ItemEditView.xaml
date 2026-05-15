@@ -25,12 +25,6 @@
                             Padding="16,7" Height="32"
                             Margin="8,0,0,0"
                             Click="BtnRefresh_Click" />
-                    <Button x:Name="BtnCloneFrom"
-                            Content="CLONE FROM..."
-                            Padding="16,7" Height="32"
-                            Margin="8,0,0,0"
-                            Click="BtnCloneFrom_Click"
-                            ToolTip="Copy all stats from another item onto this one (keeps this item's ID and inventory slot). Populates from your last Item Search results." />
                     <Button x:Name="BtnMax"
                             Content="MAX"
                             Padding="16,7" Height="32"
@@ -471,6 +465,27 @@
                             <ComboBox x:Name="CboEquipmentType" />
                         </StackPanel>
                     </Grid>
+                </Border>
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="Memory Address (hex)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TxtMemoryAddress" Grid.Column="0"
+                                     IsReadOnly="True"
+                                     Background="{StaticResource SurfaceLightBrush}" />
+                            <Button x:Name="BtnCopyMemoryAddress" Grid.Column="1"
+                                    Content="COPY"
+                                    Margin="8,0,0,0"
+                                    Padding="12,0"
+                                    Height="32"
+                                    ToolTip="Copy the memory address to clipboard"
+                                    Click="BtnCopyMemoryAddress_Click" />
+                        </Grid>
+                    </StackPanel>
                 </Border>
                 <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
                     <StackPanel>

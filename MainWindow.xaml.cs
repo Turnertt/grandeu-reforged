@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     internal ToggleButton TbAlwaysOnTop { get; private set; } = null!;
     internal ToggleButton TbAutoKill { get; private set; } = null!;
     internal ToggleButton TbSimulateG { get; private set; } = null!;
+    internal ToggleButton TbUnlimitedMana { get; private set; } = null!;
+    internal ToggleButton TbMaxTowerUnits { get; private set; } = null!;
 
     public MainWindow()
     {
@@ -74,6 +76,28 @@ public partial class MainWindow : Window
         TbSimulateG.Checked += TbSimulateG_Toggled;
         TbSimulateG.Unchecked += TbSimulateG_Toggled;
 
+        TbUnlimitedMana = new ToggleButton
+        {
+            Style = style,
+            Content = "M",
+            FontFamily = (System.Windows.Media.FontFamily)FindResource("DefaultFontFamily"),
+            FontWeight = FontWeights.Bold,
+            ToolTip = "Unlimited Mana — build/upgrade towers",
+        };
+        TbUnlimitedMana.Checked += TbUnlimitedMana_Toggled;
+        TbUnlimitedMana.Unchecked += TbUnlimitedMana_Toggled;
+
+        TbMaxTowerUnits = new ToggleButton
+        {
+            Style = style,
+            Content = "T",
+            FontFamily = (System.Windows.Media.FontFamily)FindResource("DefaultFontFamily"),
+            FontWeight = FontWeights.Bold,
+            ToolTip = "Max Tower Units — raise the map's DU budget cap",
+        };
+        TbMaxTowerUnits.Checked += TbMaxTowerUnits_Toggled;
+        TbMaxTowerUnits.Unchecked += TbMaxTowerUnits_Toggled;
+
         var separator = new Border
         {
             Width = 1,
@@ -87,6 +111,8 @@ public partial class MainWindow : Window
         panel.Children.Add(TbAlwaysOnTop);
         panel.Children.Add(TbAutoKill);
         panel.Children.Add(TbSimulateG);
+        panel.Children.Add(TbUnlimitedMana);
+        panel.Children.Add(TbMaxTowerUnits);
         panel.Children.Add(separator);
         return panel;
     }
@@ -269,6 +295,7 @@ public partial class MainWindow : Window
             "HeroSearch" => BtnSearchHero,
             "MiscSearch" => BtnSearchMisc,
             "ForgeViewer" => BtnForgeViewer,
+            "ItemDupe" => BtnItemDupe,
             "Settings" => BtnSettings,
             _ => null,
         };
@@ -292,6 +319,7 @@ public partial class MainWindow : Window
             "HeroSearch" => _heroSearchView ??= new Views.HeroSearchView(),
             "MiscSearch" => _miscSearchView ??= new Views.MiscSearchView(),
             "ForgeViewer" => _forgeViewerView ??= new Views.ForgeViewerView(),
+            "ItemDupe" => _itemDupeView ??= new Views.ItemDupeView(),
             "Settings" => new Views.SettingsView(), // fresh so it re-syncs state each time
             _ => null,
         };
@@ -340,6 +368,7 @@ public partial class MainWindow : Window
     private Views.HeroSearchView? _heroSearchView;
     private Views.MiscSearchView? _miscSearchView;
     private Views.ForgeViewerView? _forgeViewerView;
+    private Views.ItemDupeView? _itemDupeView;
     private object? _lastContentBeforeEditor;
 
     // ── Show editor ─────────────────────────────────────────────────
@@ -377,6 +406,31 @@ public partial class MainWindow : Window
         SyncSettingsView();
     }
 
+    // Unlimited mana (build/upgrade towers). Shares the Auto-Kill background
+    // loop — RefreshAkLoop starts it when this is the only active feature,
+    // and AutoKillTick tops the player controller's ManaPower up to its
+    // MaxManaPower each tick. Not persisted (parity with
+    // GrandeuReforged-Source, which has no AppPrefs); default off.
+    public void SetUnlimitedMana(bool on)
+    {
+        _unlimitedMana = on;
+        if (TbUnlimitedMana.IsChecked != on) TbUnlimitedMana.IsChecked = on;
+        RefreshAkLoop();
+        SyncSettingsView();
+    }
+
+    // Max tower units — raises ADunDefGameReplicationInfo.MaxTowerUnits (the
+    // per-map DU budget cap) so far more towers can be placed. Shares the
+    // Auto-Kill loop like the other passive toggles. Not persisted; default
+    // off (parity with GrandeuReforged-Source).
+    public void SetMaxTowerUnits(bool on)
+    {
+        _maxTowerUnits = on;
+        if (TbMaxTowerUnits.IsChecked != on) TbMaxTowerUnits.IsChecked = on;
+        RefreshAkLoop();
+        SyncSettingsView();
+    }
+
     public void SetAutoKillEnabled(bool on)
     {
         _autoKillEnabled = on;
@@ -401,7 +455,7 @@ public partial class MainWindow : Window
     // multiplier that needs continuous TimeDilation writes.
     private void RefreshAkLoop()
     {
-        bool shouldRun = _autoKillEnabled || _speedMultiplier != 1.0f;
+        bool shouldRun = _autoKillEnabled || _speedMultiplier != 1.0f || _unlimitedMana || _maxTowerUnits;
         if (shouldRun)
         {
             _cachedWorldInfo = 0;
@@ -497,6 +551,12 @@ public partial class MainWindow : Window
 
     private void TbSimulateG_Toggled(object sender, RoutedEventArgs e)
         => SetSimulateG(TbSimulateG.IsChecked == true);
+
+    private void TbUnlimitedMana_Toggled(object sender, RoutedEventArgs e)
+        => SetUnlimitedMana(TbUnlimitedMana.IsChecked == true);
+
+    private void TbMaxTowerUnits_Toggled(object sender, RoutedEventArgs e)
+        => SetMaxTowerUnits(TbMaxTowerUnits.IsChecked == true);
 
     // ── Results double-click → add to tracked items ─────────────────
 
@@ -738,12 +798,27 @@ public partial class MainWindow : Window
     // WorldInfo.TimeDilation (+0x0374) every tick so the game can't
     // quietly restore it on map changes or Kismet-driven slo-mo.
     private volatile float _speedMultiplier = 1.0f;
+    // Unlimited-mana toggle. When on, the AK loop tops the local player
+    // controller's ManaPower up to its MaxManaPower every tick (see the
+    // OFF_PC_* constants). Independent of Auto-Kill.
+    private volatile bool _unlimitedMana;
+    // Max-tower-units toggle. When on, the AK loop pins the GRI's
+    // MaxTowerUnits (the map's DU budget cap) to a large value every tick
+    // (see OFF_GRI_MAXTOWERUNITS). Independent of Auto-Kill.
+    private volatile bool _maxTowerUnits;
     private int _cachedWorldInfo;
     private int _cachedPlayerPawn;                    // address of the player pawn to skip
     private DateTime _akLastValidated = DateTime.MinValue;
     private const int AK_TICK_MS = 100;               // how often the background loop runs
     private const int AK_VALIDATE_MS = 2000;          // how often we re-verify the cache
     private const int AK_CHAIN_MAX = 300;             // hard cap on pawn chain walk
+    // Sanity ceiling for "is this int plausibly an HP value, not pointer
+    // garbage". The original 4.0.0.4-era heuristics (5M structural / 10M
+    // validate) are far below modern DD1 HP — live dump 2026-05 showed
+    // Orc 10.27M, Ogre 23.5M, Spider 7.2M. Too-low caps made the pawn
+    // scan reject every beefy enemy and ValidateCachedWorldInfo evict the
+    // cache on the first Ogre → permanent "no enemies found".
+    private const int AK_MAX_PLAUSIBLE_HP = 500_000_000;
     private System.Threading.CancellationTokenSource? _akCts;
     private System.Threading.Tasks.Task? _akLoopTask;
 
@@ -808,8 +883,40 @@ public partial class MainWindow : Window
 
         int hp = BitConverter.ToInt32(first, 0x0324);
         int hpMax = BitConverter.ToInt32(first, 0x0328);
-        if (hpMax < 1 || hpMax > 10_000_000 || hp < -1 || hp > hpMax) return false;
+        if (hpMax < 1 || hpMax > AK_MAX_PLAUSIBLE_HP || hp < -1 || hp > hpMax) return false;
         return true;
+    }
+
+    // On-demand resolve of the local player pawn (the pawn-chain tail),
+    // reusing the same verified WorldInfo/pawn scan Auto-Kill uses. Lets the
+    // Forge Viewer anchor the HeroManager pointer chain
+    // (pawn +0x22C → controller → Player → ViewportClient → TheHeroManager →
+    // ItemBoxEquipments) without its own scanner. Returns 0 when not in a
+    // resolvable game state (menu/loading). Same scan AK runs each tick, just
+    // invoked once on a button click.
+    public int ResolvePlayerPawnAddress()
+    {
+        if (GetAKHandle() == IntPtr.Zero) return 0;
+        if (_cachedWorldInfo == 0 || !ValidateCachedWorldInfo())
+            _cachedWorldInfo = FindWorldInfoViaPawnScan();
+        if (_cachedWorldInfo == 0) return 0;
+
+        byte[]? plData = AKRead(_cachedWorldInfo + 0x041C, 4);
+        if (plData == null) return 0;
+        int cur = BitConverter.ToInt32(plData, 0);
+
+        int tail = 0;
+        var visited = new HashSet<int>();
+        while (IsHeapPtr(cur) && visited.Add(cur) && visited.Count <= AK_CHAIN_MAX)
+        {
+            byte[]? pd = AKRead(cur, 0x32C);
+            if (pd == null || pd.Length < 0x32C) break;
+            tail = cur;
+            int np = BitConverter.ToInt32(pd, 0x0230);
+            if (np == 0) break;
+            cur = np;
+        }
+        return tail;
     }
 
     private void AutoKillTick()
@@ -943,7 +1050,7 @@ public partial class MainWindow : Window
         int killed = 0;
         int towersKilled = 0;
         int protectedHeroes = 0;
-        if (!learnOnly)
+        if (_autoKillEnabled && !learnOnly)
         {
             for (int i = 0; i < chain.Count - 1; i++) // tail = local player, skip
             {
@@ -1001,6 +1108,40 @@ public partial class MainWindow : Window
         float speed = _speedMultiplier;
         if (speed != 1.0f && _cachedWorldInfo != 0)
             AKWrite(_cachedWorldInfo + OFF_WI_TIMEDILATION, FloatBits(speed));
+
+        // Unlimited mana — refill the local player controller's ManaPower to
+        // its current MaxManaPower every tick. Reading Max keeps this correct
+        // across heroes / maps / mana-upgrade pickups (no baked-in cap) and
+        // leaves the HUD looking normal. _cachedPlayerPawn is the chain tail
+        // (local player); reached only past the gameplay-level gate, so this
+        // never fires in the tavern/menu/loading. Independent of Auto-Kill.
+        if (_unlimitedMana && _cachedPlayerPawn != 0)
+        {
+            int ctrl = ReadU32(_cachedPlayerPawn + OFF_PAWN_CONTROLLER);
+            if (IsHeapPtr(ctrl))
+            {
+                int maxMana = ReadU32(ctrl + OFF_PC_MAXMANAPOWER);
+                // Sanity: reject a garbage read (bad ptr) — real mana caps are
+                // small (≈2k); anything huge means the controller read missed.
+                if (maxMana > 0 && maxMana < 100_000_000)
+                    AKWrite(ctrl + OFF_PC_MANAPOWER, maxMana);
+            }
+        }
+
+        // Max tower units — raise the map's DU budget cap so far more towers
+        // can be placed. MaxTowerUnits is an 8-byte engine slot at
+        // GRI+0x039C; write BOTH dwords every tick (value, then a zeroed
+        // upper half) or the tower allocator crashes. GRI is valid here —
+        // we're past the gameplay-level gate, which already deref'd it.
+        if (_maxTowerUnits && _cachedWorldInfo != 0)
+        {
+            int gri = ReadU32(_cachedWorldInfo + OFF_WI_GRI);
+            if (IsHeapPtr(gri))
+            {
+                AKWrite(gri + OFF_GRI_MAXTOWERUNITS, MAX_TOWER_UNITS_VALUE);
+                AKWrite(gri + OFF_GRI_MAXTOWERUNITS + 4, 0);
+            }
+        }
 
         // Compact status line. Each segment only appears when it has
         // something to say.
@@ -1152,6 +1293,37 @@ public partial class MainWindow : Window
     // this ended up being the only workable lever.
     private const int OFF_ACTOR_LIFESPAN = 0x0114;
 
+    // Unlimited-mana feature. Verified live 2026-05-14 (memdump
+    // mana_via_pawn) end-to-end through this exact path:
+    //   APawn.Controller                    +0x022C → ADunDefPlayerController
+    //   ADunDefPlayerController.ManaPower    +0x06B4 (int — the value the
+    //                                                tower build/upgrade
+    //                                                system decrements)
+    //   ADunDefPlayerController.MaxManaPower +0x06B8 (int — read only; never
+    //                                                written, keeps HUD sane
+    //                                                and avoids a baked-in
+    //                                                cap that would go stale)
+    // Triple-confirmed: regenerated SDK, DD_ModMenu bUnlimitedManaTowers,
+    // SashaFloats table.
+    private const int OFF_PAWN_CONTROLLER  = 0x022C;
+    private const int OFF_PC_MANAPOWER     = 0x06B4;
+    private const int OFF_PC_MAXMANAPOWER  = 0x06B8;
+
+    // Max tower units (per-map DU budget cap).
+    // ADunDefGameReplicationInfo.MaxTowerUnits at GRI+0x039C. The SDK
+    // declares a 4-byte int there but the engine uses an 8-byte slot
+    // (DD_UDKGame_classes.hpp:4797-4798 tags the upper 4 bytes "FIX WRONG
+    // TYPE SIZE OF PREVIOUS PROPERTY"). A 4-byte-only write leaves the upper
+    // dword garbage and the tower allocator CRASHES — so we write BOTH
+    // dwords (value, then 0). GRI reached via _cachedWorldInfo + OFF_WI_GRI
+    // (same path IsInGameplayLevel uses). Per DD_ModMenu: write this
+    // directly, NOT GlobalTowerUnitLimitMultiplier (baked in at level load,
+    // ignored mid-game). 100,000 is effectively unlimited (real maps cap
+    // ~260 DU) while keeping the HUD's "used / max" less absurd; well
+    // within DD_ModMenu's 1,000,000 ceiling.
+    private const int OFF_GRI_MAXTOWERUNITS = 0x039C;
+    private const int MAX_TOWER_UNITS_VALUE = 100_000;
+
     // TargetableActors sweep (enemy towers / crystals / bosses). Offsets
     // from DD_ModMenu SDK:
     //   AWorldInfo.Game (AGameInfo*)               at +0x03FC
@@ -1196,7 +1368,7 @@ public partial class MainWindow : Window
     {
         if (klass == 0) return false;
         if (hp <= 0) return false;                  // dead/transient
-        if (hpMax <= 0 || hpMax > 10_000_000) return false;
+        if (hpMax <= 0 || hpMax > AK_MAX_PLAUSIBLE_HP) return false;
         if (hp > hpMax) return false;
         return true;
     }
@@ -1212,13 +1384,14 @@ public partial class MainWindow : Window
     // Seed history (for context if this ever needs re-deriving):
     //   0x00FCD9A8 — Grandeu-97-4-0-4-1669256200 (original)
     //   0x00FCD998 — DD1 patch April 2026 (16-byte rebase)
+    //   0x00FCD7D8 — DD1 build 2026-05 (Steam Win32; live DLL dump, base 0x00400000 / +0xBCD7D8)
     //
     // The seed only matters for the very first scan in a session. If
     // it misses, FindWorldInfoViaPawnScan's structural fallback rewrites
     // this field with the live vtable, and subsequent calls hit the
     // fast path again. Bumping the seed when a new patch ships is just
     // an optimization to skip the one-time rediscovery.
-    private uint _pawnVtable = 0x00FCD998;
+    private uint _pawnVtable = 0x00FCD7D8;
 
     [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "OpenProcess")]
     private static extern IntPtr OpenProcess2(uint access, bool inherit, int pid);
@@ -1472,7 +1645,7 @@ public partial class MainWindow : Window
 
                         int h = BitConverter.ToInt32(chunk, i + 0x0324);
                         int hm = BitConverter.ToInt32(chunk, i + 0x0328);
-                        if (hm <= 0 || hm > 5000000 || h < 0 || h > hm) continue;
+                        if (hm <= 0 || hm > AK_MAX_PLAUSIBLE_HP || h < 0 || h > hm) continue;
 
                         int wi = BitConverter.ToInt32(chunk, i + 0x0110);
                         // Same alignment trick — 0x3F666666 (=0.9f) is
@@ -1543,7 +1716,7 @@ public partial class MainWindow : Window
                             if (nvt < 0x00400000u || nvt >= 0x02000000u) continue;
                             int nh = BitConverter.ToInt32(nd, 0x0324);
                             int nhm = BitConverter.ToInt32(nd, 0x0328);
-                            if (nhm <= 0 || nhm > 5000000 || nh < 0 || nh > nhm) continue;
+                            if (nhm <= 0 || nhm > AK_MAX_PLAUSIBLE_HP || nh < 0 || nh > nhm) continue;
                             int nwi = BitConverter.ToInt32(nd, 0x0110);
                             if (nwi != wi) continue;
                         }

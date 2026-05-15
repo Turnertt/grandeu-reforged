@@ -1,7 +1,60 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
 namespace Modinator;
+
+// Class-aware MAX compatibility — the single source of truth shared by
+// ItemEditView (single-item, textbox path) and MaxItemConfig.ApplyTo
+// (bulk, ItemNative path). Derived from live weapon_probe dumps; see
+// max_item_weapontype_research.md.
+internal enum WeaponStat
+{
+    Damage, RangedDamage, Blocking, Knockback, ChargeSpeed, ShotsPerSecond,
+    NumProjectiles, ProjectileSpeed, ClipAmmo, ReloadSpeed, DrawScale, SwingSpeed
+}
+
+internal static class MaxCompat
+{
+    // weaponType (EWeaponType byte) is at object+0x824 = item-Address +
+    // 0x7EC — outside the marshaled ItemNative. Read 1 byte for weapons.
+    public const int WeaponTypeOffset = 0x7EC;
+
+    // Set on every weapon family in testing.
+    private static readonly HashSet<WeaponStat> Universal = new()
+        { WeaponStat.Damage, WeaponStat.DrawScale, WeaponStat.SwingSpeed };
+
+    // Per-EWeaponType additions: 1 Apprentice / 2 Squire / 3 Initiate(gun) /
+    // 4 Recruit. 0 Anyone / 5 None / unknown add nothing — the present-only
+    // ("special/unique item") union still maxes whatever the item carries.
+    private static HashSet<WeaponStat> Family(byte weaponType) => weaponType switch
+    {
+        1 => new() { WeaponStat.NumProjectiles, WeaponStat.ProjectileSpeed, WeaponStat.Knockback, WeaponStat.ChargeSpeed },
+        2 => new() { WeaponStat.Knockback, WeaponStat.Blocking },
+        3 => new() { WeaponStat.ProjectileSpeed, WeaponStat.ReloadSpeed, WeaponStat.ClipAmmo, WeaponStat.ShotsPerSecond },
+        4 => new() { WeaponStat.NumProjectiles, WeaponStat.ProjectileSpeed },
+        _ => new(),
+    };
+
+    // Universal-for-weapons OR family-applicable for this weaponType OR the
+    // item already carries it (special/unique items — max whatever they
+    // actually have, no matter the class). Pets never get SwingSpeed.
+    public static bool WeaponStatApplies(WeaponStat s, EquipmentType type, byte weaponType, bool present)
+    {
+        if (type == EquipmentType.Familiar && s == WeaponStat.SwingSpeed) return false;
+        bool isWeapon = type == EquipmentType.Weapon;
+        return present || (isWeapon && (Universal.Contains(s) || Family(weaponType).Contains(s)));
+    }
+
+    // Resistances: armor/accessory unconditionally; weapons/pets only if the
+    // item already carries the resist (special items).
+    public static bool ResistApplies(EquipmentType type, bool present)
+        => present || (type != EquipmentType.Weapon && type != EquipmentType.Familiar);
+
+    // Elemental damage: every weapon (even at 0), or anywhere already set.
+    public static bool ElementalApplies(EquipmentType type, bool present)
+        => present || type == EquipmentType.Weapon;
+}
 
 // Per-field "max" values for the MAX button in ItemEditView. Nullable types
 // mean "skip this field entirely when MAX runs" (not just "zero"). The apply
@@ -104,9 +157,10 @@ public class MaxItemConfig
     //
     // Returns the modified ItemNative. Mutates the input struct via reassignment
     // since ItemNative is a value type.
-    internal ItemNative ApplyTo(ItemNative item)
+    internal ItemNative ApplyTo(ItemNative item, byte weaponType)
     {
         ItemUser cur = Base.ItemToUser(item);
+        EquipmentType t = cur.EquipmentType;
 
         // Always-apply: hero + tower stats.
         if (HeroHealth.HasValue)  item.StatModifiers[0] = HeroHealth.Value;
@@ -120,34 +174,31 @@ public class MaxItemConfig
         if (TowerDamage.HasValue) item.StatModifiers[8] = TowerDamage.Value;
         if (TowerRange.HasValue)  item.StatModifiers[9] = TowerRange.Value;
 
-        // Only-if-nonzero: weapon bonuses.
-        if (Damage.HasValue          && item.WeaponDamageBonus            != 0)     item.WeaponDamageBonus            = Damage.Value;
-        if (RangedDamage.HasValue    && item.WeaponAltDamageBonus         != 0)     item.WeaponAltDamageBonus         = RangedDamage.Value;
-        if (Blocking.HasValue        && item.WeaponBlockingBonus          != 0)     item.WeaponBlockingBonus          = Blocking.Value;
-        if (Knockback.HasValue       && item.WeaponKnockbackBonus         != 0)     item.WeaponKnockbackBonus         = Knockback.Value;
-        if (ChargeSpeed.HasValue     && item.WeaponChargeSpeedBonus       != 0)     item.WeaponChargeSpeedBonus       = ChargeSpeed.Value;
-        if (ShotsPerSecond.HasValue  && item.WeaponShotsPerSecondBonus    != 0)     item.WeaponShotsPerSecondBonus    = ShotsPerSecond.Value;
-        if (NumProjectiles.HasValue  && item.WeaponNumberOfProjectilesBonus != 0)   item.WeaponNumberOfProjectilesBonus = NumProjectiles.Value;
-        if (ProjectileSpeed.HasValue && item.WeaponSpeedOfProjectilesBonus != 0)    item.WeaponSpeedOfProjectilesBonus = ProjectileSpeed.Value;
-        if (ClipAmmo.HasValue        && item.WeaponClipAmmoBonus          != 0)     item.WeaponClipAmmoBonus          = ClipAmmo.Value;
-        if (ReloadSpeed.HasValue     && item.WeaponReloadSpeedBonus       != 0)     item.WeaponReloadSpeedBonus       = ReloadSpeed.Value;
-        if (DrawScale.HasValue       && item.WeaponDrawScaleMultiplier    != 0f)    item.WeaponDrawScaleMultiplier    = DrawScale.Value;
-        if (SwingSpeed.HasValue      && item.WeaponSwingSpeedMultiplier   != 0f)    item.WeaponSwingSpeedMultiplier   = SwingSpeed.Value;
+        // Weapon bonuses — class-aware (shared MaxCompat). A stat is maxed
+        // when it's universal-for-weapons, family-applicable for this
+        // weaponType, OR the item already carries it (special/unique items).
+        if (Damage.HasValue          && MaxCompat.WeaponStatApplies(WeaponStat.Damage,          t, weaponType, item.WeaponDamageBonus              != 0))  item.WeaponDamageBonus              = Damage.Value;
+        if (RangedDamage.HasValue    && MaxCompat.WeaponStatApplies(WeaponStat.RangedDamage,    t, weaponType, item.WeaponAltDamageBonus           != 0))  item.WeaponAltDamageBonus           = RangedDamage.Value;
+        if (Blocking.HasValue        && MaxCompat.WeaponStatApplies(WeaponStat.Blocking,        t, weaponType, item.WeaponBlockingBonus            != 0))  item.WeaponBlockingBonus            = Blocking.Value;
+        if (Knockback.HasValue       && MaxCompat.WeaponStatApplies(WeaponStat.Knockback,       t, weaponType, item.WeaponKnockbackBonus           != 0))  item.WeaponKnockbackBonus           = Knockback.Value;
+        if (ChargeSpeed.HasValue     && MaxCompat.WeaponStatApplies(WeaponStat.ChargeSpeed,     t, weaponType, item.WeaponChargeSpeedBonus         != 0))  item.WeaponChargeSpeedBonus         = ChargeSpeed.Value;
+        if (ShotsPerSecond.HasValue  && MaxCompat.WeaponStatApplies(WeaponStat.ShotsPerSecond,  t, weaponType, item.WeaponShotsPerSecondBonus      != 0))  item.WeaponShotsPerSecondBonus      = ShotsPerSecond.Value;
+        if (NumProjectiles.HasValue  && MaxCompat.WeaponStatApplies(WeaponStat.NumProjectiles,  t, weaponType, item.WeaponNumberOfProjectilesBonus != 0))  item.WeaponNumberOfProjectilesBonus = NumProjectiles.Value;
+        if (ProjectileSpeed.HasValue && MaxCompat.WeaponStatApplies(WeaponStat.ProjectileSpeed, t, weaponType, item.WeaponSpeedOfProjectilesBonus  != 0))  item.WeaponSpeedOfProjectilesBonus  = ProjectileSpeed.Value;
+        if (ClipAmmo.HasValue        && MaxCompat.WeaponStatApplies(WeaponStat.ClipAmmo,        t, weaponType, item.WeaponClipAmmoBonus            != 0))  item.WeaponClipAmmoBonus            = ClipAmmo.Value;
+        if (ReloadSpeed.HasValue     && MaxCompat.WeaponStatApplies(WeaponStat.ReloadSpeed,     t, weaponType, item.WeaponReloadSpeedBonus         != 0))  item.WeaponReloadSpeedBonus         = ReloadSpeed.Value;
+        if (DrawScale.HasValue       && MaxCompat.WeaponStatApplies(WeaponStat.DrawScale,       t, weaponType, item.WeaponDrawScaleMultiplier      != 0f)) item.WeaponDrawScaleMultiplier      = DrawScale.Value;
+        if (SwingSpeed.HasValue      && MaxCompat.WeaponStatApplies(WeaponStat.SwingSpeed,      t, weaponType, item.WeaponSwingSpeedMultiplier     != 0f)) item.WeaponSwingSpeedMultiplier     = SwingSpeed.Value;
 
-        // Resistances: armor/accessory only. Weapons and Familiars (pets)
-        // never receive resistances — Weapons are a damage slot, Familiars
-        // don't mitigate incoming damage.
-        if (cur.EquipmentType != EquipmentType.Weapon
-            && cur.EquipmentType != EquipmentType.Familiar)
-        {
-            if (Generic.HasValue)   item.DamageReductions[0].Value = Generic.Value;
-            if (Poison.HasValue)    item.DamageReductions[1].Value = Poison.Value;
-            if (Fire.HasValue)      item.DamageReductions[2].Value = Fire.Value;
-            if (Lightning.HasValue) item.DamageReductions[3].Value = Lightning.Value;
-        }
+        // Resistances: armor/accessory unconditionally; weapons/pets only if
+        // the item already carries the resist (special items).
+        if (Generic.HasValue   && MaxCompat.ResistApplies(t, item.DamageReductions[0].Value != 0)) item.DamageReductions[0].Value = Generic.Value;
+        if (Poison.HasValue    && MaxCompat.ResistApplies(t, item.DamageReductions[1].Value != 0)) item.DamageReductions[1].Value = Poison.Value;
+        if (Fire.HasValue      && MaxCompat.ResistApplies(t, item.DamageReductions[2].Value != 0)) item.DamageReductions[2].Value = Fire.Value;
+        if (Lightning.HasValue && MaxCompat.ResistApplies(t, item.DamageReductions[3].Value != 0)) item.DamageReductions[3].Value = Lightning.Value;
 
-        // Elemental damage — only-if-nonzero regardless of type.
-        if (ElementalDamage.HasValue && item.WeaponAdditionalDamage.Value != 0)
+        // Elemental damage: every weapon (even at 0), or anywhere already set.
+        if (ElementalDamage.HasValue && MaxCompat.ElementalApplies(t, item.WeaponAdditionalDamage.Value != 0))
             item.WeaponAdditionalDamage.Value = ElementalDamage.Value;
 
         // Quality — only-if-nonzero.

@@ -64,6 +64,26 @@
                                        VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
+
+                    <!-- Compatibility card -->
+                    <Border Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="10,5" Margin="8,0,0,0"
+                            VerticalAlignment="Center"
+                            ToolTip="The latest DD1 build this version was verified working on. DD1 patches ~weekly; bump this after a verified health check.">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE73E;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="11"
+                                       Foreground="{StaticResource SuccessBrush}"
+                                       VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock x:Name="CompatText"
+                                       Text="Working as of DD1 v0.0.0"
+                                       FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- ═══════════ Destination tiles ═══════════ -->

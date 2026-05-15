@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -34,6 +35,8 @@ public partial class ItemEditView : UserControl
         CboQuality3.Items.Clear();
         foreach (var val in Enum.GetValues(typeof(Quality3)))
             CboQuality3.Items.Add(val);
+
+        TxtMemoryAddress.Text = "0x" + Address.ToString("X8");
 
         Refresh();
     }
@@ -442,18 +445,6 @@ public partial class ItemEditView : UserControl
         dlg.ShowDialog();
     }
 
-    // ── Clone From ──────────────────────────────────────────────────
-    //
-    // Copies the full ItemNative from a source item onto this sacrificial,
-    // preserving only the sacrificial's identity + inventory slot. The game
-    // sees the result as a distinct item (different ID) that happens to have
-    // the same stats / template / name as the source.
-    //
-    // Preserved on the sacrificial: EquipmentID1, EquipmentID2, FolderID,
-    // UserID, DroppedLocation. Everything else (including EquipmentTemplate,
-    // EquipmentType, BaseEquipmentName, all stats, colors, strings) is taken
-    // from the source.
-
     private void BtnCopyTemplate_Click(object sender, RoutedEventArgs e)
     {
         // The box uses the placeholder pattern -- the "current" value lives
@@ -467,69 +458,10 @@ public partial class ItemEditView : UserControl
         catch { /* clipboard can transiently fail when another app holds it */ }
     }
 
-    private void BtnCloneFrom_Click(object sender, RoutedEventArgs e)
+    private void BtnCopyMemoryAddress_Click(object sender, RoutedEventArgs e)
     {
-        var snap = ForgeViewerView.LastSnapshot;
-        if (snap.Count == 0)
-        {
-            Base.RaiseMessage(
-                "Open the Forge viewer and scan first -- the clone source list is built from forge results.",
-                "Clone From");
-            return;
-        }
-
-        EquipmentType? currentType = CboEquipmentType.SelectedItem as EquipmentType?;
-        var picker = new CloneSourcePickerDialog(excludeAddress: Address, sacrificialType: currentType);
-        picker.Owner = Window.GetWindow(this);
-        if (picker.ShowDialog() != true || picker.PickedAddress == null) return;
-        int sourceAddr = picker.PickedAddress.Value;
-
-        var ok = MessageBox.Show(
-            "Overwrite this item's stats with the picked source? " +
-            "This item's ID and inventory slot are preserved; everything else is replaced.",
-            "Confirm clone", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (ok != MessageBoxResult.Yes) return;
-
-        try
-        {
-            int size = Marshal.SizeOf(typeof(ItemNative));
-
-            // Re-read both items fresh to avoid stale copies.
-            ItemNative source = Base.Push<ItemNative>(Base.Instance.ReadMemory(sourceAddr, size));
-            ItemNative target = Base.Push<ItemNative>(Base.Instance.ReadMemory(Address, size));
-
-            // Start from source, then stamp the sacrificial's identity/slot
-            // fields back in.
-            ItemNative merged = source;
-            merged.EquipmentID1 = target.EquipmentID1;
-            merged.EquipmentID2 = target.EquipmentID2;
-            merged.FolderID = target.FolderID;
-            merged.UserID = target.UserID;
-            merged.DroppedLocation = target.DroppedLocation;
-
-            // Strings: the NativeArray pointers in `source` refer to the
-            // source item's buffers. Copy the string contents into the
-            // sacrificial's buffers in-place (or fresh-allocate on overflow)
-            // so the target's EquipmentName / Description / ForgerName
-            // pointers are owned by the target.
-            string srcName = Base.ReadUni<ItemNative>(sourceAddr, "EquipmentName") ?? "";
-            string srcDesc = Base.ReadUni<ItemNative>(sourceAddr, "Description") ?? "";
-            string srcForg = Base.ReadUni<ItemNative>(sourceAddr, "ForgerName") ?? "";
-
-            merged.EquipmentName = WriteStringWithFallback(target.EquipmentName, srcName, "EquipmentName");
-            merged.Description   = WriteStringWithFallback(target.Description,   srcDesc, "Description");
-            merged.ForgerName    = WriteStringWithFallback(target.ForgerName,    srcForg, "ForgerName");
-
-            byte[] bytes = Base.Push(merged);
-            Base.Instance.WriteMemory(Address, bytes);
-
-            StatusText.Text = "Cloned from 0x" + sourceAddr.ToString("X8");
-            Refresh();
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "Clone failed: " + ex.Message;
-        }
+        try { Clipboard.SetText(TxtMemoryAddress.Text); }
+        catch { /* clipboard can transiently fail when another app holds it */ }
     }
 
     private void BtnMax_Click(object sender, RoutedEventArgs e)
@@ -556,33 +488,44 @@ public partial class ItemEditView : UserControl
             Set(TxtTowerDamage, cfg.TowerDamage);
             Set(TxtTowerRange,  cfg.TowerRange);
 
-            // Only-if-nonzero: skip the assignment when the current value is 0.
-            SetIfNonzero(TxtDamage,             cfg.Damage,           cur.Damage);
-            SetIfNonzero(TxtRangedDamage,       cfg.RangedDamage,     cur.RangedDamage);
-            SetIfNonzero(TxtBlocking,           cfg.Blocking,         cur.Blocking);
-            SetIfNonzero(TxtKnockback,          cfg.Knockback,        cur.Knockback);
-            SetIfNonzero(TxtChargeSpeed,        cfg.ChargeSpeed,      cur.ChargeSpeed);
-            SetIfNonzero(TxtShotsPerSecond,     cfg.ShotsPerSecond,   cur.ShotsPerSecond);
-            SetIfNonzero(TxtNumProjectiles,     cfg.NumProjectiles,   cur.NumberOfProjectiles);
-            SetIfNonzero(TxtSpeedOfProjectiles, cfg.ProjectileSpeed,  cur.SpeedOfProjectiles);
-            SetIfNonzero(TxtClipAmmo,           cfg.ClipAmmo,         cur.ClipAmmo);
-            SetIfNonzero(TxtReloadSpeed,        cfg.ReloadSpeed,      cur.ReloadSpeed);
-            SetIfNonzeroFloat(TxtDrawScale,     cfg.DrawScale,        cur.DrawScale);
-            SetIfNonzeroFloat(TxtSwingSpeed,    cfg.SwingSpeed,       cur.SwingSpeed);
-
-            // Armor & accessories get resistances unconditionally (a 0-resist
-            // armor piece is still armor and should be maxed). Weapons and
-            // Familiars (pets) never get resistances — Weapons are a damage
-            // slot, Familiars don't mitigate incoming damage.
-            if (cur.EquipmentType != EquipmentType.Weapon
-                && cur.EquipmentType != EquipmentType.Familiar)
+            // ── Weapon stats — class-aware via shared MaxCompat (same rules
+            // the bulk path uses; see max_item_weapontype_research.md).
+            // weaponType lives outside the marshaled ItemNative
+            // (object+0x824 = Address + MaxCompat.WeaponTypeOffset).
+            bool isWeapon = cur.EquipmentType == EquipmentType.Weapon;
+            byte wt = 0;
+            if (isWeapon)
             {
-                Set(TxtGeneric,   cfg.Generic);
-                Set(TxtPoison,    cfg.Poison);
-                Set(TxtFire,      cfg.Fire);
-                Set(TxtLightning, cfg.Lightning);
+                try
+                {
+                    byte[]? b = Base.Instance.ReadMemory(Address + MaxCompat.WeaponTypeOffset, 1);
+                    if (b != null && b.Length > 0) wt = b[0];
+                }
+                catch { }
             }
-            SetIfNonzero(TxtElementalDamage, cfg.ElementalDamage, cur.ElementalDamage?.Value ?? 0);
+            bool WOk(WeaponStat s, bool present)
+                => MaxCompat.WeaponStatApplies(s, cur.EquipmentType, wt, present);
+
+            ApplyW (TxtDamage,             cfg.Damage,          WOk(WeaponStat.Damage,          cur.Damage != 0));
+            ApplyW (TxtRangedDamage,       cfg.RangedDamage,    WOk(WeaponStat.RangedDamage,    cur.RangedDamage != 0));
+            ApplyW (TxtBlocking,           cfg.Blocking,        WOk(WeaponStat.Blocking,        cur.Blocking != 0));
+            ApplyW (TxtKnockback,          cfg.Knockback,       WOk(WeaponStat.Knockback,       cur.Knockback != 0));
+            ApplyW (TxtChargeSpeed,        cfg.ChargeSpeed,     WOk(WeaponStat.ChargeSpeed,     cur.ChargeSpeed != 0));
+            ApplyW (TxtShotsPerSecond,     cfg.ShotsPerSecond,  WOk(WeaponStat.ShotsPerSecond,  cur.ShotsPerSecond != 0));
+            ApplyW (TxtNumProjectiles,     cfg.NumProjectiles,  WOk(WeaponStat.NumProjectiles,  cur.NumberOfProjectiles != 0));
+            ApplyW (TxtSpeedOfProjectiles, cfg.ProjectileSpeed, WOk(WeaponStat.ProjectileSpeed, cur.SpeedOfProjectiles != 0));
+            ApplyW (TxtClipAmmo,           cfg.ClipAmmo,        WOk(WeaponStat.ClipAmmo,        cur.ClipAmmo != 0));
+            ApplyW (TxtReloadSpeed,        cfg.ReloadSpeed,     WOk(WeaponStat.ReloadSpeed,     cur.ReloadSpeed != 0));
+            ApplyWF(TxtDrawScale,          cfg.DrawScale,       WOk(WeaponStat.DrawScale,       cur.DrawScale != 0f));
+            // SwingSpeed: MaxCompat already excludes it for pets (Familiar).
+            ApplyWF(TxtSwingSpeed,         cfg.SwingSpeed,      WOk(WeaponStat.SwingSpeed,      cur.SwingSpeed != 0f));
+
+            ApplyW(TxtGeneric,   cfg.Generic,   MaxCompat.ResistApplies(cur.EquipmentType, (cur.Generic?.Value   ?? 0) != 0));
+            ApplyW(TxtPoison,    cfg.Poison,    MaxCompat.ResistApplies(cur.EquipmentType, (cur.Poison?.Value    ?? 0) != 0));
+            ApplyW(TxtFire,      cfg.Fire,      MaxCompat.ResistApplies(cur.EquipmentType, (cur.Fire?.Value      ?? 0) != 0));
+            ApplyW(TxtLightning, cfg.Lightning, MaxCompat.ResistApplies(cur.EquipmentType, (cur.Lightning?.Value ?? 0) != 0));
+            ApplyW(TxtElementalDamage, cfg.ElementalDamage,
+                   MaxCompat.ElementalApplies(cur.EquipmentType, (cur.ElementalDamage?.Value ?? 0) != 0));
 
             SetIfNonzero(TxtQuality1,    cfg.Quality1,    cur.Quality1);
             SetIfNonzero(TxtQualityFlag, cfg.QualityFlag, cur.QualityFlag);
@@ -626,6 +569,17 @@ public partial class ItemEditView : UserControl
     private static void SetIfNonzeroFloat(TextBox tb, float? cfgMax, float current)
     {
         if (cfgMax.HasValue && current != 0f)
+            tb.Text = cfgMax.Value.ToString("G", CultureInfo.InvariantCulture);
+    }
+
+    private static void ApplyW(TextBox tb, int? cfgMax, bool ok)
+    {
+        if (ok && cfgMax.HasValue) tb.Text = cfgMax.Value.ToString();
+    }
+
+    private static void ApplyWF(TextBox tb, float? cfgMax, bool ok)
+    {
+        if (ok && cfgMax.HasValue)
             tb.Text = cfgMax.Value.ToString("G", CultureInfo.InvariantCulture);
     }
 }

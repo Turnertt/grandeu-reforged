@@ -39,45 +39,35 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1">
             <StackPanel>
-                <TextBlock Text="Pick the item whose stats you want to copy onto the sacrificial."
+                <TextBlock x:Name="LblPrompt"
+                           Text="Pick the item whose stats you want to copy onto the sacrificial."
                            Foreground="{StaticResource TextSecondaryBrush}"
                            FontSize="11" Margin="0,0,0,8" TextWrapping="Wrap" />
 
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="160" />
-                        <ColumnDefinition Width="140" />
-                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="150" />
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="TxtFilter"
                              Grid.Column="0"
                              FontSize="13"
                              beh:Placeholder.Text="Search name, forger, type..."
                              TextChanged="TxtFilter_TextChanged" />
-                    <ComboBox x:Name="CboType"     Grid.Column="1" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
-                    <ComboBox x:Name="CboQuality"  Grid.Column="2" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
-                    <ComboBox x:Name="CboSort"     Grid.Column="3" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="CboSource"   Grid.Column="1" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="CboType"     Grid.Column="2" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="CboQuality"  Grid.Column="3" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
+                    <ComboBox x:Name="CboSort"     Grid.Column="4" Margin="8,0,0,0" SelectionChanged="Filter_Changed" />
                 </Grid>
 
                 <StackPanel Orientation="Horizontal">
-                    <Button x:Name="BtnMatchCurrent"
-                            Content="MATCH SACRIFICIAL TYPE"
-                            Padding="10,5" Height="28" FontSize="11"
-                            ToolTip="Restrict the list to the same equipment type as the item you're cloning into."
-                            Click="BtnMatchCurrent_Click" />
                     <Button x:Name="BtnClearFilters"
                             Content="CLEAR FILTERS"
-                            Margin="8,0,0,0"
                             Padding="10,5" Height="28" FontSize="11"
                             Click="BtnClearFilters_Click" />
-                    <CheckBox x:Name="ChkRealOnly"
-                              Content="Real items only"
-                              IsChecked="True"
-                              VerticalAlignment="Center"
-                              Margin="16,0,0,0"
-                              ToolTip="Uncheck to include item-shaped addresses that aren't owned instances (templates, archetypes, etc.)."
-                              Click="ChkRealOnly_Changed" />
                 </StackPanel>
             </StackPanel>
         </Border>

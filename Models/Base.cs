@@ -126,8 +126,37 @@ internal sealed class Base
 
 	private static UnicodeEncoding Unicode = new UnicodeEncoding();
 
-	[System.Diagnostics.Conditional("DEBUG")]
-	public static void Log(string message) { }
+	private static readonly string LogPath = System.IO.Path.Combine(
+		AppContext.BaseDirectory, "modinator_log.txt");
+
+	// Rotate when the log grows past ~2 MB so long running sessions don't
+	// leak disk. Only keep one rotated copy (.1) — we're not doing archaeology
+	// across sessions, just keeping the last couple MB of recent telemetry.
+	private const long LogRotateBytes = 2L * 1024 * 1024;
+	private static readonly object LogLock = new();
+
+	// NOTE: intentionally NOT [Conditional("DEBUG")] — the shipped binary is
+	// a Release publish and Auto-Kill diagnostics (PawnScanDiag/KillTowers)
+	// are only useful from that build. Output is deduped + 2 MB-rotated so
+	// leaving it on in Release is cheap. Re-add the attribute to silence it.
+	public static void Log(string message)
+	{
+		try
+		{
+			lock (LogLock)
+			{
+				if (System.IO.File.Exists(LogPath)
+					&& new System.IO.FileInfo(LogPath).Length > LogRotateBytes)
+				{
+					string rotated = LogPath + ".1";
+					if (System.IO.File.Exists(rotated)) System.IO.File.Delete(rotated);
+					System.IO.File.Move(LogPath, rotated);
+				}
+				System.IO.File.AppendAllText(LogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
+			}
+		}
+		catch { }
+	}
 
 	public static IntPtr MainWindow;
 

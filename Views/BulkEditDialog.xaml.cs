@@ -560,7 +560,18 @@ public partial class BulkEditDialog : Window
         try { item = Base.Push<ItemNative>(raw); }
         catch (Exception ex) { return (false, "Push<ItemNative>", ex.GetType().Name + ": " + ex.Message); }
 
-        try { item = cfg.ApplyTo(item); }
+        // weaponType (EWeaponType) lives outside the marshaled ItemNative
+        // (object+0x824 = address + MaxCompat.WeaponTypeOffset). Read the
+        // byte so ApplyTo can be class-aware; harmless/ignored for non-weapons.
+        byte weaponType = 0;
+        try
+        {
+            byte[]? wb = Base.Instance.ReadMemory(address + MaxCompat.WeaponTypeOffset, 1);
+            if (wb != null && wb.Length > 0) weaponType = wb[0];
+        }
+        catch { }
+
+        try { item = cfg.ApplyTo(item, weaponType); }
         catch (Exception ex) { return (false, "ApplyTo", ex.GetType().Name + ": " + ex.Message); }
 
         // Strings: prefer in-place write (safest); fall back to fresh alloc

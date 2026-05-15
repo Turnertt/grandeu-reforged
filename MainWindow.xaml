@@ -94,6 +94,16 @@
                             </StackPanel>
                         </Button>
 
+                        <Button x:Name="BtnItemDupe"
+                                Style="{StaticResource SidebarButton}"
+                                Click="NavButton_Click" Tag="ItemDupe">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
+                                <TextBlock Text="Item Dupe" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
                         <Button x:Name="BtnSettings"
                                 Style="{StaticResource SidebarButton}"
                                 Click="NavButton_Click" Tag="Settings">

@@ -3,6 +3,10 @@ bin/
 obj/
 output/
 
+# Diagnostic memory dumps (not source — regenerated per game session)
+new dumps/
+dumps/
+
 # Archives (don't commit redistributable bundles into the repo itself)
 *.zip
 

@@ -1,0 +1,176 @@
+<UserControl x:Class="Modinator.Views.ItemDupeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{StaticResource BackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="2" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="{StaticResource AccentBrush}" />
+
+        <!-- Title -->
+        <StackPanel Grid.Row="1" Margin="24,18,24,10">
+            <TextBlock Text="ITEM DUPE"
+                       Foreground="{StaticResource TextPrimaryBrush}"
+                       FontSize="20" FontWeight="Bold" />
+            <TextBlock Foreground="{StaticResource TextMutedBrush}"
+                       FontSize="11.5" TextWrapping="Wrap" Margin="0,5,0,0">
+                The <Run Foreground="{StaticResource DangerBrush}" FontWeight="SemiBold">sacrificial</Run> item is permanently overwritten with a copy of the
+                <Run Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold">source</Run>. Run a Forge Viewer scan first so the pickers are populated.
+            </TextBlock>
+        </StackPanel>
+
+        <!-- Two cards -->
+        <Grid Grid.Row="2" Margin="24,6,24,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- SACRIFICIAL -->
+            <Border Grid.Column="0"
+                    BorderBrush="{StaticResource DangerBrush}"
+                    BorderThickness="2" CornerRadius="6"
+                    Background="{StaticResource SurfaceBrush}">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top"
+                            Background="{StaticResource SurfaceLightBrush}"
+                            CornerRadius="5,5,0,0" Padding="16,11">
+                        <DockPanel>
+                            <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets"
+                                       Foreground="{StaticResource DangerBrush}"
+                                       FontSize="15" VerticalAlignment="Center"
+                                       Margin="0,0,9,0" />
+                            <TextBlock Text="SACRIFICIAL — OVERWRITTEN"
+                                       Foreground="{StaticResource DangerBrush}"
+                                       FontSize="12.5" FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                        </DockPanel>
+                    </Border>
+
+                    <Button x:Name="BtnPickSacrificial"
+                            DockPanel.Dock="Bottom"
+                            Content="PICK SACRIFICIAL…"
+                            Padding="14,8" Margin="16,0,16,16"
+                            HorizontalAlignment="Stretch"
+                            Click="BtnPickSacrificial_Click" />
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Padding="16,16,12,8">
+                        <StackPanel>
+                            <TextBlock x:Name="TxtSacName"
+                                       Text="— no item selected —"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="16" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="TxtSacMeta"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       FontSize="12" Margin="0,7,0,0"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="TxtSacAddr"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontFamily="Consolas" FontSize="11"
+                                       Margin="0,6,0,0" />
+                            <StackPanel x:Name="SacStats" Margin="0,10,0,0" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets"
+                           Foreground="{StaticResource AccentBrush}"
+                           FontSize="26" HorizontalAlignment="Center" />
+                <TextBlock Text="copies&#x0a;into"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="10" TextAlignment="Center"
+                           Margin="0,4,0,0" />
+            </StackPanel>
+
+            <!-- SOURCE -->
+            <Border Grid.Column="2"
+                    BorderBrush="{StaticResource AccentBrush}"
+                    BorderThickness="2" CornerRadius="6"
+                    Background="{StaticResource SurfaceBrush}">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top"
+                            Background="{StaticResource SurfaceLightBrush}"
+                            CornerRadius="5,5,0,0" Padding="16,11">
+                        <DockPanel>
+                            <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       FontSize="15" VerticalAlignment="Center"
+                                       Margin="0,0,9,0" />
+                            <TextBlock Text="SOURCE — DUPLICATED FROM"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       FontSize="12.5" FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                        </DockPanel>
+                    </Border>
+
+                    <Button x:Name="BtnPickSource"
+                            DockPanel.Dock="Bottom"
+                            Content="PICK SOURCE…"
+                            Padding="14,8" Margin="16,0,16,16"
+                            HorizontalAlignment="Stretch"
+                            Click="BtnPickSource_Click" />
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Padding="16,16,12,8">
+                        <StackPanel>
+                            <TextBlock x:Name="TxtSrcName"
+                                       Text="— no item selected —"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="16" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="TxtSrcMeta"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       FontSize="12" Margin="0,7,0,0"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="TxtSrcAddr"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       FontFamily="Consolas" FontSize="11"
+                                       Margin="0,6,0,0" />
+                            <StackPanel x:Name="SrcStats" Margin="0,10,0,0" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- Action bar -->
+        <Border Grid.Row="3"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Background="{StaticResource SurfaceBrush}"
+                Padding="24,14">
+            <DockPanel>
+                <Button x:Name="BtnDupe"
+                        DockPanel.Dock="Right"
+                        Content="DUPE  →  OVERWRITE SACRIFICIAL"
+                        Padding="22,10" MinWidth="280"
+                        IsEnabled="False"
+                        Background="{StaticResource DangerBrush}"
+                        Foreground="White"
+                        FontWeight="Bold"
+                        Click="BtnDupe_Click" />
+                <Button x:Name="BtnReset"
+                        DockPanel.Dock="Right"
+                        Content="RESET"
+                        Padding="16,10" Margin="0,0,10,0"
+                        Click="BtnReset_Click" />
+                <TextBlock x:Name="TxtStatus"
+                           Text="Pick a sacrificial and a source item."
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" Margin="0,0,16,0" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>
