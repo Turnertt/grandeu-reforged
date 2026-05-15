@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <AssemblyName>GrandeuReforged</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PlatformTarget)' == 'ARM64'">
