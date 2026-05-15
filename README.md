@@ -10,10 +10,12 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 
 ## Features
 
-- **Forge Viewer** — browse your forge inventory and pick items to modify in seconds.
-- **Max Stat** — one-click max out any item's stats. Works with Bulk Edit.
+- **Forge Viewer** — browse your forge inventory and pick items to modify in seconds. Filter by **Source** (All / Forge / Hero) with real folder names.
+- **Max Stat** — one-click max out any item's stats. **Class-aware**: only applies the stats valid for that item and weapon family. Works with Bulk Edit on any mix of item types.
+- **Item Dupe** — copy an item's stats onto another item, using the game's own value set for the lowest crash risk.
 - **Bulk Edit** — modify up to 100 items at once.
 - **Auto Kill** — flip a switch to instantly clear enemies from the map. Multiplayer-safe hero protection covers every hero class, including DLC heroes, Summoner pets, and Series EV turrets.
+- **Unlimited Mana / Max Tower Units** — in-level title-bar toggles.
 - **Game Speed Control** — accelerate the game to blast through levels.
 - **Hero Editor** — customize hero stats and appearance, including color.
 - **Item Editor** — full control over item stats, affixes, and properties.
