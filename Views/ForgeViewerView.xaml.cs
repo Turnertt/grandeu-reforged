@@ -218,6 +218,17 @@ public partial class ForgeViewerView : UserControl
             List<int>? items = EnumerateItemAddresses();
             if (items == null)
             {
+                // One forced retry: a single stale read in the
+                // pawn→HeroManager chain (common right after a map change /
+                // game restart) yields null. Drop the cached pawn-scan + AK
+                // handle and resolve once more before giving up — turns a
+                // transient miss into a success with no user re-scan.
+                if (Window.GetWindow(this) is Modinator.MainWindow mw)
+                    mw.InvalidatePawnScanCache();
+                items = EnumerateItemAddresses();
+            }
+            if (items == null)
+            {
                 Base.RaiseMessage(
                     "Could not reach the forge / hero items.\r\n\r\n" +
                     "Make sure the game is running and your hero is in a map or the tavern " +

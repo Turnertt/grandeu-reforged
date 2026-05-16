@@ -121,6 +121,10 @@ internal sealed class Base
 
 	private static Process? LastProcess;
 
+	// Throttles the (process-enumerating) attachment re-validation in
+	// OpenProcess so callers on the 50 ms timer aren't slowed every tick.
+	private static DateTime _lastAttachVerify = DateTime.MinValue;
+
 	public static void RunFirstScan(int index, int step, GenericDG fail, GenericDG success, ref List<int> results)
 	{
 		try
@@ -989,9 +993,34 @@ internal sealed class Base
 
 	public static bool OpenProcess()
 	{
-		if (LastProcess != null && !LastProcess.HasExited)
+		// Reuse the existing attachment only while it is provably still the
+		// live game. A restarted DD1 gets a NEW pid while a cached Process
+		// object can still report !HasExited and the Scanner's stale handle
+		// can still "look" open — that combination is the "have to restart
+		// the program" bug (every Base.Instance read then throws). So we
+		// also re-confirm the live DunDefGame pid still matches the one the
+		// Scanner was opened against. That re-check enumerates processes
+		// (~10-50 ms) and some callers run on the 50 ms timer (SimulateG),
+		// so it is throttled — between checks the cheap HasExited fast-path
+		// is used; worst case a restart is detected ~1.5 s late, vs never.
+		if (LastProcess != null && Instance.Handle != IntPtr.Zero)
 		{
-			return true;
+			bool exited;
+			try { exited = LastProcess.HasExited; } catch { exited = true; }
+			if (!exited)
+			{
+				if ((DateTime.Now - _lastAttachVerify).TotalMilliseconds < 1500)
+					return true;
+				_lastAttachVerify = DateTime.Now;
+				bool stillLive = false;
+				foreach (var p in Process.GetProcessesByName("DunDefGame"))
+				{
+					if (p.Id == LastProcess.Id) stillLive = true;
+					try { p.Dispose(); } catch { }
+				}
+				if (stillLive) return true;
+				// pid no longer live → fall through and re-attach.
+			}
 		}
 		Process? process = GetProcess();
 		if (process == null)
@@ -999,9 +1028,13 @@ internal sealed class Base
 			OnMessage?.Invoke("Unable to find the 'DunDefGame.exe' process, is the game running?", "Error");
 			return false;
 		}
+		// Drop the dead handle/state before reopening so a game restart
+		// doesn't leak a process handle each time.
+		try { if (Instance.Handle != IntPtr.Zero) Instance.CloseProcess(); } catch { }
 		LastProcess = process;
 		MainWindow = LastProcess.MainWindowHandle;
 		Instance.OpenProcess(process.Id);
+		_lastAttachVerify = DateTime.Now;
 		return true;
 	}
 }

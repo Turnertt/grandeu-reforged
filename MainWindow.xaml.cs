@@ -533,6 +533,21 @@ public partial class MainWindow : Window
         }
     }
 
+    // Forge Viewer calls this between resolve attempts. A single stale read
+    // anywhere in the pawn→HeroManager chain makes the resolve return null;
+    // dropping the cached WorldInfo/pawn and the AK handle forces a fully
+    // fresh re-resolve on the retry (ResolvePlayerPawnAddress re-finds
+    // WorldInfo when _cachedWorldInfo==0; GetAKHandle reopens a zeroed
+    // handle). No offsets/chains touched — same cache reset RefreshAkLoop
+    // already performs, minus the loop start/stop.
+    public void InvalidatePawnScanCache()
+    {
+        _cachedWorldInfo = 0;
+        _cachedPlayerPawn = 0;
+        _akLastValidated = DateTime.MinValue;
+        ResetAutoKillHandle();
+    }
+
     private void BtnGameSpeedApply_Click(object sender, RoutedEventArgs e)
         => ApplySpeedFromTextBox();
 
@@ -993,17 +1008,26 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Periodically re-verify state: PID unchanged, WorldInfo still alive.
-        // Runs every AK_VALIDATE_MS — cheap enough for a process enumeration.
+        // PID re-check enumerates every process (~10-50 ms) → stays on the
+        // AK_VALIDATE_MS (2 s) cadence; a game restart is otherwise caught
+        // by the AKRead fail-count.
         if ((DateTime.Now - _akLastValidated).TotalMilliseconds >= AK_VALIDATE_MS)
         {
             _akLastValidated = DateTime.Now;
             CheckTargetPid();
-            if (_cachedWorldInfo != 0 && !ValidateCachedWorldInfo())
-            {
-                _cachedWorldInfo = 0;
-                _cachedPlayerPawn = 0;
-            }
+        }
+
+        // WorldInfo liveness is two tiny RPM reads (PawnList head + first
+        // pawn vtable/HP sanity) — cheap enough to run EVERY tick. A map
+        // change reallocates WorldInfo while the old address usually stays
+        // pooled-readable, so a 2 s cadence let Unlimited Mana / Max Tower
+        // Units write to a dead controller/GRI for seconds (or until the
+        // pool was reused). Per-tick validation catches it in ~one tick
+        // (~100 ms) and the re-find below re-resolves immediately.
+        if (_cachedWorldInfo != 0 && !ValidateCachedWorldInfo())
+        {
+            _cachedWorldInfo = 0;
+            _cachedPlayerPawn = 0;
         }
 
         // (Re)find WorldInfo if we don't have a valid cache
