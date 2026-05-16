@@ -470,7 +470,7 @@
          SCROLLBAR / SCROLLVIEWER STYLES
          ================================================================ -->
 
-    <!-- Scroll Thumb -->
+    <!-- Scroll Thumb — rounded grip, brightens on hover/drag -->
     <Style x:Key="ScrollBarThumb" TargetType="Thumb">
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="OverridesDefaultStyle" Value="True" />
@@ -479,63 +479,132 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Thumb">
-                    <Border Background="{StaticResource ScrollThumbBrush}"
-                            CornerRadius="3"
-                            Margin="1" />
+                    <Border x:Name="thumbBorder"
+                            Background="{StaticResource ScrollThumbBrush}"
+                            CornerRadius="8"
+                            Margin="3" />
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="thumbBorder" Property="Background"
+                                    Value="{StaticResource ScrollThumbHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="thumbBorder" Property="Background"
+                                    Value="{StaticResource ScrollThumbHoverBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
 
-    <!-- Vertical ScrollBar -->
+    <!-- Scroll gutter page button — invisible but hit-testable so tapping
+         the track above/below the thumb pages (a large touch target). -->
+    <Style x:Key="ScrollBarPageButton" TargetType="RepeatButton">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <Border Background="Transparent" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Vertical ScrollBar — always visible, 20px gutter, tap-to-page,
+         minimum thumb so it stays grabbable on long lists / touch. -->
     <Style x:Key="ModernScrollBar" TargetType="ScrollBar">
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="OverridesDefaultStyle" Value="True" />
-        <Setter Property="Width" Value="6" />
-        <Setter Property="MinWidth" Value="6" />
-        <Setter Property="Opacity" Value="0" />
+        <Setter Property="Width" Value="24" />
+        <Setter Property="MinWidth" Value="24" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
-                    <Track x:Name="PART_Track" IsDirectionReversed="True">
-                        <Track.Thumb>
-                            <Thumb Style="{StaticResource ScrollBarThumb}" />
-                        </Track.Thumb>
-                    </Track>
+                    <Border Background="{StaticResource ScrollTrackBrush}"
+                            CornerRadius="10" Margin="3,2">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageUpCommand"
+                                              Style="{StaticResource ScrollBarPageButton}" />
+                            </Track.DecreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource ScrollBarThumb}" MinHeight="56" />
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageDownCommand"
+                                              Style="{StaticResource ScrollBarPageButton}" />
+                            </Track.IncreaseRepeatButton>
+                        </Track>
+                    </Border>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
 
-    <!-- Horizontal ScrollBar -->
+    <!-- Horizontal ScrollBar — always visible, 20px gutter, tap-to-page. -->
     <Style x:Key="ModernHorizontalScrollBar" TargetType="ScrollBar">
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="OverridesDefaultStyle" Value="True" />
-        <Setter Property="Height" Value="6" />
-        <Setter Property="MinHeight" Value="6" />
-        <Setter Property="Opacity" Value="0" />
+        <Setter Property="Height" Value="24" />
+        <Setter Property="MinHeight" Value="24" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
-                    <Track x:Name="PART_Track">
-                        <Track.Thumb>
-                            <Thumb Style="{StaticResource ScrollBarThumb}" />
-                        </Track.Thumb>
-                    </Track>
+                    <Border Background="{StaticResource ScrollTrackBrush}"
+                            CornerRadius="10" Margin="3,2">
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageLeftCommand"
+                                              Style="{StaticResource ScrollBarPageButton}" />
+                            </Track.DecreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource ScrollBarThumb}" MinWidth="40" />
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageRightCommand"
+                                              Style="{StaticResource ScrollBarPageButton}" />
+                            </Track.IncreaseRepeatButton>
+                        </Track>
+                    </Border>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
 
-    <!-- ScrollViewer with auto-hide scrollbars -->
+    <!-- ScrollViewer — always-visible bars in their own gutter (so a
+         16px opaque bar never covers content); touch drag/fling enabled.
+         Gutter columns/row are Auto, collapsing to 0 when a bar isn't
+         needed, so views only lose the gutter while actually scrolling. -->
     <Style TargetType="ScrollViewer">
+        <Setter Property="PanningMode" Value="VerticalFirst" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollViewer">
-                    <Grid>
-                        <ScrollContentPresenter Margin="{TemplateBinding Padding}" />
+                    <Grid Background="{TemplateBinding Background}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <!-- Standard bindings (mirrors the WPF default
+                             template) so the presenter clamps to the
+                             viewport and actually scrolls instead of
+                             sizing to its content. -->
+                        <ScrollContentPresenter Grid.Row="0" Grid.Column="0"
+                                                CanContentScroll="{TemplateBinding CanContentScroll}"
+                                                CanHorizontallyScroll="False"
+                                                CanVerticallyScroll="False"
+                                                Content="{TemplateBinding Content}"
+                                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                Margin="{TemplateBinding Padding}" />
                         <ScrollBar x:Name="PART_VerticalScrollBar"
-                                   HorizontalAlignment="Right"
+                                   Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                                    Orientation="Vertical"
                                    Style="{StaticResource ModernScrollBar}"
                                    Value="{TemplateBinding VerticalOffset}"
@@ -543,7 +612,7 @@
                                    ViewportSize="{TemplateBinding ViewportHeight}"
                                    Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
                         <ScrollBar x:Name="PART_HorizontalScrollBar"
-                                   VerticalAlignment="Bottom"
+                                   Grid.Row="1" Grid.Column="0"
                                    Orientation="Horizontal"
                                    Style="{StaticResource ModernHorizontalScrollBar}"
                                    Value="{TemplateBinding HorizontalOffset}"
@@ -551,32 +620,6 @@
                                    ViewportSize="{TemplateBinding ViewportWidth}"
                                    Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}" />
                     </Grid>
-                    <ControlTemplate.Triggers>
-                        <EventTrigger RoutedEvent="MouseEnter">
-                            <BeginStoryboard>
-                                <Storyboard>
-                                    <DoubleAnimation Storyboard.TargetName="PART_VerticalScrollBar"
-                                                     Storyboard.TargetProperty="Opacity"
-                                                     To="1" Duration="0:0:0.2" />
-                                    <DoubleAnimation Storyboard.TargetName="PART_HorizontalScrollBar"
-                                                     Storyboard.TargetProperty="Opacity"
-                                                     To="1" Duration="0:0:0.2" />
-                                </Storyboard>
-                            </BeginStoryboard>
-                        </EventTrigger>
-                        <EventTrigger RoutedEvent="MouseLeave">
-                            <BeginStoryboard>
-                                <Storyboard>
-                                    <DoubleAnimation Storyboard.TargetName="PART_VerticalScrollBar"
-                                                     Storyboard.TargetProperty="Opacity"
-                                                     To="0" Duration="0:0:0.5" />
-                                    <DoubleAnimation Storyboard.TargetName="PART_HorizontalScrollBar"
-                                                     Storyboard.TargetProperty="Opacity"
-                                                     To="0" Duration="0:0:0.5" />
-                                </Storyboard>
-                            </BeginStoryboard>
-                        </EventTrigger>
-                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>

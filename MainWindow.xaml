@@ -158,6 +158,11 @@
                                     Click="BtnGameSpeedApply_Click" />
                         </Grid>
 
+                        <!-- Results is search-context UI: the whole section
+                             (its leading divider, header and list) toggles as
+                             one unit via ResultsSection — shown only while a
+                             search tab is active. -->
+                        <StackPanel x:Name="ResultsSection">
                         <!-- Divider -->
                         <Border Height="1" Background="{StaticResource BorderBrush}"
                                 Margin="14,10" />
@@ -213,6 +218,7 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+                        </StackPanel>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -227,21 +233,26 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="220" MinHeight="80" />
+                <RowDefinition x:Name="TrackedRow" Height="220" MinHeight="80" />
             </Grid.RowDefinitions>
 
             <!-- Active view content area (Welcome is set in code-behind) -->
             <Border Grid.Row="0" Background="{StaticResource BackgroundBrush}">
-                <ContentControl x:Name="ContentArea" />
+                <!-- Stretch so the hosted view fills (and is bounded by) this
+                     cell; otherwise a tall view measures with unbounded
+                     height and its inner ScrollViewer never scrolls. -->
+                <ContentControl x:Name="ContentArea"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
             </Border>
 
             <!-- Splitter -->
-            <GridSplitter Grid.Row="1" Height="4"
+            <GridSplitter x:Name="TrackedSplitter" Grid.Row="1" Height="4"
                           HorizontalAlignment="Stretch"
                           ResizeDirection="Rows" />
 
             <!-- ═══════════ Tracked Items Panel ═══════════ -->
-            <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}">
+            <Border x:Name="TrackedPanel" Grid.Row="2" Background="{StaticResource SurfaceBrush}">
                 <DockPanel>
                     <!-- Panel header -->
                     <Border DockPanel.Dock="Top" Padding="14,8"

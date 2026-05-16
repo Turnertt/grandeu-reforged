@@ -13,6 +13,10 @@ public partial class ItemEditView : UserControl
     private string ItemDisplayName;
     private ItemNative _lastNative;
 
+    // Elemental "Type" combo sentinels (non-element choices).
+    private const string KeepCurrent = "(keep current)";
+    private const string ClearElemental = "(none — clear)";
+
     public ItemEditView(int address, string name)
     {
         InitializeComponent();
@@ -23,6 +27,13 @@ public partial class ItemEditView : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        // Kick off the one-time background scan that finds all four
+        // DunDefDamageType_* class pointers from GObjects, so every element
+        // is settable with zero user action. Fire-and-forget; idempotent
+        // per game session. Per-item Observe() covers the gap if the user
+        // acts before it finishes.
+        ElementalRegistry.EnsurePrimedInBackground();
+
         // Populate enum combos
         CboEquipmentType.Items.Clear();
         foreach (var val in Enum.GetValues(typeof(EquipmentType)))
@@ -35,6 +46,16 @@ public partial class ItemEditView : UserControl
         CboQuality3.Items.Clear();
         foreach (var val in Enum.GetValues(typeof(Quality3)))
             CboQuality3.Items.Add(val);
+
+        // Elemental type: sentinels first (keep/clear), then the four
+        // canonical elements. The class pointer for each element is resolved
+        // and learned automatically when an item carrying it is viewed
+        // (Refresh → ElementalRegistry.Observe) — no user calibration.
+        CboElementalType.Items.Clear();
+        CboElementalType.Items.Add(KeepCurrent);
+        CboElementalType.Items.Add(ClearElemental);
+        foreach (var val in Enum.GetValues(typeof(ElementalType)))
+            CboElementalType.Items.Add(val);
 
         TxtMemoryAddress.Text = "0x" + Address.ToString("X8");
 
@@ -94,9 +115,30 @@ public partial class ItemEditView : UserControl
             SetHint(TxtFire, user.Fire?.Value.ToString() ?? "0");
             SetHint(TxtLightning, user.Lightning?.Value.ToString() ?? "0");
 
-            // Elemental Damage
+            // Elemental Damage. Type is a UClass* (changes every launch); its
+            // name is resolved live via GNames (no calibration), and observing
+            // it teaches that element for the session. Combo defaults to "keep
+            // current" so an un-touched save never alters the class — matching
+            // the editor's blank-means-keep philosophy.
             SetHint(TxtElementalDamage, user.ElementalDamage?.Value.ToString() ?? "0");
-            SetHint(TxtElementalType, _lastNative.WeaponAdditionalDamage.DamageType.ToString("X"));
+            int elemPtr = _lastNative.WeaponAdditionalDamage.DamageType;
+            CboElementalType.SelectedItem = KeepCurrent;
+            string cur;
+            if (elemPtr == 0)
+            {
+                cur = "Current type: none (no elemental damage).";
+            }
+            else
+            {
+                string? nm = ElementalRegistry.Observe(elemPtr);
+                if (nm == null)
+                    cur = $"Current type: class 0x{(uint)elemPtr:X8} (name unresolved) — preserved unless you pick a type.";
+                else if (ElementalRegistry.TryGetTypeByName(nm, out var et))
+                    cur = $"Current type: {et}.";
+                else
+                    cur = $"Current type: special — {nm} — preserved unless you pick a type.";
+            }
+            TxtElementalCurrent.Text = cur + $"   ·   Settable now: {ElementalRegistry.LearnedSummary()}  (each element unlocks once you've opened a weapon that has it).";
 
             // Quality
             SetHint(TxtQuality1, user.Quality1.ToString());
@@ -124,6 +166,26 @@ public partial class ItemEditView : UserControl
             SetHint(TxtForgerName, forgerName ?? "");
             CboEquipmentType.SelectedItem = user.EquipmentType;
             SetHint(TxtEquipmentTemplate, user.EquipmentTemplate ?? "");
+
+            // Weapon class (EWeaponType) — read-only. Lives outside the
+            // marshaled ItemNative (Address + MaxCompat.WeaponTypeOffset);
+            // only meaningful for weapons. Empty catch per the memory-read
+            // convention — a failed read just shows the dash.
+            if (user.EquipmentType == EquipmentType.Weapon)
+            {
+                string cls = "—";
+                try
+                {
+                    byte[]? wb = Base.Instance.ReadMemory(Address + MaxCompat.WeaponTypeOffset, 1);
+                    if (wb != null && wb.Length > 0) cls = WeaponClass.Name(wb[0]);
+                }
+                catch { }
+                TxtWeaponClass.Text = cls;
+            }
+            else
+            {
+                TxtWeaponClass.Text = "—";
+            }
 
             // Economy
             SetHint(TxtMaxValue, user.MaximumValue.ToString());
@@ -179,6 +241,7 @@ public partial class ItemEditView : UserControl
     {
         Refresh();
     }
+
 
     private void BtnBack_Click(object sender, RoutedEventArgs e)
     {
@@ -251,9 +314,33 @@ public partial class ItemEditView : UserControl
         user.Fire      = new DamageUser(true, new DamageNative { Value = IntOr(v, TxtFire,      "Fire Resist",      curFir), DamageType = _lastNative.DamageReductions[2].DamageType });
         user.Lightning = new DamageUser(true, new DamageNative { Value = IntOr(v, TxtLightning, "Lightning Resist", curLig), DamageType = _lastNative.DamageReductions[3].DamageType });
 
-        // Elemental Damage
+        // Elemental Damage. DamageType is a UClass* — default to preserving
+        // the current one (covers "(keep current)" and special/unrecognized
+        // classes like Lightning_FullMomentum that aren't in the canonical
+        // four). A chosen element resolves through the session map; an
+        // un-calibrated pick aborts the save with guidance rather than
+        // writing a bogus pointer.
         int curEdv = current.ElementalDamage?.Value ?? 0;
-        user.ElementalDamage = new DamageUser(false, new DamageNative { Value = IntOr(v, TxtElementalDamage, "Elemental Damage", curEdv), DamageType = _lastNative.WeaponAdditionalDamage.DamageType });
+        int elemPtr = _lastNative.WeaponAdditionalDamage.DamageType;
+        if (CboElementalType.SelectedItem is ElementalType chosen)
+        {
+            if (ElementalRegistry.TryGetPointer(chosen, out int p))
+            {
+                elemPtr = p;
+            }
+            else
+            {
+                StatusText.Text = $"{chosen}'s class pointer isn't known yet this session. Open any weapon that already has {chosen} elemental once (its name auto-resolves), then UPDATE.";
+                return;
+            }
+        }
+        else if (CboElementalType.SelectedItem is string s && s == ClearElemental)
+        {
+            elemPtr = 0;
+        }
+        // KeepCurrent (or anything else) → elemPtr stays as-is (preserves
+        // special/unrecognized classes like Lightning_FullMomentum).
+        user.ElementalDamage = new DamageUser(false, new DamageNative { Value = IntOr(v, TxtElementalDamage, "Elemental Damage", curEdv), DamageType = elemPtr });
 
         // Quality
         user.Quality1 = ByteOr(v, TxtQuality1, "Quality 1", current.Quality1);

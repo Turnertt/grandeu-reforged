@@ -11,6 +11,15 @@
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <AssemblyName>GrandeuReforged</AssemblyName>
     <Version>1.1.0</Version>
+    <!-- No localized WPF/app satellites are produced; pin to en so none are emitted/copied. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- Release: no PDB. Single-file FD doesn't embed the PDB, so this doesn't
+       shrink the exe; it just stops emitting the stray ~169 KB .pdb. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PlatformTarget)' == 'ARM64'">

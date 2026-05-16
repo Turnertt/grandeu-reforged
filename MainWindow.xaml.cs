@@ -17,6 +17,11 @@ public partial class MainWindow : Window
     private Base.Genus _currentGenus = Base.Genus.None;
     private ObservableCollection<TrackedItem> _trackedItems = new();
 
+    // Remembers the Tracked panel's row height across hide/show cycles so a
+    // user-dragged splitter size survives collapsing it. Seeded to the XAML
+    // default (220).
+    private GridLength _trackedRowHeight = new GridLength(220);
+
     // ── Hotkeys ─────────────────────────────────────────────────────
     // Global hotkey registration (RegisterHotKey) so combos work while DD1
     // has focus. Bindings live in HotkeyConfig / hotkeys.json.
@@ -125,6 +130,12 @@ public partial class MainWindow : Window
         // Bind tracked items list
         TrackedList.ItemsSource = _trackedItems;
 
+        // Tracked panel stays reachable whenever it holds items (even off a
+        // search tab) so active freezes can be managed — react to every
+        // add/remove, including the timer's auto-prune of unloaded items.
+        _trackedItems.CollectionChanged += (_, _) => UpdatePanelVisibility();
+        UpdatePanelVisibility();
+
         // Subscribe to backend events
         Base.OnProgressChanged += OnProgressChanged;
         Base.OnResultsChanged += OnResultsChanged;
@@ -221,7 +232,22 @@ public partial class MainWindow : Window
                             if (string.IsNullOrEmpty(ri.Name))
                                 ri.Name = Base.ReadUni<ItemNative>(addr, "BaseEquipmentName");
                             ri.Quality = user.Quality2.ToString();
-                            ri.Extra = $"Lv {user.Level}/{user.MaxLevel}  {user.EquipmentType}";
+                            // Weapon class gate (EWeaponType) lives outside the
+                            // marshaled ItemNative — a 1-byte read at
+                            // addr + MaxCompat.WeaponTypeOffset. Weapons only;
+                            // inner catch so a failed read just omits the tag.
+                            string clsSuffix = "";
+                            if (user.EquipmentType == EquipmentType.Weapon)
+                            {
+                                try
+                                {
+                                    byte[]? wb = Base.Instance.ReadMemory(addr + MaxCompat.WeaponTypeOffset, 1);
+                                    if (wb != null && wb.Length > 0)
+                                        clsSuffix = "  " + WeaponClass.Name(wb[0]);
+                                }
+                                catch { }
+                            }
+                            ri.Extra = $"Lv {user.Level}/{user.MaxLevel}  {user.EquipmentType}{clsSuffix}";
                             ri.QualityColor = new System.Windows.Media.SolidColorBrush(GetQualityWpfColor(user.Quality2));
                         }
                         else if (genus == Base.Genus.Hero && structSize > 0)
@@ -323,6 +349,8 @@ public partial class MainWindow : Window
             "Settings" => new Views.SettingsView(), // fresh so it re-syncs state each time
             _ => null,
         };
+
+        UpdatePanelVisibility();
     }
 
     private void ShowHome()
@@ -332,6 +360,41 @@ public partial class MainWindow : Window
         _lastContentBeforeEditor = null;
         StatusText.Text = "Home";
         ContentArea.Content = _welcomeView ??= new Views.WelcomeView();
+        UpdatePanelVisibility();
+    }
+
+    // Results list (sidebar) + Tracked Items panel (bottom of main content)
+    // are search-context UI. Results shows only while a search tab
+    // (Item/Hero/Misc) is active — _currentGenus is the existing signal:
+    // NavigateToView sets it for those tabs and clears it (None) for
+    // Home/Forge/Dupe/Settings. The Tracked panel additionally stays up
+    // whenever it still holds items, so freezes remain manageable off-tab.
+    // Collapsing the tracked row (height 0 + hidden splitter) lets the
+    // active view take the full height; the splitter-resized height is
+    // preserved across hide/show in _trackedRowHeight.
+    private void UpdatePanelVisibility()
+    {
+        bool searching = _currentGenus != Base.Genus.None;
+        bool showTracked = searching || _trackedItems.Count > 0;
+        bool trackedShown = TrackedPanel.Visibility == Visibility.Visible;
+
+        ResultsSection.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
+
+        if (showTracked == trackedShown) return; // no tracked-panel transition
+
+        if (showTracked)
+        {
+            TrackedRow.Height = _trackedRowHeight;
+            TrackedRow.MinHeight = 80;
+        }
+        else
+        {
+            _trackedRowHeight = TrackedRow.Height; // remember a splitter resize
+            TrackedRow.Height = new GridLength(0);
+            TrackedRow.MinHeight = 0;
+        }
+        TrackedSplitter.Visibility = showTracked ? Visibility.Visible : Visibility.Collapsed;
+        TrackedPanel.Visibility = showTracked ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SetActiveNavButton(Button? btn)

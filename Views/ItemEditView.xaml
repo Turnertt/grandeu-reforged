@@ -325,20 +325,27 @@
                 <!-- Elemental Damage -->
                 <TextBlock Text="ELEMENTAL DAMAGE" Style="{StaticResource SectionHeader}" Margin="0,0,0,8" />
                 <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12" Margin="0,0,0,16">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                            <TextBlock Text="Value" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
-                            <TextBox x:Name="TxtElementalDamage" Text="0" beh:NumericInput.Mode="Int" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                            <TextBlock Text="Type (hex)" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
-                            <TextBox x:Name="TxtElementalType" IsReadOnly="True" />
-                        </StackPanel>
-                    </Grid>
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="Value" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <TextBox x:Name="TxtElementalDamage" Text="0" beh:NumericInput.Mode="Int" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                <TextBlock Text="Type" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                                <ComboBox x:Name="CboElementalType"
+                                          ToolTip="Set the weapon's elemental damage class. '(keep current)' leaves it untouched; '(none — clear)' removes elemental damage. The element name is resolved automatically — no calibration." />
+                            </StackPanel>
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" Margin="0,12,0,10" />
+                        <TextBlock x:Name="TxtElementalCurrent"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
                 </Border>
 
                 <!-- Quality -->
@@ -446,6 +453,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
@@ -463,6 +471,12 @@
                         <StackPanel Grid.Row="2" Grid.Column="1" Margin="8,0,0,8">
                             <TextBlock Text="Equipment Type" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
                             <ComboBox x:Name="CboEquipmentType" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="3" Grid.Column="1" Margin="8,0,0,0">
+                            <TextBlock Text="Weapon Class" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
+                            <TextBox x:Name="TxtWeaponClass" IsReadOnly="True"
+                                     Background="{StaticResource SurfaceLightBrush}"
+                                     ToolTip="EWeaponType class gate (read-only). '—' for non-weapons." />
                         </StackPanel>
                     </Grid>
                 </Border>

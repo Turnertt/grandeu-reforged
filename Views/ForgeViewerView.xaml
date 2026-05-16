@@ -139,94 +139,68 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Row 3: Filters + Pagination -->
-                <Grid Margin="0,10,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <!-- Row 3: View filters. Pagination moved to a footer under
+                     the cards; Quality dropped (still on cards + sortable).
+                     One funnel glyph fronts the group; combos share a width
+                     so the row stays tidy (WrapPanel keeps it robust if the
+                     window is narrowed). -->
+                <WrapPanel Margin="0,10,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets"
+                               FontSize="12" Foreground="{StaticResource TextMutedBrush}"
+                               VerticalAlignment="Center" Margin="0,0,10,0"
+                               ToolTip="Filter and sort the scanned items" />
 
-                    <!-- Filters -->
-                    <WrapPanel Grid.Column="0" VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
-                            <TextBlock Text="Source"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       FontSize="10" FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,6,0" />
-                            <ComboBox x:Name="CboSource"
-                                      Width="120"
-                                      SelectionChanged="Source_Changed" />
-                        </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
-                            <TextBlock Text="Type"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       FontSize="10" FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,6,0" />
-                            <ComboBox x:Name="CboType"
-                                      Width="140"
-                                      SelectionChanged="Filter_Changed" />
-                        </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
-                            <TextBlock Text="Quality"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       FontSize="10" FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,6,0" />
-                            <ComboBox x:Name="CboQuality"
-                                      Width="130"
-                                      SelectionChanged="Filter_Changed" />
-                        </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
-                            <TextBlock Text="Sort"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       FontSize="10" FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,6,0" />
-                            <ComboBox x:Name="CboSort"
-                                      Width="190"
-                                      SelectionChanged="Filter_Changed" />
-                        </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Margin="0,3,14,3">
-                            <TextBlock Text="Folder"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       FontSize="10" FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,6,0" />
-                            <ComboBox x:Name="CboFolder"
-                                      Width="170"
-                                      SelectionChanged="Filter_Changed" />
-                        </StackPanel>
-                    </WrapPanel>
-
-                    <!-- Pagination — right aligned -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                VerticalAlignment="Center">
-                        <Button x:Name="BtnPrev"
-                                Padding="10,5" Height="28"
-                                Click="BtnPrev_Click">
-                            <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                        </Button>
-                        <TextBlock x:Name="LblPage"
-                                   Text="Page 0 / 0"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
-                                   FontSize="11" FontWeight="SemiBold"
+                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
+                        <TextBlock Text="Source"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="10" FontWeight="Bold"
                                    VerticalAlignment="Center"
-                                   Margin="12,0"
-                                   MinWidth="70"
-                                   TextAlignment="Center" />
-                        <Button x:Name="BtnNext"
-                                Padding="10,5" Height="28"
-                                Click="BtnNext_Click">
-                            <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                        </Button>
+                                   Margin="0,0,6,0" />
+                        <ComboBox x:Name="CboSource"
+                                  Width="160"
+                                  SelectionChanged="Source_Changed" />
                     </StackPanel>
-                </Grid>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
+                        <TextBlock Text="Type"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="10" FontWeight="Bold"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,6,0" />
+                        <ComboBox x:Name="CboType"
+                                  Width="160"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
+                        <TextBlock Text="Sort"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="10" FontWeight="Bold"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,6,0" />
+                        <ComboBox x:Name="CboSort"
+                                  Width="160"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
+                        <TextBlock Text="Folder"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="10" FontWeight="Bold"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,6,0" />
+                        <ComboBox x:Name="CboFolder"
+                                  Width="160"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+                </WrapPanel>
+
+                <!-- Persistent affordance — selection/edit gestures are
+                     otherwise undiscoverable (was buried in status text). -->
+                <TextBlock Text="Ctrl+click to select  ·  double-click to edit"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="10" Opacity="0.65"
+                           Margin="0,10,0,0" />
 
             </StackPanel>
         </Border>
@@ -234,13 +208,69 @@
         <!-- ═══════════════════════════════════════════════════════════
              Card Grid — the forge table
              ═══════════════════════════════════════════════════════════ -->
-        <ScrollViewer x:Name="CardScroller"
-                      Grid.Row="2"
-                      VerticalScrollBarVisibility="Auto"
-                      Padding="12">
-            <WrapPanel x:Name="CardPanel"
-                       Margin="6" />
-        </ScrollViewer>
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <ScrollViewer x:Name="CardScroller"
+                              VerticalScrollBarVisibility="Auto"
+                              Padding="12">
+                    <WrapPanel x:Name="CardPanel"
+                               Margin="6" />
+                </ScrollViewer>
+
+                <!-- Empty / first-run placeholder. Default visible (pre-scan);
+                     toggled + retitled in code on scan / filter changes. -->
+                <StackPanel x:Name="EmptyState"
+                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                            IsHitTestVisible="False">
+                    <TextBlock x:Name="EmptyIcon" Text="&#xE71C;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="44"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               Opacity="0.45"
+                               HorizontalAlignment="Center" />
+                    <TextBlock x:Name="EmptyText"
+                               Text="Click SCAN ALL to populate the forge view."
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="12.5" Opacity="0.8"
+                               Margin="0,12,0,0"
+                               HorizontalAlignment="Center" TextAlignment="Center" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Pagination footer — sits next to the content it pages;
+                 hidden by UpdateEmptyState when there are no cards. -->
+            <Border x:Name="PaginationBar" Grid.Row="1"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,1,0,0"
+                    Padding="12,7">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button x:Name="BtnPrev"
+                            Padding="10,5" Height="28"
+                            Click="BtnPrev_Click">
+                        <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                    </Button>
+                    <TextBlock x:Name="LblPage"
+                               Text="Page 0 / 0"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="12,0"
+                               MinWidth="70"
+                               TextAlignment="Center" />
+                    <Button x:Name="BtnNext"
+                            Padding="10,5" Height="28"
+                            Click="BtnNext_Click">
+                        <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
 
     </Grid>
 </UserControl>

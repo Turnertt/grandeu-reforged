@@ -46,6 +46,8 @@
 
     <!-- ScrollBar -->
     <Color x:Key="ScrollThumbColor">#505258</Color>
+    <Color x:Key="ScrollThumbHoverColor">#6d7079</Color>
+    <Color x:Key="ScrollTrackColor">#26272b</Color>
 
     <!-- Accent at 10% opacity for selected items -->
     <Color x:Key="AccentSubtleColor">#195865f2</Color>
@@ -93,8 +95,10 @@
     <!-- Close Button Brush -->
     <SolidColorBrush x:Key="CloseHoverBrush" Color="{StaticResource CloseHoverColor}" />
 
-    <!-- ScrollBar Brush -->
+    <!-- ScrollBar Brushes -->
     <SolidColorBrush x:Key="ScrollThumbBrush" Color="{StaticResource ScrollThumbColor}" />
+    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="{StaticResource ScrollThumbHoverColor}" />
+    <SolidColorBrush x:Key="ScrollTrackBrush" Color="{StaticResource ScrollTrackColor}" />
 
     <!-- Accent Subtle Brush (10% opacity) -->
     <SolidColorBrush x:Key="AccentSubtleBrush" Color="{StaticResource AccentSubtleColor}" />
