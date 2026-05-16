@@ -31,8 +31,8 @@ public partial class BulkEditDialog : Window
     private int _baseReloadSpeed;
     private float _baseDrawScale;
     private float _baseSwingSpeed;
-    private string _baseDescription;
-    private string _baseForgerName;
+    private string _baseDescription = "";
+    private string _baseForgerName = "";
     private int _baseLevel;
     private int _baseMaxLevel;
     private int _baseStoredMana;
@@ -84,8 +84,8 @@ public partial class BulkEditDialog : Window
         _baseStoredMana = baseline.StoredMana;
         _baseLevelRequirement = baseline.ManualLR;
 
-        _baseDescription = Base.ReadUni<ItemNative>(address, "Description");
-        _baseForgerName = Base.ReadUni<ItemNative>(address, "ForgerName");
+        _baseDescription = Base.ReadUni<ItemNative>(address, "Description") ?? "";
+        _baseForgerName = Base.ReadUni<ItemNative>(address, "ForgerName") ?? "";
 
         // Color overrides — round-trip through LinearColor so we get ints that
         // round-trip cleanly on compare. HDR values (|value| > 255) survive on

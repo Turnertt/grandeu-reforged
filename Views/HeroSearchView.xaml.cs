@@ -5,8 +5,6 @@ namespace Modinator.Views;
 
 public partial class HeroSearchView : UserControl
 {
-    private bool _inSession;
-
     public HeroSearchView()
     {
         InitializeComponent();
@@ -35,7 +33,6 @@ public partial class HeroSearchView : UserControl
     {
         if (!Base.OpenProcess()) return;
 
-        _inSession = false;
         ScanStatus.Text = "Scanning...";
 
         var search = BuildSearch();
@@ -57,7 +54,6 @@ public partial class HeroSearchView : UserControl
 
     private void OnSuccess()
     {
-        _inSession = true;
         BtnNextScan.IsEnabled = true;
         ScanStatus.Text = $"Found {Base.HeroResults.Count:N0} results";
         Base.RaiseResultsChanged(Base.HeroResults);
@@ -65,7 +61,6 @@ public partial class HeroSearchView : UserControl
 
     private void OnFail()
     {
-        _inSession = false;
         BtnNextScan.IsEnabled = false;
         ScanStatus.Text = "No results";
         Base.HeroResults.Clear();
@@ -80,7 +75,6 @@ public partial class HeroSearchView : UserControl
         TxtHeroName.Text = "";
         TxtLevel.Text = ""; TxtExperience.Text = "";
 
-        _inSession = false;
         BtnNextScan.IsEnabled = false;
         Base.HeroResults.Clear();
         Base.RaiseResultsChanged(Base.HeroResults);

@@ -1,21 +1,27 @@
+using System;
 using System.ComponentModel;
 using System.Globalization;
 
 internal class LinearColorConverter : StringConverter
 {
-	public override bool GetStandardValuesSupported(ITypeDescriptorContext context)
+	public override bool GetStandardValuesSupported(ITypeDescriptorContext? context)
 	{
 		return true;
 	}
 
-	public override bool GetStandardValuesExclusive(ITypeDescriptorContext context)
+	public override bool GetStandardValuesExclusive(ITypeDescriptorContext? context)
 	{
 		return true;
 	}
 
-	public override object ConvertFrom(ITypeDescriptorContext context, CultureInfo culture, object value)
+	public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)
 	{
-		string[] array = ((string)value).Split(',');
+		if (value is not string text)
+		{
+			return base.ConvertFrom(context, culture, value);
+		}
+
+		string[] array = text.Split(',');
 		LinearColor linearColor = new LinearColor();
 		if (array.Length > 0) linearColor.R = ToInt(array[0]);
 		if (array.Length > 1) linearColor.G = ToInt(array[1]);
@@ -43,8 +49,15 @@ internal class LinearColorConverter : StringConverter
 		return n;
 	}
 
-	public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+	public override StandardValuesCollection GetStandardValues(ITypeDescriptorContext? context)
 	{
-		return new StandardValuesCollection(((ItemUser)context.Instance).ColorTables[context.PropertyDescriptor.Name]);
+		if (context?.Instance is ItemUser item &&
+			context.PropertyDescriptor?.Name is string propertyName &&
+			item.ColorTables.TryGetValue(propertyName, out LinearColorNative[]? colors))
+		{
+			return new StandardValuesCollection(colors);
+		}
+
+		return new StandardValuesCollection(Array.Empty<LinearColorNative>());
 	}
 }

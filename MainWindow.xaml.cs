@@ -12,7 +12,7 @@ namespace Modinator;
 
 public partial class MainWindow : Window
 {
-    private DispatcherTimer _timer;
+    private DispatcherTimer _timer = null!;
     private Button? _activeNavButton;
     private Base.Genus _currentGenus = Base.Genus.None;
     private ObservableCollection<TrackedItem> _trackedItems = new();

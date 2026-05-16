@@ -18,7 +18,7 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 - **Unlimited Mana / Max Tower Units** — in-level title-bar toggles.
 - **Game Speed Control** — accelerate the game to blast through levels.
 - **Hero Editor** — customize hero stats and appearance, including color.
-- **Item Editor** — full control over item stats, affixes, and properties, including a weapon's elemental damage type (auto-detected, pick from a dropdown) and a read-only weapon-class indicator.
+- **Item Editor** — full control over item stats, affixes, and properties, including a read-only weapon-class indicator.
 - **Modern UI** — clean dark theme, sidebar navigation, touch- and small-screen-friendly scrollbars.
 
 ## Build requirements

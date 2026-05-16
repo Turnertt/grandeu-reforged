@@ -16,28 +16,18 @@
              THE FORGE — Command Bar
              ═══════════════════════════════════════════════════════════ -->
         <Border Grid.Row="1"
+                Background="{StaticResource SurfaceBrush}"
                 BorderBrush="{StaticResource BorderBrush}"
-                BorderThickness="0,0,0,1">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#2b2d31" Offset="0" />
-                    <GradientStop Color="#252629" Offset="1" />
-                </LinearGradientBrush>
-            </Border.Background>
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
 
-            <StackPanel Margin="18,14,18,14">
+            <StackPanel>
 
                 <!-- Row 1: Actions + Status -->
-                <DockPanel>
-                    <!-- Mode badge + status — right side -->
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                <DockPanel LastChildFill="False">
+                    <!-- Mode badge + status -->
+                    <StackPanel Orientation="Horizontal"
                                 VerticalAlignment="Center">
-                        <TextBlock x:Name="LblStatus"
-                                   Text="Click SCAN ALL to populate the forge view."
-                                   Foreground="{StaticResource TextMutedBrush}"
-                                   FontSize="10.5" FontStyle="Italic"
-                                   VerticalAlignment="Center"
-                                   Margin="16,0,12,0" />
                         <Border Background="{StaticResource AccentSubtleBrush}"
                                 BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
                                 CornerRadius="4" Padding="8,4"
@@ -52,10 +42,36 @@
                                            VerticalAlignment="Center" />
                             </StackPanel>
                         </Border>
+                        <Border Background="{StaticResource SurfaceLightBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="5"
+                                Padding="10,5"
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE946;"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11"
+                                           Foreground="{StaticResource TextMutedBrush}"
+                                           Margin="0,0,7,0"
+                                           VerticalAlignment="Center" />
+                                <TextBlock x:Name="LblStatus"
+                                           Text="Click SCAN ALL to populate the forge view."
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="11.5"
+                                           VerticalAlignment="Center"
+                                           MaxWidth="360"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
 
                     <!-- Action buttons -->
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel DockPanel.Dock="Right"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="16,0,0,0">
                         <Button x:Name="BtnScan"
                                 Style="{StaticResource AccentButton}"
                                 Padding="18,7" Height="32"

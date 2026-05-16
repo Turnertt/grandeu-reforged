@@ -34,18 +34,18 @@ internal class HeroUser
 
 	[TypeConverter(typeof(ExpandableObjectConverter))]
 	[Category("C. Visual")]
-	public LinearColor Color1 { get; set; }
+	public LinearColor Color1 { get; set; } = new();
 
 	[Category("C. Visual")]
 	[TypeConverter(typeof(ExpandableObjectConverter))]
-	public LinearColor Color2 { get; set; }
+	public LinearColor Color2 { get; set; } = new();
 
 	[TypeConverter(typeof(ExpandableObjectConverter))]
 	[Category("C. Visual")]
-	public LinearColor Color3 { get; set; }
+	public LinearColor Color3 { get; set; } = new();
 
 	[Category("D. Identity")]
-	public string HeroName { get; set; }
+	public string HeroName { get; set; } = "";
 
 	[Category("E. Level")]
 	public int Level { get; set; }

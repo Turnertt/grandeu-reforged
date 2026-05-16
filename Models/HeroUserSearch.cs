@@ -33,7 +33,7 @@ internal class HeroUserSearch
 	public int TowerSpeed { get; set; }
 
 	[Category("D. Identity")]
-	public string HeroName { get; set; }
+	public string HeroName { get; set; } = "";
 
 	[Category("E. Level")]
 	public int Level { get; set; }

@@ -22,6 +22,7 @@ public partial class ForgeViewerView : UserControl
         public string BaseName = "";
         public string Description = "";
         public string ForgerName = "";
+        public string SearchText = "";
         public int EquipmentTemplate;
         public ItemUser User = new();
         public int FolderID;
@@ -94,6 +95,12 @@ public partial class ForgeViewerView : UserControl
     // Sentinel "icon path" for the weapon Elemental-damage tile, which has
     // no dedicated asset — MakeStatTile renders a glyph placeholder for it.
     private const string ElementalIcon = "@elemental";
+    private const string SelectionMarkerTag = "SelectionMarker";
+
+    private readonly Dictionary<string, ImageBrush?> _statIconBrushes = new();
+    private readonly SolidColorBrush _secondaryTileBorder = new(Color.FromArgb(70, 255, 255, 255));
+    private readonly SolidColorBrush _fallbackTileBrush = new(Color.FromArgb(20, 255, 255, 255));
+    private readonly SolidColorBrush _selectedCardBrush = new(Color.FromArgb(30, 88, 101, 242));
 
     private List<int> forgeResults = new();
     private List<CachedItem> cachedItems = new();
@@ -103,7 +110,7 @@ public partial class ForgeViewerView : UserControl
     private readonly HashSet<int> _heroResultAddrs = new();
 
     // Snapshot of the most recent forge read, exposed so other views (the
-    // Clone Source picker) can surface the "real items" list without having
+    // Item Dupe picker) can surface the item list without having
     // to re-scan. Updated after every ReadAllItems() pass. Internal because
     // Quality2 / EquipmentType are internal to the assembly.
     internal static IReadOnlyList<ForgeSnapshotItem> LastSnapshot { get; private set; } = Array.Empty<ForgeSnapshotItem>();
@@ -133,6 +140,9 @@ public partial class ForgeViewerView : UserControl
     public ForgeViewerView()
     {
         InitializeComponent();
+        _secondaryTileBorder.Freeze();
+        _fallbackTileBrush.Freeze();
+        _selectedCardBrush.Freeze();
         _suppressFilterEvent = true;
         PopulateSourceCombo();
         PopulateTypeCombo();
@@ -409,6 +419,7 @@ public partial class ForgeViewerView : UserControl
                         if (cachedItems[i].Address == addr)
                         {
                             cachedItems[i].User = user;
+                            cachedItems[i].SearchText = BuildSearchHaystack(cachedItems[i]);
                             break;
                         }
                     }
@@ -627,7 +638,7 @@ public partial class ForgeViewerView : UserControl
                 string description = SafeReadUni(address, "Description");
                 string forgerName = SafeReadUni(address, "ForgerName");
 
-                cachedItems.Add(new CachedItem
+                var cached = new CachedItem
                 {
                     Address = address,
                     Name = name,
@@ -640,7 +651,9 @@ public partial class ForgeViewerView : UserControl
                     EquipmentID1 = native.EquipmentID1,
                     EquipmentID2 = native.EquipmentID2,
                     IsHero = _heroResultAddrs.Contains(address)
-                });
+                };
+                cached.SearchText = BuildSearchHaystack(cached);
+                cachedItems.Add(cached);
             }
             catch { }
         }
@@ -718,14 +731,13 @@ public partial class ForgeViewerView : UserControl
 
         // Every cached item now comes from the authoritative
         // ItemBoxEquipments enumeration — all real, no heuristic filter.
-        var scoped = cachedItems.ToList();
-        var groups = scoped
+        var groups = cachedItems
             .GroupBy(ci => ci.FolderID)
             .Select(g => new { FolderID = g.Key, Count = g.Count() })
             .OrderBy(g => g.FolderID)
             .ToList();
 
-        CboFolder.Items.Add(new FolderEntry(int.MinValue, "All folders (" + scoped.Count + ")"));
+        CboFolder.Items.Add(new FolderEntry(int.MinValue, "All folders (" + cachedItems.Count + ")"));
         foreach (var g in groups)
         {
             string folderName;
@@ -771,9 +783,42 @@ public partial class ForgeViewerView : UserControl
         card.BorderBrush = isSelected
             ? (Brush)FindResource("AccentBrush")
             : (Brush)FindResource("BorderBrush");
-        card.Background = isSelected
-            ? new SolidColorBrush(Color.FromArgb(30, 88, 101, 242))
-            : (Brush)FindResource("SurfaceLightBrush");
+        card.Background = isSelected ? _selectedCardBrush : (Brush)FindResource("SurfaceLightBrush");
+        SetSelectionMarker(card, isSelected);
+    }
+
+    private void SetSelectionMarker(Border card, bool isSelected)
+    {
+        if (card.Child is not Grid grid) return;
+
+        for (int i = grid.Children.Count - 1; i >= 0; i--)
+        {
+            if (grid.Children[i] is FrameworkElement { Tag: SelectionMarkerTag })
+                grid.Children.RemoveAt(i);
+        }
+
+        if (!isSelected) return;
+
+        grid.Children.Add(new Border
+        {
+            Tag = SelectionMarkerTag,
+            Width = 20,
+            Height = 20,
+            CornerRadius = new CornerRadius(10),
+            Background = (Brush)FindResource("AccentBrush"),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 8, 8, 0),
+            Child = new TextBlock
+            {
+                Text = "\u2713",
+                Foreground = Brushes.White,
+                FontSize = 12,
+                FontWeight = FontWeights.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        });
     }
 
     // Re-compute just the status-line suffix so the "N selected" counter
@@ -807,7 +852,7 @@ public partial class ForgeViewerView : UserControl
         if (!string.IsNullOrWhiteSpace(needle))
         {
             needle = needle.Trim();
-            q = q.Where(ci => BuildSearchHaystack(ci).Contains(needle, StringComparison.OrdinalIgnoreCase));
+            q = q.Where(ci => ci.SearchText.Contains(needle, StringComparison.OrdinalIgnoreCase));
         }
 
         var list = q.ToList();
@@ -908,7 +953,7 @@ public partial class ForgeViewerView : UserControl
             Tag = ci.Address
         };
         if (isSelected)
-            card.Background = new SolidColorBrush(Color.FromArgb(30, 88, 101, 242));
+            card.Background = _selectedCardBrush;
 
         var outerGrid = new Grid();
         card.Child = outerGrid;
@@ -1096,17 +1141,7 @@ public partial class ForgeViewerView : UserControl
 
         // ── Selection checkmark ──
         if (isSelected)
-        {
-            outerGrid.Children.Add(new Border
-            {
-                Width = 20, Height = 20, CornerRadius = new CornerRadius(10),
-                Background = (Brush)FindResource("AccentBrush"),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 8, 8, 0),
-                Child = new TextBlock { Text = "\u2713", Foreground = Brushes.White, FontSize = 12, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
-            });
-        }
+            SetSelectionMarker(card, true);
 
         // ── Hover ──
         card.MouseEnter += (s, e) => { if (!selectedAddresses.Contains(ci.Address)) card.Background = (Brush)FindResource("SurfaceLighterBrush"); };
@@ -1136,7 +1171,7 @@ public partial class ForgeViewerView : UserControl
                 UpdateSelectionStatus();
             }
         };
-        card.MouseLeftButtonDown += (s, e) => { if (e.ClickCount == 2) OpenItemEditor(ci.Address, ci.Name); };
+        card.MouseLeftButtonDown += (s, e) => { if (e.ClickCount == 2) OpenItemEditor(ci.Address, ci.Name ?? ""); };
 
         return card;
     }
@@ -1148,8 +1183,12 @@ public partial class ForgeViewerView : UserControl
                             System.Collections.Generic.List<(string? icon, string label, int value)> stats,
                             bool primaryRow, bool plus)
     {
-        var live = stats.Where(s => s.value != 0).ToList();
-        if (live.Count == 0) return;
+        int liveCount = 0;
+        foreach (var stat in stats)
+        {
+            if (stat.value != 0) liveCount++;
+        }
+        if (liveCount == 0) return;
 
         if (body.Children.Count > 0)
             body.Children.Add(new Border
@@ -1162,11 +1201,14 @@ public partial class ForgeViewerView : UserControl
 
         var gridRow = new System.Windows.Controls.Primitives.UniformGrid
         {
-            Columns = Math.Min(live.Count, 4),
+            Columns = Math.Min(liveCount, 4),
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        foreach (var (icon, label, value) in live)
+        foreach (var (icon, label, value) in stats)
+        {
+            if (value == 0) continue;
             gridRow.Children.Add(MakeStatTile(icon, label, value, primaryRow, plus));
+        }
         body.Children.Add(gridRow);
     }
 
@@ -1185,7 +1227,7 @@ public partial class ForgeViewerView : UserControl
             Height = plate,
             CornerRadius = corner,
             // Primary (row 1) has no outline; the rest keep a thin frame.
-            BorderBrush = primary ? null : new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)),
+            BorderBrush = primary ? null : _secondaryTileBorder,
             BorderThickness = new Thickness(primary ? 0 : 2),
             HorizontalAlignment = HorizontalAlignment.Center
         };
@@ -1208,35 +1250,20 @@ public partial class ForgeViewerView : UserControl
             }
         };
 
-        // Must be an absolute pack:// URI — a standalone BitmapImage has no
-        // base-URI context, so a relative URI would resolve against the
-        // filesystem (the single-file exe has no Assets folder) and throw.
-        System.Windows.Media.Imaging.BitmapImage? bmp = null;
-        if (iconPath != null && iconPath != ElementalIcon)
-        {
-            try
-            {
-                bmp = new System.Windows.Media.Imaging.BitmapImage();
-                bmp.BeginInit();
-                bmp.UriSource = new Uri("pack://application:,,," + iconPath, UriKind.Absolute);
-                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-                bmp.EndInit();
-            }
-            catch { bmp = null; }
-        }
+        ImageBrush? iconBrush = GetStatIconBrush(iconPath);
 
-        if (bmp != null)
+        if (iconBrush != null)
         {
             // Icon fills the entire plate; CornerRadius clips it. The
             // bevel sheen sits on top.
-            tile.Background = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+            tile.Background = iconBrush;
             tile.Child = bevel;
         }
         else
         {
             tile.Background = primary
                 ? (Brush)FindResource("AccentSubtleBrush")
-                : new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
+                : _fallbackTileBrush;
             var inner = new Grid();
             inner.Children.Add(new TextBlock
             {
@@ -1291,6 +1318,32 @@ public partial class ForgeViewerView : UserControl
         stack.Children.Add(tile);
         stack.Children.Add(valueText);
         return stack;
+    }
+
+    private ImageBrush? GetStatIconBrush(string? iconPath)
+    {
+        if (iconPath == null || iconPath == ElementalIcon) return null;
+        if (_statIconBrushes.TryGetValue(iconPath, out ImageBrush? cached)) return cached;
+
+        try
+        {
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri("pack://application:,,," + iconPath, UriKind.Absolute);
+            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+
+            var brush = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+            brush.Freeze();
+            _statIconBrushes[iconPath] = brush;
+            return brush;
+        }
+        catch
+        {
+            _statIconBrushes[iconPath] = null;
+            return null;
+        }
     }
 
     // Centered placeholder shown whenever no cards are on screen: a pre-scan

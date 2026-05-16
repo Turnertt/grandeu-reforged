@@ -250,6 +250,18 @@ internal class ItemUser
 	public ItemUser()
 	{
 		ColorTables = new Dictionary<string, LinearColorNative[]>();
+		Generic = new DamageUser(true, default);
+		Poison = new DamageUser(true, default);
+		Fire = new DamageUser(true, default);
+		Lightning = new DamageUser(true, default);
+		ElementalDamage = new DamageUser(false, default);
+		Color1 = new LinearColor();
+		Color2 = new LinearColor();
+		Color1Override = new LinearColor();
+		Color2Override = new LinearColor();
+		ItemName = "";
+		Description = "";
+		ForgerName = "";
 	}
 
 	private int Int32Range(int value, int min, int max)

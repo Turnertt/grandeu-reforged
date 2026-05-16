@@ -8,19 +8,18 @@
         <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
                 Padding="16,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
             <Grid>
-                <StackPanel Orientation="Horizontal">
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
                     <Button x:Name="BtnBack" Content="&#x2190;  BACK"
                             Style="{StaticResource GhostButton}"
-                            Padding="14,6" Click="BtnBack_Click" />
-                    <Button x:Name="BtnRefresh" Content="REFRESH" Padding="16,7" Margin="8,0,0,0" Click="BtnRefresh_Click" />
+                            Padding="14,7" Height="32" Click="BtnBack_Click" />
+                    <Button x:Name="BtnRefresh" Content="REFRESH" Padding="16,7" Height="32" Margin="8,0,0,0" Click="BtnRefresh_Click" />
                     <Button x:Name="BtnUpdate" Content="UPDATE" Style="{StaticResource AccentButton}"
-                            Padding="16,7" Margin="8,0,0,0" Click="BtnUpdate_Click" />
+                            Padding="16,7" Height="32" Margin="8,0,0,0" Click="BtnUpdate_Click" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                             VerticalAlignment="Center">
-                    <TextBlock x:Name="StatusText" Text="Location"
-                               Foreground="{StaticResource TextMutedBrush}"
-                               FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
                     <Border Background="{StaticResource EditAccentSubtleBrush}"
                             BorderBrush="{StaticResource EditAccentBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="8,4"
@@ -33,6 +32,28 @@
                                        Foreground="{StaticResource EditAccentBrush}"
                                        FontSize="10.5" FontWeight="Bold"
                                        VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <Border Background="{StaticResource SurfaceLightBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="5"
+                            Padding="10,5"
+                            Margin="10,0,0,0"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE946;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       Margin="0,0,7,0"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="StatusText" Text="Location"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       FontSize="11.5"
+                                       VerticalAlignment="Center"
+                                       MaxWidth="320"
+                                       TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                     </Border>
                 </StackPanel>

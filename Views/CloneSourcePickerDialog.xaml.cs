@@ -8,9 +8,7 @@ using System.Windows.Input;
 
 namespace Modinator.Views;
 
-// Lists the *real* items from the last Forge scan for the Clone From
-// feature on ItemEditView. These are the ones the player actually owns
-// (EquipmentID1/ID2 != 0), not every item-shaped address in memory.
+// Lists items from the last Forge scan for the Item Dupe pickers.
 // Returns the picked address via PickedAddress, or null on cancel.
 public partial class CloneSourcePickerDialog : Window
 {
@@ -38,9 +36,8 @@ public partial class CloneSourcePickerDialog : Window
     }
 
     // Walk the entire forge snapshot, re-read each item fresh so the
-    // stats shown match memory right now, and skip the sacrificial so
-    // the user can't pick their own address. Non-real entries are kept
-    // but flagged — the checkbox in the UI gates whether they appear.
+    // stats shown match memory right now, and skip the opposite side so
+    // the same address cannot be picked twice.
     private List<Row> BuildRows()
     {
         var rows = new List<Row>();
@@ -199,7 +196,7 @@ public partial class CloneSourcePickerDialog : Window
     {
         if (Lv.SelectedItem is not Row r)
         {
-            MessageBox.Show(this, "Pick an item first.", "Clone", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "Pick an item first.", "Item Dupe", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         PickedAddress = r.Address;

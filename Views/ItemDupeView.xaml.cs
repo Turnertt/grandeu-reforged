@@ -7,8 +7,8 @@ using System.Windows.Media.Imaging;
 
 namespace Modinator.Views;
 
-// Dedicated item-dupe tab. Two sides: SACRIFICIAL (left, red — gets
-// overwritten) and SOURCE (right — the item to duplicate). Both pickers
+// Dedicated item-dupe tab. Two sides: SOURCE (copied from) and TARGET
+// (overwritten). Both pickers
 // reuse the authoritative Forge enumeration via CloneSourcePickerDialog
 // (ForgeViewerView.LastSnapshot).
 //
@@ -18,8 +18,8 @@ namespace Modinator.Views;
 // copy ONLY value/archetype fields from source, write the 3 user strings
 // in-place into the sacrificial's existing buffers. Never raw-copy the
 // whole ItemNative; never copy a per-instance NativeArray pointer. This
-// is the lowest-crash external dupe and supersedes the old (removed)
-// ItemEditView "Clone From" button.
+// is the lowest-crash external dupe and supersedes the old removed
+// ItemEditView clone button.
 public partial class ItemDupeView : UserControl
 {
     private int? _sacrificialAddr;
@@ -34,7 +34,7 @@ public partial class ItemDupeView : UserControl
     {
         if (ForgeViewerView.LastSnapshot.Count > 0) return true;
         Base.RaiseMessage(
-            "Open the Forge Viewer and SCAN first — the dupe pickers are built from the forge/hero item list.",
+            "Open the Forge Viewer and scan first. The dupe pickers are built from the forge/hero item list.",
             "Item Dupe");
         return false;
     }
@@ -44,9 +44,9 @@ public partial class ItemDupeView : UserControl
         if (!EnsureScanned()) return;
         var picker = new CloneSourcePickerDialog(
             excludeAddress: _sourceAddr ?? 0,
-            titleOverride: "Pick SACRIFICIAL item (this item will be OVERWRITTEN)",
-            promptOverride: "This item is destroyed — its stats/name become a copy of the source.",
-            okButtonOverride: "USE AS SACRIFICIAL")
+            titleOverride: "Pick TARGET item (this item will be overwritten)",
+            promptOverride: "This item will become a copy of the source.",
+            okButtonOverride: "USE AS TARGET")
         { Owner = Window.GetWindow(this) };
         if (picker.ShowDialog() == true && picker.PickedAddress is int a)
         {
@@ -62,7 +62,7 @@ public partial class ItemDupeView : UserControl
         var picker = new CloneSourcePickerDialog(
             excludeAddress: _sacrificialAddr ?? 0,
             titleOverride: "Pick SOURCE item (the item to duplicate)",
-            promptOverride: "The sacrificial item will become a copy of this one.",
+            promptOverride: "The target item will become a copy of this one.",
             okButtonOverride: "USE AS SOURCE")
         { Owner = Window.GetWindow(this) };
         if (picker.ShowDialog() == true && picker.PickedAddress is int a)
@@ -77,11 +77,11 @@ public partial class ItemDupeView : UserControl
     {
         bool ready = _sacrificialAddr is int s && _sourceAddr is int src && s != src;
         BtnDupe.IsEnabled = ready;
-        TxtStatus.Text = _sacrificialAddr == null || _sourceAddr == null
-            ? "Pick a sacrificial and a source item."
+        TxtStatus.Text = _sourceAddr == null || _sacrificialAddr == null
+            ? "Pick a source and a target item."
             : (_sacrificialAddr == _sourceAddr
-                ? "Sacrificial and source must be different items."
-                : "Ready. DUPE overwrites the sacrificial.");
+                ? "Source and target must be different items."
+                : "Ready. OVERWRITE TARGET will replace the target item.");
     }
 
     private void BtnReset_Click(object sender, RoutedEventArgs e)
@@ -98,7 +98,7 @@ public partial class ItemDupeView : UserControl
         TextBlock nameT = sacrificial ? TxtSacName : TxtSrcName;
         TextBlock metaT = sacrificial ? TxtSacMeta : TxtSrcMeta;
         TextBlock addrT = sacrificial ? TxtSacAddr : TxtSrcAddr;
-        nameT.Text = "— no item selected —";
+        nameT.Text = sacrificial ? "No target selected" : "No source selected";
         nameT.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextMutedBrush");
         metaT.Text = "";
         addrT.Text = "";
@@ -123,8 +123,8 @@ public partial class ItemDupeView : UserControl
 
             nameT.Text = name;
             nameT.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextPrimaryBrush");
-            metaT.Text = $"{u.EquipmentType}  •  {u.Quality2}  •  Lvl {u.Level}" +
-                         (string.IsNullOrWhiteSpace(forger) ? "" : $"  •  forged by {forger}");
+            metaT.Text = $"{u.EquipmentType}  /  {u.Quality2}  /  Lvl {u.Level}" +
+                         (string.IsNullOrWhiteSpace(forger) ? "" : $"  /  forged by {forger}");
             addrT.Text = Base.AddressToString(addr);
             BuildStats(sacrificial ? SacStats : SrcStats, u);
         }
@@ -204,14 +204,14 @@ public partial class ItemDupeView : UserControl
 
     private void AddIconStat(Grid grid, int row, int col, string? iconPath, string label, int value)
     {
-        var panel = new StackPanel { Margin = new Thickness(0, 3, 6, 3) };
+        var panel = new StackPanel();
         var valRow = new StackPanel { Orientation = Orientation.Horizontal };
         if (iconPath != null)
             try
             {
                 valRow.Children.Add(new Image
                 {
-                    Source = new BitmapImage(new Uri(iconPath, UriKind.Relative)),
+                    Source = LoadIcon(iconPath),
                     Width = 14, Height = 14, Margin = new Thickness(0, 0, 4, 0),
                     VerticalAlignment = VerticalAlignment.Center, Opacity = 0.85
                 });
@@ -230,9 +230,20 @@ public partial class ItemDupeView : UserControl
             Text = label, FontSize = 9.5,
             Foreground = (Brush)FindResource("TextMutedBrush")
         });
-        Grid.SetRow(panel, row);
-        Grid.SetColumn(panel, col);
-        grid.Children.Add(panel);
+
+        var tile = new Border
+        {
+            Background = (Brush)FindResource("SurfaceLightBrush"),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 0, 6, 6),
+            Child = panel
+        };
+        Grid.SetRow(tile, row);
+        Grid.SetColumn(tile, col);
+        grid.Children.Add(tile);
     }
 
     private void AddChip(WrapPanel parent, string iconPath, string label, int value)
@@ -241,13 +252,13 @@ public partial class ItemDupeView : UserControl
         var chip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 0, 10, 4)
+            VerticalAlignment = VerticalAlignment.Center
         };
         try
         {
             chip.Children.Add(new Image
             {
-                Source = new BitmapImage(new Uri(iconPath, UriKind.Relative)),
+                Source = LoadIcon(iconPath),
                 Width = 13, Height = 13, Margin = new Thickness(0, 0, 4, 0),
                 VerticalAlignment = VerticalAlignment.Center, Opacity = 0.85
             });
@@ -260,7 +271,27 @@ public partial class ItemDupeView : UserControl
             Foreground = (Brush)FindResource("TextSecondaryBrush"),
             VerticalAlignment = VerticalAlignment.Center
         });
-        parent.Children.Add(chip);
+        parent.Children.Add(new Border
+        {
+            Background = (Brush)FindResource("SurfaceLightBrush"),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(8, 4, 8, 4),
+            Margin = new Thickness(0, 0, 6, 6),
+            Child = chip
+        });
+    }
+
+    private static BitmapImage LoadIcon(string iconPath)
+    {
+        var bmp = new BitmapImage();
+        bmp.BeginInit();
+        bmp.UriSource = new Uri("pack://application:,,," + iconPath, UriKind.Absolute);
+        bmp.CacheOption = BitmapCacheOption.OnLoad;
+        bmp.EndInit();
+        bmp.Freeze();
+        return bmp;
     }
 
     private static string ShortName(int addr)
@@ -280,7 +311,7 @@ public partial class ItemDupeView : UserControl
 
         var ok = MessageBox.Show(
             $"Overwrite \"{ShortName(sacAddr)}\" with a copy of \"{ShortName(srcAddr)}\"?\n\n" +
-            "This permanently replaces the sacrificial item.",
+            "This permanently replaces the target item.",
             "Confirm Dupe", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (ok != MessageBoxResult.Yes) return;
 
@@ -336,7 +367,7 @@ public partial class ItemDupeView : UserControl
             merged.MyRating                             = source.MyRating;
 
             // The 3 user strings: write the SOURCE text into the
-            // SACRIFICIAL's existing buffer (in-place, or fresh-alloc
+            // TARGET's existing buffer (in-place, or fresh-alloc
             // inside DD1 if it doesn't fit). Never copy source's pointer.
             // Blank name crashes the game (documented) → use a single
             // space. BaseEquipmentName is left as the sacrificial's — its
@@ -353,7 +384,7 @@ public partial class ItemDupeView : UserControl
             Base.Instance.WriteMemory(sacAddr, Base.Push(merged));
 
             ShowItem(true, sacAddr);
-            TxtStatus.Text = "Duped. Sacrificial overwritten from 0x" + srcAddr.ToString("X8") +
+            TxtStatus.Text = "Duped. Target overwritten from 0x" + srcAddr.ToString("X8") +
                              ". Re-scan the Forge Viewer to refresh lists.";
         }
         catch (Exception ex)

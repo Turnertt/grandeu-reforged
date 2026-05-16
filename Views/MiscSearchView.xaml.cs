@@ -7,8 +7,6 @@ namespace Modinator.Views;
 
 public partial class MiscSearchView : UserControl
 {
-    private bool _inSession;
-
     // Preset hex suffixes keyed by combo index
     private static readonly string[] PresetEndsWith =
     {
@@ -64,7 +62,6 @@ public partial class MiscSearchView : UserControl
     {
         if (!Base.OpenProcess()) return;
 
-        _inSession = false;
         ScanStatus.Text = "Scanning...";
 
         decimal.TryParse(TxtSearchValue.Text, out decimal value);
@@ -127,7 +124,6 @@ public partial class MiscSearchView : UserControl
 
     private void OnSuccess()
     {
-        _inSession = true;
         BtnNextScan.IsEnabled = true;
         ScanStatus.Text = $"Found {Base.MiscResults.Count:N0} results";
         Base.RaiseResultsChanged(Base.MiscResults);
@@ -135,7 +131,6 @@ public partial class MiscSearchView : UserControl
 
     private void OnFail()
     {
-        _inSession = false;
         BtnNextScan.IsEnabled = false;
         ScanStatus.Text = "No results";
         Base.MiscResults.Clear();
@@ -150,7 +145,6 @@ public partial class MiscSearchView : UserControl
         ChkFloat.IsChecked = false;
         if (CboPresets.Items.Count > 0) CboPresets.SelectedIndex = 0;
 
-        _inSession = false;
         BtnNextScan.IsEnabled = false;
         Base.MiscResults.Clear();
         Base.MiscFloatTracks.Clear();

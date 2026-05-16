@@ -14,7 +14,9 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1">
             <Grid>
-                <StackPanel Orientation="Horizontal">
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
                     <Button x:Name="BtnFirstScan"
                             Content="FIRST SCAN"
                             Style="{StaticResource AccentButton}"
@@ -33,14 +35,8 @@
                             ToolTip="Clear inputs and results to start a fresh scan."
                             Click="BtnNewScan_Click" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                             VerticalAlignment="Center">
-                    <TextBlock x:Name="ScanStatus"
-                               Text="Enter search values and click First Scan"
-                               Foreground="{StaticResource TextMutedBrush}"
-                               FontSize="11"
-                               VerticalAlignment="Center"
-                               Margin="0,0,12,0" />
                     <Border Background="{StaticResource AccentSubtleBrush}"
                             BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
                             CornerRadius="4" Padding="8,4"
@@ -53,6 +49,29 @@
                                        Foreground="{StaticResource AccentBrush}"
                                        FontSize="10.5" FontWeight="Bold"
                                        VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <Border Background="{StaticResource SurfaceLightBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="5"
+                            Padding="10,5"
+                            Margin="10,0,0,0"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE946;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       Margin="0,0,7,0"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="ScanStatus"
+                                       Text="Enter search values and click First Scan"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       FontSize="11.5"
+                                       VerticalAlignment="Center"
+                                       MaxWidth="320"
+                                       TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                     </Border>
                 </StackPanel>

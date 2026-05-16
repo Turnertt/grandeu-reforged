@@ -156,7 +156,7 @@ internal class ItemSearch
 	}
 
 	[Category("E. Identity")]
-	public string Description { get; set; }
+	public string Description { get; set; } = "";
 
 	[Category("E. Identity")]
 	public EquipmentType EquipmentType { get; set; }

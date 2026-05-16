@@ -67,17 +67,17 @@ internal class Scanner
 
 	public ProgressChangeDG ProgressChangeEvent;
 
-	private List<PAGE> _Pages;
+	private readonly List<PAGE> _Pages;
 
 	private List<int> _Results;
 
 	private int PID;
 
-	private byte[] _Mask;
+	private byte[] _Mask = Array.Empty<byte>();
 
-	private byte[] _Search;
+	private byte[] _Search = Array.Empty<byte>();
 
-	private byte[] _Data;
+	private byte[] _Data = Array.Empty<byte>();
 
 	private bool HandleMask;
 
@@ -133,9 +133,9 @@ internal class Scanner
 		Handle = IntPtr.Zero;
 		_Pages.Clear();
 		_Results.Clear();
-		_Mask = null;
-		_Data = null;
-		_Search = null;
+		_Mask = Array.Empty<byte>();
+		_Data = Array.Empty<byte>();
+		_Search = Array.Empty<byte>();
 	}
 
 	public void ScanPages()
@@ -169,7 +169,7 @@ internal class Scanner
 		Scanning = false;
 	}
 
-	public void FirstScan(byte[] search, int index = 0, int step = 4, byte[] mask = null)
+	public void FirstScan(byte[] search, int index = 0, int step = 4, byte[]? mask = null)
 	{
 		CheckParameters(search, mask);
 		if (step == 0)
@@ -179,14 +179,16 @@ internal class Scanner
 		_Results.Clear();
 		Scanning = true;
 		ProgressChangeEvent(0);
-		int num = Pages.Length - 1;
+		int pageCount = _Pages.Count;
+		int num = pageCount - 1;
 		int length = default(int);
 		for (int i = 0; i <= num; i++)
 		{
-			int size = Pages[i].Size;
+			PAGE page = _Pages[i];
+			int size = page.Size;
 			if (size >= search.Length + index)
 			{
-				int num2 = Pages[i].Base.ToInt32();
+				int num2 = page.Base.ToInt32();
 				Array.Resize(ref _Data, size);
 				if (ReadMem(Handle, num2, _Data, _Data.Length, ref length))
 				{
@@ -200,13 +202,13 @@ internal class Scanner
 					}
 				}
 			}
-			ProgressChangeEvent((int)Math.Round((double)(i + 1) / (double)Pages.Length * 100.0));
+			ProgressChangeEvent((int)Math.Round((double)(i + 1) / (double)pageCount * 100.0));
 		}
 		Scanning = false;
 		ProgressChangeEvent(100);
 	}
 
-	public void NextScan(byte[] search, byte[] mask = null)
+	public void NextScan(byte[] search, byte[]? mask = null)
 	{
 		CheckParameters(search, mask);
 		if (_Results.Count == 0)
@@ -271,10 +273,10 @@ internal class Scanner
 		return true;
 	}
 
-	private void CheckParameters(byte[] search, byte[] mask)
+	private void CheckParameters(byte[] search, byte[]? mask)
 	{
 		_Search = search;
-		_Mask = mask;
+		_Mask = mask ?? Array.Empty<byte>();
 		if (Handle == IntPtr.Zero)
 		{
 			throw new InvalidOperationException();
@@ -402,7 +404,14 @@ internal class Scanner
 			IntPtr intPtr = OpenThread(2u, inherit: false, thread.Id);
 			if (!(intPtr == IntPtr.Zero))
 			{
-				SuspendThread(intPtr);
+				try
+				{
+					SuspendThread(intPtr);
+				}
+				finally
+				{
+					CloseHandle(intPtr);
+				}
 			}
 		}
 	}
@@ -419,7 +428,14 @@ internal class Scanner
 			IntPtr intPtr = OpenThread(2u, inherit: false, thread.Id);
 			if (!(intPtr == IntPtr.Zero))
 			{
-				ResumeThread(intPtr);
+				try
+				{
+					ResumeThread(intPtr);
+				}
+				finally
+				{
+					CloseHandle(intPtr);
+				}
 			}
 		}
 	}

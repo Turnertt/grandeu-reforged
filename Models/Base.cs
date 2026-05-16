@@ -12,7 +12,6 @@ internal sealed class Base
 	public static event Action<string, string>? OnMessage;
 	public static event Action<List<int>>? OnResultsChanged;
 	public static event Action<int>? OnProgressChanged;
-	public static event Action<Track>? OnTrackRemoved;
 	public static event Func<Process[], Process?>? OnChooseProcess;
 
 	public static void RaiseResultsChanged(List<int> results) => OnResultsChanged?.Invoke(results);
@@ -28,40 +27,6 @@ internal sealed class Base
 		Tower
 	}
 
-	internal struct Track
-	{
-		public int Address;
-
-		public Genus Genus;
-
-		public bool Freeze;
-
-		public Track(int _address, Genus _type)
-		{
-			this = default(Track);
-			Address = _address;
-			Genus = _type;
-		}
-
-		public static bool operator ==(Track r1, Track r2)
-		{
-			if (r1.Address != r2.Address || r1.Genus != r2.Genus)
-			{
-				return false;
-			}
-			return true;
-		}
-
-		public static bool operator !=(Track r1, Track r2)
-		{
-			if (r1.Address == r2.Address && r1.Genus == r2.Genus)
-			{
-				return false;
-			}
-			return true;
-		}
-	}
-
 	public delegate void GenericDG();
 
 	public static bool FullScan;
@@ -69,12 +34,6 @@ internal sealed class Base
 	public static bool PauseScan;
 
 	public static bool SimulateG;
-
-	public static bool VacuumActors;
-
-	public static Vector VacuumVector;
-
-	public static int VacuumExclusion;
 
 	public static bool Renew = true;
 
@@ -108,23 +67,21 @@ internal sealed class Base
 
 	public static Dictionary<int, float> LocationFreeze = new Dictionary<int, float>();
 
-	public static byte[] Search;
+	public static byte[] Search = Array.Empty<byte>();
 
-	public static byte[] Mask;
+	public static byte[] Mask = Array.Empty<byte>();
 
-	public static LinearColorNative[] ColorTable1;
+	public static LinearColorNative[] ColorTable1 = Array.Empty<LinearColorNative>();
 
-	public static LinearColorNative[] ColorTable2;
+	public static LinearColorNative[] ColorTable2 = Array.Empty<LinearColorNative>();
 
 	public static Scanner Instance = new Scanner(ProgressChange);
 
-	private static MemoryStream MaskStream;
+	private static MemoryStream MaskStream = null!;
 
-	private static BinaryWriter MaskWriter;
+	private static BinaryWriter MaskWriter = null!;
 
-	private static UTF8Encoding UTF8 = new UTF8Encoding();
-
-	private static UnicodeEncoding Unicode = new UnicodeEncoding();
+	private static readonly UnicodeEncoding Unicode = new UnicodeEncoding();
 
 	private static readonly string LogPath = System.IO.Path.Combine(
 		AppContext.BaseDirectory, "modinator_log.txt");
@@ -162,7 +119,7 @@ internal sealed class Base
 
 	public static IntPtr MainWindow;
 
-	private static Process LastProcess;
+	private static Process? LastProcess;
 
 	public static void RunFirstScan(int index, int step, GenericDG fail, GenericDG success, ref List<int> results)
 	{
@@ -292,7 +249,9 @@ internal sealed class Base
 				float value2 = BitConverter.ToSingle(value, 0);
 				float value3 = BitConverter.ToSingle(value, 4);
 				float value4 = BitConverter.ToSingle(value, 8);
-				result = (ValidCoord(value2) ? (ValidCoord(value3) ? (ValidCoord(value4) ? string.Format("X: {0}, Y: {1}, Z: {2}", value2.ToString("N0"), value3.ToString("N0"), value4.ToString("N0")) : null) : null) : null);
+				result = ValidCoord(value2) && ValidCoord(value3) && ValidCoord(value4)
+					? string.Format("X: {0}, Y: {1}, Z: {2}", value2.ToString("N0"), value3.ToString("N0"), value4.ToString("N0"))
+					: string.Empty;
 				break;
 			}
 			case Genus.Tower:
@@ -310,7 +269,7 @@ internal sealed class Base
 		}
 		catch (Exception)
 		{
-			result = null;
+			result = string.Empty;
 		}
 		return result;
 	}
@@ -381,57 +340,6 @@ internal sealed class Base
 		{
 			LocationFreeze.Remove(address);
 		}
-	}
-
-	public static void RemoveNoAccess(Track _track)
-	{
-		int address = _track.Address;
-		switch (_track.Genus)
-		{
-		case Genus.Item:
-			ItemResults.Remove(address);
-			ShowMainResults(ref ItemResults);
-			break;
-		case Genus.Hero:
-			HeroResults.Remove(address);
-			ShowMainResults(ref HeroResults);
-			break;
-		case Genus.Misc:
-		{
-			int num2 = MiscResults.IndexOf(address);
-			if (num2 != -1)
-			{
-				MiscResults.RemoveAt(num2);
-				MiscFloatTracks.RemoveAt(num2);
-				ShowMainResults(ref MiscResults);
-			}
-			if (MiscFreeze.ContainsKey(address))
-			{
-				MiscFreeze.Remove(address);
-			}
-			break;
-		}
-		case Genus.Location:
-		{
-			int num = LocationResults.IndexOf(address);
-			if (num != -1)
-			{
-				LocationResults.RemoveAt(num);
-				LocationValues.RemoveAt(num);
-				ShowMainResults(ref LocationResults);
-			}
-			if (LocationFreeze.ContainsKey(address))
-			{
-				LocationFreeze.Remove(address);
-			}
-			break;
-		}
-		case Genus.Tower:
-			TowerResults.Remove(address);
-			ShowMainResults(ref TowerResults);
-			break;
-		}
-		OnTrackRemoved?.Invoke(_track);
 	}
 
 	public static void ShowMainResults(ref List<int> results)
@@ -980,7 +888,7 @@ internal sealed class Base
 
 	public static string? ReadUniDirect(int stringPtr, int charCount)
 	{
-		if (stringPtr < 0x10000 || charCount <= 0 || charCount > 16384)
+		if ((uint)stringPtr < 0x10000u || charCount <= 0 || charCount > 16384)
 			return null;
 		int byteCount = charCount * 2;
 		byte[] value = Instance.ReadMemory(stringPtr, byteCount);
@@ -1025,8 +933,7 @@ internal sealed class Base
 
 	public static byte[] ToUnicode(string data)
 	{
-		byte[] bytes = UTF8.GetBytes(data);
-		return Encoding.Convert(UTF8, Unicode, bytes);
+		return Unicode.GetBytes(data);
 	}
 
 	public static int OffsetOf<T>(string name)
@@ -1054,7 +961,7 @@ internal sealed class Base
 		if (!(intPtr == IntPtr.Zero))
 		{
 			Marshal.Copy(data, 0, intPtr, data.Length);
-			result = (T)Marshal.PtrToStructure(intPtr, typeof(T));
+			result = Marshal.PtrToStructure<T>(intPtr);
 			Marshal.FreeCoTaskMem(intPtr);
 		}
 		return result;
@@ -1065,7 +972,7 @@ internal sealed class Base
 		return "0x" + pointer.ToString("X").PadLeft(8, '0');
 	}
 
-	private static Process GetProcess()
+	private static Process? GetProcess()
 	{
 		Process[] processesByName = Process.GetProcessesByName("DunDefGame");
 		if (processesByName.Length == 1)
@@ -1086,7 +993,7 @@ internal sealed class Base
 		{
 			return true;
 		}
-		Process process = GetProcess();
+		Process? process = GetProcess();
 		if (process == null)
 		{
 			OnMessage?.Invoke("Unable to find the 'DunDefGame.exe' process, is the game running?", "Error");

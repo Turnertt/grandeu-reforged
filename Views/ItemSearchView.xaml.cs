@@ -6,8 +6,6 @@ namespace Modinator.Views;
 
 public partial class ItemSearchView : UserControl
 {
-    private bool _inSession;
-
     public ItemSearchView()
     {
         InitializeComponent();
@@ -59,7 +57,6 @@ public partial class ItemSearchView : UserControl
     {
         if (!Base.OpenProcess()) return;
 
-        _inSession = false;
         ScanStatus.Text = "Scanning...";
 
         var search = BuildSearch();
@@ -81,7 +78,6 @@ public partial class ItemSearchView : UserControl
 
     private void OnSuccess()
     {
-        _inSession = true;
         BtnNextScan.IsEnabled = true;
         ScanStatus.Text = $"Found {Base.ItemResults.Count:N0} results";
         Base.RaiseResultsChanged(Base.ItemResults);
@@ -89,7 +85,6 @@ public partial class ItemSearchView : UserControl
 
     private void OnFail()
     {
-        _inSession = false;
         BtnNextScan.IsEnabled = false;
         ScanStatus.Text = "No results";
         Base.ItemResults.Clear();
@@ -111,7 +106,6 @@ public partial class ItemSearchView : UserControl
         TxtDescription.Text = "";
         if (CboEquipmentType.Items.Count > 0) CboEquipmentType.SelectedIndex = 0;
 
-        _inSession = false;
         BtnNextScan.IsEnabled = false;
         Base.ItemResults.Clear();
         Base.RaiseResultsChanged(Base.ItemResults);
