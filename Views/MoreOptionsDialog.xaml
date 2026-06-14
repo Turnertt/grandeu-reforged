@@ -13,8 +13,10 @@
         <TextBox x:Name="TxtRefreshTimer" Text="5000" Margin="0,0,0,4" />
         <CheckBox x:Name="ChkDisableRefresh" Content="Disable refresh" Margin="0,4,0,16" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Content="RESET" Padding="16,7" Margin="0,0,8,0" Click="BtnReset_Click" />
-            <Button Content="OK" Style="{StaticResource AccentButton}" Padding="16,7" Click="BtnOk_Click" />
+            <Button Content="RESET" Padding="16,7" Margin="0,0,8,0"
+                    ToolTip="Restore the default timer values."
+                    Click="BtnReset_Click" />
+            <Button Content="OK" Style="{StaticResource AccentButton}" Padding="16,7" IsDefault="True" Click="BtnOk_Click" />
         </StackPanel>
     </StackPanel>
 </Window>

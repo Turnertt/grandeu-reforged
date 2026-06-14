@@ -11,7 +11,7 @@
                 Background="{StaticResource SurfaceBrush}"
                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Cancel" Padding="16,7" Margin="0,0,8,0" Click="BtnCancel_Click" />
+                <Button Content="Cancel" IsCancel="True" Padding="16,7" Margin="0,0,8,0" Click="BtnCancel_Click" />
                 <Button Content="USE SELECTED" Style="{StaticResource AccentButton}" Padding="16,7" Click="BtnOk_Click" />
             </StackPanel>
         </Border>

@@ -26,6 +26,7 @@
                             Content="REFRESH"
                             Padding="16,7" Height="32"
                             Margin="8,0,0,0"
+                            ToolTip="Re-read the item from the game. Anything you've typed is cleared."
                             Click="BtnRefresh_Click" />
                     <Button x:Name="BtnMax"
                             Content="MAX"
@@ -46,12 +47,14 @@
                             Style="{StaticResource AccentButton}"
                             Padding="16,7" Height="32"
                             Margin="8,0,0,0"
+                            ToolTip="Write your changes to the game. Empty fields keep their current value."
                             Click="BtnUpdate_Click" />
                     <Button x:Name="BtnDelete"
                             Content="DELETE"
                             Style="{StaticResource DangerButton}"
                             Padding="16,7" Height="32"
                             Margin="8,0,0,0"
+                            ToolTip="Wipe this item from game memory. This can't be undone."
                             Click="BtnDelete_Click" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"

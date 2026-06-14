@@ -94,12 +94,9 @@ public partial class ForgeViewerView : UserControl
 
     // Sentinel "icon path" for the weapon Elemental-damage tile, which has
     // no dedicated asset — MakeStatTile renders a glyph placeholder for it.
-    private const string ElementalIcon = "@elemental";
     private const string SelectionMarkerTag = "SelectionMarker";
 
     private readonly Dictionary<string, ImageBrush?> _statIconBrushes = new();
-    private readonly SolidColorBrush _secondaryTileBorder = new(Color.FromArgb(70, 255, 255, 255));
-    private readonly SolidColorBrush _fallbackTileBrush = new(Color.FromArgb(20, 255, 255, 255));
     private readonly SolidColorBrush _selectedCardBrush = new(Color.FromArgb(30, 88, 101, 242));
 
     private List<int> forgeResults = new();
@@ -140,14 +137,52 @@ public partial class ForgeViewerView : UserControl
     public ForgeViewerView()
     {
         InitializeComponent();
-        _secondaryTileBorder.Freeze();
-        _fallbackTileBrush.Freeze();
         _selectedCardBrush.Freeze();
         _suppressFilterEvent = true;
         PopulateSourceCombo();
         PopulateTypeCombo();
         PopulateSortCombo();
         _suppressFilterEvent = false;
+        BuildTypeLegend();
+    }
+
+    // Colour key for the per-category card strips. Swatches come from
+    // GetTypeColor itself so the legend can never drift from the cards.
+    private void BuildTypeLegend()
+    {
+        var entries = new (string label, EquipmentType type)[]
+        {
+            ("Weapon",    EquipmentType.Weapon),
+            ("Armor",     EquipmentType.ArmorTorso),
+            ("Accessory", EquipmentType.Hat),
+            ("Familiar",  EquipmentType.Familiar),
+        };
+        foreach (var (label, type) in entries)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(14, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            row.Children.Add(new Border
+            {
+                Width = 8,
+                Height = 8,
+                CornerRadius = new CornerRadius(4),
+                Background = new SolidColorBrush(GetTypeColor(type)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 5, 0)
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 10,
+                Foreground = (Brush)FindResource("TextMutedBrush"),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            TypeLegend.Children.Add(row);
+        }
     }
 
     // ── Combo population ─────────────────────────────────────────
@@ -207,34 +242,54 @@ public partial class ForgeViewerView : UserControl
         RunForgeScan();
     }
 
-    private void RunForgeScan()
+    private async void RunForgeScan()
     {
+        // Re-entrancy guard: the Source combo's SelectionChanged also calls
+        // this, and it stays enabled during the multi-second recalibrate
+        // await — a second concurrent scan would interleave with the first.
+        if (!BtnScan.IsEnabled) return;
         if (!Base.OpenProcess()) return;
 
         BtnScan.IsEnabled = false;
-        LblStatus.Text = "Reading items...";
         try
         {
+            LblStatus.Text = "Reading items...";
             List<int>? items = EnumerateItemAddresses();
-            if (items == null)
+
+            if (items == null && Window.GetWindow(this) is Modinator.MainWindow mw0)
             {
-                // One forced retry: a single stale read in the
+                // Cheap retry first: a single stale read in the
                 // pawn→HeroManager chain (common right after a map change /
                 // game restart) yields null. Drop the cached pawn-scan + AK
-                // handle and resolve once more before giving up — turns a
-                // transient miss into a success with no user re-scan.
-                if (Window.GetWindow(this) is Modinator.MainWindow mw)
-                    mw.InvalidatePawnScanCache();
+                // handle and resolve once more before the heavier path.
+                mw0.InvalidatePawnScanCache();
                 items = EnumerateItemAddresses();
             }
+
+            if (items == null && Window.GetWindow(this) is Modinator.MainWindow mw)
+            {
+                // Auto-recalibrate (self-healing): the cheap retry didn't
+                // help, so re-derive the WorldInfo + pawn-vtable seed
+                // structurally from live memory — exactly what Settings →
+                // CALIBRATE does — on a background thread so the UI stays
+                // responsive, then try the enumeration once more. This is
+                // the "if the forge fails, run forge calibration by default"
+                // behaviour: the user never has to open Settings for the
+                // common post-patch / post-restart miss. ForceStructuralReseed
+                // re-pins the seed and leaves a freshly-validated WorldInfo
+                // cached, which ResolvePlayerPawnAddress then reuses.
+                LblStatus.Text = "Recalibrating from live memory...";
+                await System.Threading.Tasks.Task.Run(() => mw.ForceStructuralReseed());
+                items = EnumerateItemAddresses();
+            }
+
             if (items == null)
             {
-                Base.RaiseMessage(
-                    "Could not reach the forge / hero items.\r\n\r\n" +
-                    "Make sure the game is running and your hero is in a map or the tavern " +
-                    "(items aren't loaded in menus / during loading).",
-                    "Forge Viewer");
-                LblStatus.Text = "Items not reachable.";
+                // Staged diagnosis: not running / 64-bit unsupported /
+                // menu (no pawn) / chain broke — say which.
+                string why = GameChain.DescribeScanFailure(_lastResolvedPawn);
+                Base.RaiseMessage(why, "Forge Viewer");
+                LblStatus.Text = "Items not reachable — " + why;
                 OnScanFail();
                 return;
             }
@@ -289,65 +344,23 @@ public partial class ForgeViewerView : UserControl
         return list;
     }
 
+    // Last pawn the chain resolution saw — feeds the staged failure
+    // message (distinguishes "no character" from "chain broke").
+    private int _lastResolvedPawn;
+
     private int ResolveHeroManager()
     {
         if (Window.GetWindow(this) is not Modinator.MainWindow main) return 0;
-        int pawn = main.ResolvePlayerPawnAddress();
-        if (!IsGamePtr(pawn)) return 0;
-        int controller = RdPtr(pawn + 0x22C);
-        int player     = RdPtr(controller + 0x3B8);
-        int vpClient   = RdPtr(player + 0x194);
-        return RdPtr(vpClient + 0xCFC);
+        _lastResolvedPawn = main.ResolvePlayerPawnAddress();
+        return GameChain.ResolveHeroManager(_lastResolvedPawn);
     }
 
-    // Reads a UE3 TArray<T*> header (data ptr, Num, Max) at `tarrayAddr`
-    // and returns the live element pointers. Defensive Num cap; bad reads
-    // yield an empty list (a hero with no equipment, etc.).
-    private static List<int> ReadPtrArray(int tarrayAddr)
-    {
-        var result = new List<int>();
-        int dataPtr = RdPtr(tarrayAddr);
-        int num     = RdInt(tarrayAddr + 4);
-        if (!IsGamePtr(dataPtr) || num <= 0 || num > 200000) return result;
-
-        byte[]? arr;
-        try { arr = Base.Instance.ReadMemory(dataPtr, num * 4); }
-        catch { return result; }
-        if (arr == null || arr.Length < num * 4) return result;
-
-        for (int i = 0; i < num; i++)
-        {
-            int p = BitConverter.ToInt32(arr, i * 4);
-            if (IsGamePtr(p)) result.Add(p);
-        }
-        return result;
-    }
-
-    // DD1 is LARGEADDRESSAWARE on WOW64 — heap sits anywhere in
-    // [0x01000000, 0xFFFE0000). Matches MainWindow.IsHeapPtr.
-    private static bool IsGamePtr(int p)
-        => (uint)p >= 0x01000000u && (uint)p < 0xFFFE0000u;
-
-    private static int RdPtr(int addr)
-    {
-        if (!IsGamePtr(addr)) return 0;
-        try
-        {
-            byte[] b = Base.Instance.ReadMemory(addr, 4);
-            return (b != null && b.Length >= 4) ? BitConverter.ToInt32(b, 0) : 0;
-        }
-        catch { return 0; }
-    }
-
-    private static int RdInt(int addr)
-    {
-        try
-        {
-            byte[] b = Base.Instance.ReadMemory(addr, 4);
-            return (b != null && b.Length >= 4) ? BitConverter.ToInt32(b, 0) : 0;
-        }
-        catch { return 0; }
-    }
+    // Thin wrappers over the shared GameChain helpers (one home for the
+    // chain logic; call sites here stay unchanged).
+    private static List<int> ReadPtrArray(int tarrayAddr) => GameChain.ReadPtrArray(tarrayAddr);
+    private static bool IsGamePtr(int p) => GameChain.IsGamePtr(p);
+    private static int RdPtr(int addr) => GameChain.RdPtr(addr);
+    private static int RdInt(int addr) => GameChain.RdInt(addr);
 
     private void BtnExport_Click(object sender, RoutedEventArgs e)
     {
@@ -751,11 +764,16 @@ public partial class ForgeViewerView : UserControl
         CboFolder.Items.Add(new FolderEntry(int.MinValue, "All folders (" + cachedItems.Count + ")"));
         foreach (var g in groups)
         {
+            // FolderID -1 = items sitting loose in the forge box (not in
+            // any user folder) \u2014 label it "Forge" instead of "Folder -1".
             string folderName;
             if (_folderNames.TryGetValue(g.FolderID, out string? realName) && !string.IsNullOrEmpty(realName))
-                folderName = realName + "  \u2014  " + g.Count + " item" + (g.Count == 1 ? "" : "s");
+                folderName = realName;
+            else if (g.FolderID == -1)
+                folderName = "Forge";
             else
-                folderName = "Folder " + g.FolderID + "  \u2014  " + g.Count + " item" + (g.Count == 1 ? "" : "s");
+                folderName = "Folder " + g.FolderID;
+            folderName += "  \u2014  " + g.Count + " item" + (g.Count == 1 ? "" : "s");
             CboFolder.Items.Add(new FolderEntry(g.FolderID, folderName));
         }
 
@@ -946,7 +964,7 @@ public partial class ForgeViewerView : UserControl
         // accessory / familiar), not quality — quality stays as the text.
         var tColor = GetTypeColor(ci.User.EquipmentType);
 
-        string qualityText = ci.User.Quality2.ToString();
+        string qualityText = QualityDisplay.Name(ci.User.Quality2);
         if (ci.User.Quality3 != Quality3.None)
             qualityText += "  \u00b7  " + ci.User.Quality3;
 
@@ -969,75 +987,41 @@ public partial class ForgeViewerView : UserControl
         var outerGrid = new Grid();
         card.Child = outerGrid;
 
-        // Bold category-colour wash from the top of the card, held strong
-        // then fading out well into the body. Absolute-mapped so it's a
-        // fixed tall band regardless of card height. Sits behind content.
-        outerGrid.Children.Add(new Border
-        {
-            CornerRadius = card.CornerRadius,
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(0, 210),
-                MappingMode = BrushMappingMode.Absolute,
-                GradientStops =
-                {
-                    new GradientStop(Color.FromArgb(165, tColor.R, tColor.G, tColor.B), 0.0),
-                    new GradientStop(Color.FromArgb(120, tColor.R, tColor.G, tColor.B), 0.40),
-                    new GradientStop(Color.FromArgb(0,   tColor.R, tColor.G, tColor.B), 1.0),
-                }
-            }
-        });
-
         var mainStack = new StackPanel();
         outerGrid.Children.Add(mainStack);
 
-        // ── Header band — a centered title block echoing the in-game item
-        //    panel: big name, then quality · type · level, then the
-        //    centered description subtitle. The vertical gradient + hairline
-        //    are keyed to the item category (see GetTypeColor).
-        var headerBorder = new Border
+        // ── Category identity — a restrained 3 px strip across the top
+        //    (the legend in the command bar is its key). Replaces the old
+        //    tall saturated gradient wash, which drowned the content and
+        //    forced drop shadows on every piece of header text.
+        mainStack.Children.Add(new Border
         {
-            Padding = new Thickness(10, 5, 10, 5),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(110, tColor.R, tColor.G, tColor.B)),
-            // Transparent so the tall category wash behind it shows through.
-            Background = System.Windows.Media.Brushes.Transparent
-        };
-        var headerStack = new StackPanel();
-        headerBorder.Child = headerStack;
+            Height = 3,
+            // Top corners follow the card radius — Border.ClipToBounds is
+            // rectangular, so without this the strip pokes past the curve.
+            CornerRadius = new CornerRadius(8, 8, 0, 0),
+            Background = new SolidColorBrush(tColor)
+        });
 
-        // Name — centered, prominent
+        // ── Header — left-aligned: name, then quality · type · level,
+        //    then a one-line description. No shadows/plates needed on a
+        //    flat surface.
+        var headerStack = new StackPanel { Margin = new Thickness(10, 7, 10, 8) };
+
         headerStack.Children.Add(new TextBlock
         {
             Text = ci.Name ?? "(unnamed)",
-            FontSize = 14,
-            FontWeight = FontWeights.Bold,
+            FontSize = 13.5,
+            FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)FindResource("TextPrimaryBrush"),
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxHeight = 38,
-            // Soft shadow so the title stays legible over the bold wash.
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
-            {
-                Color = Colors.Black,
-                BlurRadius = 4,
-                ShadowDepth = 0,
-                Opacity = 0.6
-            }
+            MaxHeight = 36
         });
-
-        // Quality · Type · Level + description sit together on a dark
-        // rounded plate so they stay readable over the category wash
-        // (echoes the in-game subtitle panel).
-        var subStack = new StackPanel();
 
         var meta = new TextBlock
         {
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 3, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis
         };
         meta.Inlines.Add(new System.Windows.Documents.Run(qualityText)
@@ -1047,40 +1031,34 @@ public partial class ForgeViewerView : UserControl
             FontSize = 10.5
         });
         meta.Inlines.Add(new System.Windows.Documents.Run(
-            "   ·   " + ci.User.EquipmentType +
-            "   ·   Lv " + ci.User.Level + " / " + ci.User.MaxLevel)
+            "  ·  " + TypeLabel(ci.User.EquipmentType) +
+            "  ·  Lv " + ci.User.Level + " / " + ci.User.MaxLevel)
         {
             Foreground = (Brush)FindResource("TextSecondaryBrush"),
             FontSize = 10
         });
-        subStack.Children.Add(meta);
+        headerStack.Children.Add(meta);
 
         if (!string.IsNullOrWhiteSpace(ci.Description))
-            subStack.Children.Add(new TextBlock
+            headerStack.Children.Add(new TextBlock
             {
                 Text = ci.Description,
-                FontSize = 9,
+                FontSize = 9.5,
                 FontStyle = FontStyles.Italic,
-                Foreground = (Brush)FindResource("TextSecondaryBrush"),
-                TextAlignment = TextAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)FindResource("TextMutedBrush"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxHeight = 22,
                 Margin = new Thickness(0, 3, 0, 0)
             });
 
-        headerStack.Children.Add(new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(95, 70, 72, 78)),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 2, 8, 3),
-            Margin = new Thickness(0, 5, 0, 0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Child = subStack
-        });
+        mainStack.Children.Add(headerStack);
 
-        mainStack.Children.Add(headerBorder);
+        mainStack.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Brush)FindResource("BorderBrush"),
+            Opacity = 0.5,
+            Margin = new Thickness(10, 0, 10, 0)
+        });
 
         // ── Stats body — DD1-style icon tiles (label + framed icon plate
         //    + value). Fixed row order mirrors the in-game item panel:
@@ -1095,17 +1073,18 @@ public partial class ForgeViewerView : UserControl
         bool isDamageItem = u.EquipmentType == EquipmentType.Weapon
                          || u.EquipmentType == EquipmentType.Familiar;
 
-        // Row 1 — primary. Damage items: Attack / Ranged / Elemental
-        // (Elemental uses the item's real ElementalDamage value, with a
-        // placeholder icon). Armor/accessories: the 4 resistances. Any
-        // zero-value tile is dropped.
+        // Row 1 — primary, stretched edge-to-edge (the headline stats get
+        // the width). Damage items: Attack / Ranged / Elemental (the
+        // type-neutral energy-orb icon — elemental and resists never
+        // appear on the same card, so reuse doesn't collide).
+        // Armor/accessories: the 4 resistances. Zero-value tiles drop.
         if (isDamageItem)
         {
             AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
             {
-                ("/Assets/Icons/weapon_damage.png", "Attack",    u.Damage),
-                ("/Assets/Icons/weapon_ranged.png", "Ranged",    u.RangedDamage),
-                (ElementalIcon,                     "Elemental", u.ElementalDamage?.Value ?? 0),
+                ("/Assets/Icons/weapon_damage.png",  "Attack",    u.Damage),
+                ("/Assets/Icons/weapon_ranged.png",  "Ranged",    u.RangedDamage),
+                ("/Assets/Icons/resist_generic.png", "Elemental", u.ElementalDamage?.Value ?? 0),
             }, primaryRow: true, plus: false);
         }
         else
@@ -1119,27 +1098,21 @@ public partial class ForgeViewerView : UserControl
             }, primaryRow: true, plus: false);
         }
 
-        // Row 2 — hero stats (no skills)
+        // Everything else — ONE continuous 3-column grid in fixed role
+        // order (hero → tower → misc). Per-group rows produced ragged
+        // 3+1 orphan lines with misaligned widths; a single aligned grid
+        // keeps every secondary tile the same size with no orphans, and
+        // the icon families still signal the grouping.
         AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
         {
             ("/Assets/Icons/hero_health.png",  "Hero HP",  u.HeroHealth),
             ("/Assets/Icons/hero_speed.png",   "Hero Spd", u.HeroSpeed),
             ("/Assets/Icons/hero_damage.png",  "Hero Dmg", u.HeroDamage),
             ("/Assets/Icons/hero_casting.png", "Casting",  u.HeroCasting),
-        }, primaryRow: false, plus: true);
-
-        // Row 3 — tower stats
-        AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
-        {
             ("/Assets/Icons/tower_health.png", "Tower HP",  u.TowerHealth),
             ("/Assets/Icons/tower_speed.png",  "Tower Spd", u.TowerSpeed),
             ("/Assets/Icons/tower_damage.png", "Tower Dmg", u.TowerDamage),
             ("/Assets/Icons/tower_range.png",  "Tower Rng", u.TowerRange),
-        }, primaryRow: false, plus: true);
-
-        // Row 4 — everything else
-        AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
-        {
             ("/Assets/Icons/weapon_knockback.png",   "Knockback",   u.Knockback),
             ("/Assets/Icons/weapon_projectiles.png", "Projectiles", u.NumberOfProjectiles),
             ("/Assets/Icons/weapon_projspeed.png",   "Proj Spd",    u.SpeedOfProjectiles),
@@ -1201,19 +1174,16 @@ public partial class ForgeViewerView : UserControl
         }
         if (liveCount == 0) return;
 
-        if (body.Children.Count > 0)
-            body.Children.Add(new Border
-            {
-                Height = 1,
-                Background = (Brush)FindResource("BorderBrush"),
-                Opacity = 0.3,
-                Margin = new Thickness(0, 4, 0, 4)
-            });
-
+        // Equal-width aligned tiles. Primary row: as many columns as live
+        // stats, so the headline damage/resist tiles stretch edge-to-edge
+        // across the card. Secondary grid: fixed 3 columns — wide enough
+        // for "+10,000" exact (the base-stat ceiling), and every tile the
+        // same size so rows stay visually consistent.
         var gridRow = new System.Windows.Controls.Primitives.UniformGrid
         {
-            Columns = Math.Min(liveCount, 4),
-            HorizontalAlignment = HorizontalAlignment.Stretch
+            Columns = primaryRow ? Math.Min(liveCount, 4) : 3,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = body.Children.Count > 0 ? new Thickness(0, 2, 0, 0) : new Thickness(0)
         };
         foreach (var (icon, label, value) in stats)
         {
@@ -1223,117 +1193,99 @@ public partial class ForgeViewerView : UserControl
         body.Children.Add(gridRow);
     }
 
-    // A single stat tile: a small label, then a framed plate the icon
-    // fills edge-to-edge, then the value on a pill (mirrors the DD1 item
-    // panel). Primary tiles are larger + circular; the Elemental sentinel
-    // and any unreadable icon fall back to a centered glyph.
+    // Tile number formatting: base stats (ceiling ~10,000) stay exact;
+    // bigger rolls compact so they fit a fixed-width tile — above 10,000
+    // → "50K", a million and up → "12.5M". The tile tooltip always
+    // carries the exact value.
+    internal static string FormatStatValue(int v)
+    {
+        // long, not int: a garbage read of 0x80000000 (int.MinValue) would
+        // make Math.Abs(int) throw OverflowException on the render path.
+        long a = Math.Abs((long)v);
+        if (a >= 1_000_000)
+        {
+            double m = v / 1_000_000.0;
+            return (m == Math.Floor(m) ? m.ToString("0") : m.ToString("0.#")) + "M";
+        }
+        if (a > 10_000)
+        {
+            double k = v / 1_000.0;
+            return (k == Math.Floor(k) ? k.ToString("0") : k.ToString("0.#")) + "K";
+        }
+        return v.ToString("N0");
+    }
+
+    // A single stat tile: a compact inset box — icon + value on the first
+    // line, the label underneath. Same visual language as the Item Dupe
+    // card tiles. The Elemental sentinel and any unreadable icon fall back
+    // to a small star glyph in the icon slot.
     private FrameworkElement MakeStatTile(string? iconPath, string label, int value, bool primary, bool plus)
     {
-        double plate = primary ? 26 : 24;
+        double iconSize = primary ? 15 : 13;
 
-        var corner = new CornerRadius(primary ? plate / 2 : 9);
-        var tile = new Border
-        {
-            Width = plate,
-            Height = plate,
-            CornerRadius = corner,
-            // Primary (row 1) has no outline; the rest keep a thin frame.
-            BorderBrush = primary ? null : _secondaryTileBorder,
-            BorderThickness = new Thickness(primary ? 0 : 2),
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-
-        // Beveled sheen: top highlight → mid clear → bottom shade, so the
-        // plate reads as a physical raised tile (overlaid on the icon).
-        var bevel = new Border
-        {
-            CornerRadius = corner,
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(0, 1),
-                GradientStops =
-                {
-                    new GradientStop(Color.FromArgb(48, 255, 255, 255), 0.0),
-                    new GradientStop(Color.FromArgb(10, 255, 255, 255), 0.5),
-                    new GradientStop(Color.FromArgb(64, 0, 0, 0), 1.0),
-                }
-            }
-        };
+        var valRow = new StackPanel { Orientation = Orientation.Horizontal };
 
         ImageBrush? iconBrush = GetStatIconBrush(iconPath);
-
         if (iconBrush != null)
         {
-            // Icon fills the entire plate; CornerRadius clips it. The
-            // bevel sheen sits on top.
-            tile.Background = iconBrush;
-            tile.Child = bevel;
+            valRow.Children.Add(new Border
+            {
+                Width = iconSize,
+                Height = iconSize,
+                CornerRadius = new CornerRadius(3),
+                Background = iconBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 4, 0)
+            });
         }
         else
         {
-            tile.Background = primary
-                ? (Brush)FindResource("AccentSubtleBrush")
-                : _fallbackTileBrush;
-            var inner = new Grid();
-            inner.Children.Add(new TextBlock
+            valRow.Children.Add(new TextBlock
             {
                 Text = ((char)0x2726).ToString(), // four-pointed star = elemental/placeholder
-                FontSize = plate * 0.5,
+                FontSize = iconSize - 2,
                 Foreground = (Brush)FindResource("AccentBrush"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 4, 0)
             });
-            inner.Children.Add(bevel);
-            tile.Child = inner;
         }
 
-        // The number is the hero: big, bold, white. No plate — a tight
-        // black halo (drop shadow, no offset) keeps it readable on any
-        // tile/background, like the in-game outlined values.
-        var valueText = new TextBlock
+        valRow.Children.Add(new TextBlock
         {
-            Text = (plus && value > 0 ? "+" : "") + value.ToString("N0"),
-            FontSize = primary ? 12 : 10.5,
+            Text = (plus && value > 0 ? "+" : "") + FormatStatValue(value),
+            FontSize = primary ? 11.5 : 11,
             FontWeight = FontWeights.SemiBold,
-            Foreground = System.Windows.Media.Brushes.White,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 2, 0, 0),
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
-            {
-                Color = Colors.Black,
-                BlurRadius = 2,
-                ShadowDepth = 0,
-                Opacity = 0.85
-            }
-        };
+            Foreground = (Brush)FindResource("TextPrimaryBrush"),
+            VerticalAlignment = VerticalAlignment.Center
+        });
 
-        var labelText = new TextBlock
+        var stack = new StackPanel();
+        stack.Children.Add(valRow);
+        stack.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 8,
-            Foreground = (Brush)FindResource("TextMutedBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = plate + 18,
-            Margin = new Thickness(0, 0, 0, 2)
-        };
+            FontSize = 8.5,
+            Foreground = (Brush)FindResource("TextMutedBrush")
+        });
 
-        var stack = new StackPanel
+        return new Border
         {
-            Margin = new Thickness(3, 1, 3, 2),
-            HorizontalAlignment = HorizontalAlignment.Center
+            Background = (Brush)FindResource("SurfaceBrush"),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(6, 4, 6, 4),
+            Margin = new Thickness(0, 0, 4, 4),
+            // Exact value on hover — load-bearing once large values are
+            // compacted to "50K" / "12.5M" on the tile face.
+            ToolTip = label + ": " + value.ToString("N0"),
+            Child = stack
         };
-        stack.Children.Add(labelText);
-        stack.Children.Add(tile);
-        stack.Children.Add(valueText);
-        return stack;
     }
 
     private ImageBrush? GetStatIconBrush(string? iconPath)
     {
-        if (iconPath == null || iconPath == ElementalIcon) return null;
+        if (iconPath == null) return null;
         if (_statIconBrushes.TryGetValue(iconPath, out ImageBrush? cached)) return cached;
 
         try
@@ -1426,54 +1378,24 @@ public partial class ForgeViewerView : UserControl
 
     private static int QualityRank(Quality2 q)
     {
-        return q switch
-        {
-            Quality2.Ultimate => 16,
-            Quality2.Supreme => 15,
-            Quality2.Transcendent => 14,
-            Quality2.Mythical => 13,
-            Quality2.Godly => 12,
-            Quality2.Legendary => 11,
-            Quality2.Epic => 10,
-            Quality2.Amazing => 9,
-            Quality2.Powerful => 8,
-            Quality2.Shining => 7,
-            Quality2.Polished => 6,
-            Quality2.Sturdy => 5,
-            Quality2.Solid => 4,
-            Quality2.Stocky => 3,
-            Quality2.Worn => 2,
-            Quality2.Torn => 1,
-            Quality2.Cursed => 0,
-            _ => -1
-        };
+        return QualityDisplay.Rank(q);
     }
 
-    private static Color GetAccentColor(Quality2 q)
+    // internal: HeroViewerView reuses it for equipment-row quality dots.
+    internal static Color GetAccentColor(Quality2 q) => QualityColors.Get(q);
+
+    // Friendly type label for the card meta line ("ArmorBoots" → "Boots").
+    // internal: HeroViewerView reuses it for equipment-row meta lines.
+    internal static string TypeLabel(EquipmentType t)
     {
-        return q switch
-        {
-            Quality2.Ultimate => Color.FromRgb(200, 140, 20),
-            Quality2.Supreme => Color.FromRgb(130, 70, 190),
-            Quality2.Transcendent => Color.FromRgb(40, 140, 200),
-            Quality2.Mythical => Color.FromRgb(200, 50, 80),
-            Quality2.Godly => Color.FromRgb(200, 160, 30),
-            Quality2.Legendary => Color.FromRgb(200, 110, 30),
-            Quality2.Epic => Color.FromRgb(140, 60, 200),
-            Quality2.Amazing => Color.FromRgb(50, 160, 70),
-            Quality2.Powerful => Color.FromRgb(80, 150, 90),
-            Quality2.Shining => Color.FromRgb(170, 160, 50),
-            Quality2.Polished or Quality2.Sturdy or Quality2.Solid or Quality2.Stocky
-                => Color.FromRgb(120, 125, 135),
-            Quality2.Worn or Quality2.Torn => Color.FromRgb(100, 100, 105),
-            Quality2.Cursed => Color.FromRgb(80, 30, 80),
-            _ => Color.FromRgb(120, 125, 135)
-        };
+        string s = t.ToString();
+        return s.StartsWith("Armor") ? s.Substring(5) : s;
     }
 
-    // Header gradient colour, keyed to the item category so every weapon
-    // shares one hue, every armour piece another, etc.
-    private static Color GetTypeColor(EquipmentType t)
+    // Card strip / legend colour, keyed to the item category so every
+    // weapon shares one hue, every armour piece another, etc.
+    // internal: HeroViewerView reuses it for equipment mini-card strips.
+    internal static Color GetTypeColor(EquipmentType t)
     {
         return t switch
         {

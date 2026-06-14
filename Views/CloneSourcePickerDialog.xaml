@@ -22,7 +22,7 @@
                            FontSize="11"
                            VerticalAlignment="Center" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="CANCEL" Padding="16,7" Height="32" Click="BtnCancel_Click" />
+                    <Button Content="CANCEL" IsCancel="True" Padding="16,7" Height="32" Click="BtnCancel_Click" />
                     <Button x:Name="BtnOk" Content="USE AS SOURCE"
                             Style="{StaticResource AccentButton}"
                             Padding="16,7" Height="32" Margin="8,0,0,0"

@@ -14,9 +14,13 @@
                     <Button x:Name="BtnBack" Content="&#x2190;  BACK"
                             Style="{StaticResource GhostButton}"
                             Padding="14,7" Height="32" Click="BtnBack_Click" />
-                    <Button x:Name="BtnRefresh" Content="REFRESH" Padding="16,7" Height="32" Margin="8,0,0,0" Click="BtnRefresh_Click" />
+                    <Button x:Name="BtnRefresh" Content="REFRESH" Padding="16,7" Height="32" Margin="8,0,0,0"
+                            ToolTip="Re-read the value from the game."
+                            Click="BtnRefresh_Click" />
                     <Button x:Name="BtnUpdate" Content="UPDATE" Style="{StaticResource AccentButton}"
-                            Padding="16,7" Height="32" Margin="8,0,0,0" Click="BtnUpdate_Click" />
+                            Padding="16,7" Height="32" Margin="8,0,0,0"
+                            ToolTip="Write the new value to the game. (Enter works too.)"
+                            Click="BtnUpdate_Click" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                             VerticalAlignment="Center">
@@ -65,7 +69,7 @@
                 <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="16,12">
                     <StackPanel>
                         <TextBlock Text="Value" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
-                        <TextBox x:Name="TxtValue" Text="0" beh:NumericInput.Mode="Int" />
+                        <TextBox x:Name="TxtValue" Text="0" beh:NumericInput.Mode="Int" KeyDown="TxtValue_KeyDown" />
                         <TextBlock x:Name="TxtFloatLabel" Text="(Floating Point Value)"
                                    Foreground="{StaticResource TextMutedBrush}" FontSize="11"
                                    Margin="0,6,0,0" Visibility="Collapsed" />

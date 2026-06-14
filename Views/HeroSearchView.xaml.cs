@@ -29,6 +29,17 @@ public partial class HeroSearchView : UserControl
         return s;
     }
 
+    // Enter anywhere in the criteria form runs the scan — NEXT SCAN once a
+    // search is in progress, FIRST SCAN otherwise. Focused buttons handle
+    // their own Enter before it bubbles here, so this only fires from inputs.
+    private void Form_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Enter) return;
+        e.Handled = true;
+        if (BtnNextScan.IsEnabled) BtnNextScan_Click(sender, e);
+        else BtnFirstScan_Click(sender, e);
+    }
+
     private void BtnFirstScan_Click(object sender, RoutedEventArgs e)
     {
         if (!Base.OpenProcess()) return;

@@ -60,7 +60,7 @@ public partial class CloneSourcePickerDialog : Window
                 {
                     Address = s.Address,
                     AddressText = Base.AddressToString(s.Address),
-                    Quality = user.Quality2.ToString(),
+                    Quality = QualityDisplay.Name(user.Quality2),
                     QualityRank = QualityRank(user.Quality2),
                     Name = name,
                     Forger = s.ForgerName ?? "",
@@ -95,15 +95,18 @@ public partial class CloneSourcePickerDialog : Window
             CboType.Items.Add(new TypeEntry(t, t.ToString()));
         CboType.SelectedIndex = 0;
 
-        // Quality: matches the Forge Viewer's thresholds.
+        // Quality: a min-rank ("X & up") threshold for EVERY tier, built
+        // from the enum so new tiers can never be missing again (the old
+        // hardcoded list stopped at Ultimate and lacked Ultimate 93/+/++).
         CboQuality.Items.Add(new QualityEntry(-1, "Any quality"));
-        CboQuality.Items.Add(new QualityEntry(16, "Ultimate"));
-        CboQuality.Items.Add(new QualityEntry(15, "Supreme+"));
-        CboQuality.Items.Add(new QualityEntry(14, "Transcendent+"));
-        CboQuality.Items.Add(new QualityEntry(13, "Mythical+"));
-        CboQuality.Items.Add(new QualityEntry(12, "Godly+"));
-        CboQuality.Items.Add(new QualityEntry(11, "Legendary+"));
-        CboQuality.Items.Add(new QualityEntry(10, "Epic+"));
+        foreach (Quality2 q in Enum.GetValues(typeof(Quality2))
+                                   .Cast<Quality2>()
+                                   .OrderByDescending(QualityRank))
+        {
+            int rank = QualityRank(q);
+            string label = QualityDisplay.Name(q) + (rank >= QualityRank(Quality2.UltimatePlusPlus) ? "" : " & up");
+            CboQuality.Items.Add(new QualityEntry(rank, label));
+        }
         CboQuality.SelectedIndex = 0;
 
         // Sort: quality desc by default, then common alternatives.
@@ -207,15 +210,7 @@ public partial class CloneSourcePickerDialog : Window
 
     // ── Helpers ──────────────────────────────────────────────────
 
-    private static int QualityRank(Quality2 q) => q switch
-    {
-        Quality2.Ultimate => 16, Quality2.Supreme => 15, Quality2.Transcendent => 14,
-        Quality2.Mythical => 13, Quality2.Godly => 12, Quality2.Legendary => 11,
-        Quality2.Epic => 10, Quality2.Amazing => 9, Quality2.Powerful => 8,
-        Quality2.Shining => 7, Quality2.Polished => 6, Quality2.Sturdy => 5,
-        Quality2.Solid => 4, Quality2.Stocky => 3, Quality2.Worn => 2,
-        Quality2.Torn => 1, Quality2.Cursed => 0, _ => -1,
-    };
+    private static int QualityRank(Quality2 q) => QualityDisplay.Rank(q);
 
     // ── Data types ───────────────────────────────────────────────
 

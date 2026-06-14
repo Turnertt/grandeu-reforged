@@ -75,6 +75,7 @@
                         <Button x:Name="BtnScan"
                                 Style="{StaticResource AccentButton}"
                                 Padding="18,7" Height="32"
+                                ToolTip="List every item in your item box. The box only exists in the Tavern."
                                 Click="BtnScan_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="BtnScanIcon"
@@ -104,6 +105,7 @@
                                 Padding="14,7" Height="32"
                                 Margin="8,0,0,0"
                                 IsEnabled="False"
+                                ToolTip="Edit all selected items at once (Ctrl+click cards to select)."
                                 Click="BtnBulk_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets"
@@ -155,68 +157,66 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Row 3: View filters. Pagination moved to a footer under
-                     the cards; Quality dropped (still on cards + sortable).
-                     One funnel glyph fronts the group; combos share a width
-                     so the row stays tidy (WrapPanel keeps it robust if the
-                     window is narrowed). -->
-                <WrapPanel Margin="0,10,0,0" VerticalAlignment="Center">
-                    <TextBlock Text="&#xE71C;" FontFamily="Segoe MDL2 Assets"
-                               FontSize="12" Foreground="{StaticResource TextMutedBrush}"
-                               VerticalAlignment="Center" Margin="0,0,10,0"
-                               ToolTip="Filter and sort the scanned items" />
-
-                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
-                        <TextBlock Text="Source"
+                <!-- Row 3: View filters — small-caps label over each combo
+                     (the old inline label:combo pairs read as one cramped
+                     run). Quality stays dropped (on cards + sortable);
+                     WrapPanel keeps the row robust at narrow widths. -->
+                <WrapPanel Margin="0,12,0,0">
+                    <StackPanel Margin="0,0,14,0">
+                        <TextBlock Text="S O U R C E"
                                    Foreground="{StaticResource TextMutedBrush}"
-                                   FontSize="10" FontWeight="Bold"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,6,0" />
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
                         <ComboBox x:Name="CboSource"
-                                  Width="160"
+                                  Width="150"
                                   SelectionChanged="Source_Changed" />
                     </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
-                        <TextBlock Text="Type"
+                    <StackPanel Margin="0,0,14,0">
+                        <TextBlock Text="T Y P E"
                                    Foreground="{StaticResource TextMutedBrush}"
-                                   FontSize="10" FontWeight="Bold"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,6,0" />
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
                         <ComboBox x:Name="CboType"
-                                  Width="160"
+                                  Width="150"
                                   SelectionChanged="Filter_Changed" />
                     </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
-                        <TextBlock Text="Sort"
+                    <StackPanel Margin="0,0,14,0">
+                        <TextBlock Text="S O R T"
                                    Foreground="{StaticResource TextMutedBrush}"
-                                   FontSize="10" FontWeight="Bold"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,6,0" />
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
                         <ComboBox x:Name="CboSort"
-                                  Width="160"
+                                  Width="150"
                                   SelectionChanged="Filter_Changed" />
                     </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,3,16,3">
-                        <TextBlock Text="Folder"
+                    <StackPanel Margin="0,0,14,0">
+                        <TextBlock Text="F O L D E R"
                                    Foreground="{StaticResource TextMutedBrush}"
-                                   FontSize="10" FontWeight="Bold"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,6,0" />
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
                         <ComboBox x:Name="CboFolder"
-                                  Width="160"
+                                  Width="180"
                                   SelectionChanged="Filter_Changed" />
                     </StackPanel>
                 </WrapPanel>
 
-                <!-- Persistent affordance — selection/edit gestures are
-                     otherwise undiscoverable (was buried in status text). -->
-                <TextBlock Text="Ctrl+click to select  ·  double-click to edit"
-                           Foreground="{StaticResource TextMutedBrush}"
-                           FontSize="10" Opacity="0.65"
-                           Margin="0,10,0,0" />
+                <!-- Persistent affordance + card colour key. The legend is
+                     populated in code (BuildTypeLegend) so the swatches come
+                     from the same GetTypeColor the cards use — one source. -->
+                <DockPanel Margin="0,10,0,0" LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Left"
+                               Text="Ctrl+click to select  ·  double-click to edit"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="10" Opacity="0.65"
+                               VerticalAlignment="Center" />
+                    <StackPanel x:Name="TypeLegend"
+                                DockPanel.Dock="Right"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center" />
+                </DockPanel>
 
             </StackPanel>
         </Border>
@@ -268,6 +268,7 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                     <Button x:Name="BtnPrev"
                             Padding="10,5" Height="28"
+                            ToolTip="Previous page"
                             Click="BtnPrev_Click">
                         <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
                     </Button>
@@ -281,6 +282,7 @@
                                TextAlignment="Center" />
                     <Button x:Name="BtnNext"
                             Padding="10,5" Height="28"
+                            ToolTip="Next page"
                             Click="BtnNext_Click">
                         <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
                     </Button>

@@ -94,6 +94,16 @@
                             </StackPanel>
                         </Button>
 
+                        <Button x:Name="BtnHeroViewer"
+                                Style="{StaticResource SidebarButton}"
+                                Click="NavButton_Click" Tag="HeroViewer">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
+                                <TextBlock Text="Hero Viewer" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
                         <Button x:Name="BtnItemDupe"
                                 Style="{StaticResource SidebarButton}"
                                 Click="NavButton_Click" Tag="ItemDupe">
@@ -133,12 +143,16 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Button Grid.Column="0" Content="0.5x" Padding="0,4" Margin="0,0,2,0"
+                                    ToolTip="Half game speed"
                                     Click="BtnSpeedPreset_Click" Tag="0.5" />
                             <Button Grid.Column="1" Content="1x" Padding="0,4" Margin="2,0,2,0"
+                                    ToolTip="Normal game speed"
                                     Click="BtnSpeedPreset_Click" Tag="1" />
                             <Button Grid.Column="2" Content="5x" Padding="0,4" Margin="2,0,2,0"
+                                    ToolTip="5× game speed (physics/animation may glitch above ~3×)"
                                     Click="BtnSpeedPreset_Click" Tag="5" />
                             <Button Grid.Column="3" Content="15x" Padding="0,4" Margin="2,0,0,0"
+                                    ToolTip="15× game speed (expect physics/animation glitches)"
                                     Click="BtnSpeedPreset_Click" Tag="15" />
                         </Grid>
                         <!-- Custom value row: TextBox + APPLY. Enter also
@@ -186,6 +200,7 @@
                                  Margin="4,4,4,0"
                                  Background="Transparent"
                                  BorderThickness="0"
+                                 ToolTip="Double-click a result to open it in the editor."
                                  MouseDoubleClick="ResultsList_DoubleClick"
                                  VirtualizingPanel.IsVirtualizing="True"
                                  VirtualizingPanel.VirtualizationMode="Recycling">
@@ -283,6 +298,7 @@
                               Background="Transparent"
                               BorderThickness="0"
                               SelectionMode="Extended"
+                              ToolTip="Double-click to open in the editor. Right-click for freeze/remove options."
                               MouseDoubleClick="TrackedList_DoubleClick">
                         <ListView.ContextMenu>
                             <ContextMenu>

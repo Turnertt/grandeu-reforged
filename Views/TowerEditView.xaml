@@ -26,12 +26,14 @@
                             Content="REFRESH"
                             Padding="16,7" Height="32"
                             Margin="8,0,0,0"
+                            ToolTip="Re-read the tower's values from the game."
                             Click="BtnRefresh_Click" />
                     <Button x:Name="BtnUpdate"
                             Content="UPDATE"
                             Style="{StaticResource AccentButton}"
                             Padding="16,7" Height="32"
                             Margin="8,0,0,0"
+                            ToolTip="Write the new values to the game."
                             Click="BtnUpdate_Click" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"

@@ -5,7 +5,9 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using static Modinator.Views.EditHelpers;
 
 namespace Modinator.Views;
 
@@ -52,15 +54,41 @@ public partial class BulkEditDialog : Window
         Title = $"Bulk Edit \u2014 {addresses.Count} items";
         TxtHeader.Text = $"Bulk Edit \u2014 {addresses.Count} {typeLabel}";
 
-        LoadBaseline();
+        // A stale first selection (item moved/unloaded since the scan) used
+        // to throw out of the constructor and crash the dialog open \u2014 fail
+        // soft instead: explain and close. _loadFailed also hard-gates
+        // APPLY/MAX, so even if the close races the dialog becoming visible,
+        // nothing can be written against the zeroed baselines.
+        if (!LoadBaseline())
+        {
+            _loadFailed = true;
+            Base.RaiseMessage(
+                "Couldn't read the first selected item \u2014 it may have moved or " +
+                "unloaded since the scan. Rescan and try again.",
+                "Bulk Edit");
+            Loaded += (s, e) => Close();
+        }
     }
 
-    private void LoadBaseline()
+    private bool _loadFailed;
+
+    // Items whose Description/ForgerName allocation failed during the last
+    // bulk pass (numerics still applied \u2014 see WriteStringBestEffort).
+    private int _stringWriteFailures;
+
+    private bool LoadBaseline()
     {
         int address = _addresses[0];
 
-        byte[] raw = Base.Instance.ReadMemory(address, _structSize);
-        ItemNative baseline = Base.Push<ItemNative>(raw);
+        byte[] raw;
+        ItemNative baseline;
+        try
+        {
+            raw = Base.Instance.ReadMemory(address, _structSize);
+            if (raw == null || raw.Length < _structSize) return false;
+            baseline = Base.Push<ItemNative>(raw);
+        }
+        catch { return false; }
 
         // Hero stats: use first hero stat as the uniform value.
         _baseHeroStats = baseline.StatModifiers[0];
@@ -131,6 +159,7 @@ public partial class BulkEditDialog : Window
         TxtColor2B.Text = _baseColor2B.ToString();
         UpdateColorPreview(TxtColor1R, TxtColor1G, TxtColor1B, Color1Preview);
         UpdateColorPreview(TxtColor2R, TxtColor2G, TxtColor2B, Color2Preview);
+        return true;
     }
 
     // ── Color previews + picker ─────────────────────────────────────
@@ -183,41 +212,81 @@ public partial class BulkEditDialog : Window
         DialogResult = false;
     }
 
+    // One bulk-apply pass captured from the form: each field's target value
+    // plus its "actually changed vs baseline" flag. The write semantics are
+    // identical to the original per-parameter version — this just gives the
+    // ~50 values one home so apply/retry don't thread them all twice.
+    private sealed class BulkPlan
+    {
+        public int HeroStats, TowerStats, Resistances;
+        public int Damage, RangedDamage, ElementalDamage;
+        public int Blocking, Knockback, ChargeSpeed, ShotsPerSecond;
+        public int Projectiles, ProjectileSpeed, ClipAmmo, ReloadSpeed;
+        public float DrawScale, SwingSpeed;
+        public string Description = "", ForgerName = "";
+        public int Level, MaxLevel, StoredMana;
+        public byte LevelReq;
+        public int C1R, C1G, C1B, C2R, C2G, C2B;
+
+        public bool ChHeroStats, ChTowerStats, ChResistances;
+        public bool ChDamage, ChRangedDamage, ChElementalDamage;
+        public bool ChBlocking, ChKnockback, ChChargeSpeed, ChShotsPerSecond;
+        public bool ChProjectiles, ChProjectileSpeed, ChClipAmmo, ChReloadSpeed;
+        public bool ChDrawScale, ChSwingSpeed;
+        public bool ChDescription, ChForgerName;
+        public bool ChLevel, ChMaxLevel, ChStoredMana, ChLevelReq;
+        public bool ChColor1, ChColor2;
+
+        public int ChangedCount => new[]
+        {
+            ChHeroStats, ChTowerStats, ChResistances,
+            ChDamage, ChRangedDamage, ChElementalDamage,
+            ChBlocking, ChKnockback, ChChargeSpeed, ChShotsPerSecond,
+            ChProjectiles, ChProjectileSpeed, ChClipAmmo, ChReloadSpeed,
+            ChDrawScale, ChSwingSpeed,
+            ChDescription, ChForgerName,
+            ChLevel, ChMaxLevel, ChStoredMana, ChLevelReq,
+            ChColor1, ChColor2,
+        }.Count(c => c);
+    }
+
     private void BtnApply_Click(object sender, RoutedEventArgs e)
     {
+        if (_loadFailed) return; // baselines are zeroed — dialog is closing
         var v = new FieldValidator();
+        var p = new BulkPlan();
 
         // Empty textbox = keep baseline (= no change for that field).
-        int heroStats        = IntOr(v, TxtHeroStats,        "Hero Stats",        _baseHeroStats);
-        int towerStats       = IntOr(v, TxtTowerStats,       "Tower Stats",       _baseTowerStats);
-        int resistances      = IntOr(v, TxtResistances,      "Resistances",       _baseResistances);
-        int damage           = IntOr(v, TxtDamage,           "Damage",            _baseDamage);
-        int rangedDamage     = IntOr(v, TxtRangedDamage,     "Ranged Damage",     _baseRangedDamage);
-        int elementalDamage  = IntOr(v, TxtElementalDamage,  "Elemental Damage",  _baseElementalDamage);
-        int blocking         = IntOr(v, TxtBlocking,         "Blocking",          _baseBlocking);
-        int knockback        = IntOr(v, TxtKnockback,        "Knockback",         _baseKnockback);
-        int chargeSpeed      = IntOr(v, TxtChargeSpeed,      "Charge Speed",      _baseChargeSpeed);
-        int shotsPerSecond   = IntOr(v, TxtShotsPerSecond,   "Shots/Second",      _baseShotsPerSecond);
-        int projectiles      = IntOr(v, TxtProjectiles,      "Projectiles",       _baseProjectiles);
-        int projectileSpeed  = IntOr(v, TxtProjectileSpeed,  "Projectile Speed",  _baseProjectileSpeed);
-        int clipAmmo         = IntOr(v, TxtClipAmmo,         "Clip Ammo",         _baseClipAmmo);
-        int reloadSpeed      = IntOr(v, TxtReloadSpeed,      "Reload Speed",      _baseReloadSpeed);
-        float drawScale      = FloatOr(v, TxtDrawScale,      "Draw Scale",        _baseDrawScale);
-        float swingSpeed     = FloatOr(v, TxtSwingSpeed,     "Swing Speed",       _baseSwingSpeed);
-        int level            = IntOr(v, TxtLevel,            "Level",             _baseLevel);
-        int maxLevel         = IntOr(v, TxtMaxLevel,         "Max Level",         _baseMaxLevel);
-        int storedMana       = IntOr(v, TxtStoredMana,       "Stored Mana",       _baseStoredMana);
-        byte levelReq        = ByteOr(v, TxtLevelRequirement, "Level Requirement", _baseLevelRequirement);
-        string description   = string.IsNullOrEmpty(TxtDescription.Text) ? (_baseDescription ?? string.Empty) : TxtDescription.Text;
-        string forgerName    = string.IsNullOrEmpty(TxtForgerName.Text) ? (_baseForgerName ?? string.Empty) : TxtForgerName.Text;
+        p.HeroStats        = IntOr(v, TxtHeroStats,        "Hero Stats",        _baseHeroStats);
+        p.TowerStats       = IntOr(v, TxtTowerStats,       "Tower Stats",       _baseTowerStats);
+        p.Resistances      = IntOr(v, TxtResistances,      "Resistances",       _baseResistances);
+        p.Damage           = IntOr(v, TxtDamage,           "Damage",            _baseDamage);
+        p.RangedDamage     = IntOr(v, TxtRangedDamage,     "Ranged Damage",     _baseRangedDamage);
+        p.ElementalDamage  = IntOr(v, TxtElementalDamage,  "Elemental Damage",  _baseElementalDamage);
+        p.Blocking         = IntOr(v, TxtBlocking,         "Blocking",          _baseBlocking);
+        p.Knockback        = IntOr(v, TxtKnockback,        "Knockback",         _baseKnockback);
+        p.ChargeSpeed      = IntOr(v, TxtChargeSpeed,      "Charge Speed",      _baseChargeSpeed);
+        p.ShotsPerSecond   = IntOr(v, TxtShotsPerSecond,   "Shots/Second",      _baseShotsPerSecond);
+        p.Projectiles      = IntOr(v, TxtProjectiles,      "Projectiles",       _baseProjectiles);
+        p.ProjectileSpeed  = IntOr(v, TxtProjectileSpeed,  "Projectile Speed",  _baseProjectileSpeed);
+        p.ClipAmmo         = IntOr(v, TxtClipAmmo,         "Clip Ammo",         _baseClipAmmo);
+        p.ReloadSpeed      = IntOr(v, TxtReloadSpeed,      "Reload Speed",      _baseReloadSpeed);
+        p.DrawScale        = FloatOr(v, TxtDrawScale,      "Draw Scale",        _baseDrawScale);
+        p.SwingSpeed       = FloatOr(v, TxtSwingSpeed,     "Swing Speed",       _baseSwingSpeed);
+        p.Level            = IntOr(v, TxtLevel,            "Level",             _baseLevel);
+        p.MaxLevel         = IntOr(v, TxtMaxLevel,         "Max Level",         _baseMaxLevel);
+        p.StoredMana       = IntOr(v, TxtStoredMana,       "Stored Mana",       _baseStoredMana);
+        p.LevelReq         = ByteOr(v, TxtLevelRequirement, "Level Requirement", _baseLevelRequirement);
+        p.Description      = StrOr(TxtDescription, _baseDescription);
+        p.ForgerName       = StrOr(TxtForgerName, _baseForgerName);
 
         // Colors — use Int (not Byte) so DD1 HDR/negative values pass through.
-        int c1r = v.Int(TxtColor1R, "Color 1 R");
-        int c1g = v.Int(TxtColor1G, "Color 1 G");
-        int c1b = v.Int(TxtColor1B, "Color 1 B");
-        int c2r = v.Int(TxtColor2R, "Color 2 R");
-        int c2g = v.Int(TxtColor2G, "Color 2 G");
-        int c2b = v.Int(TxtColor2B, "Color 2 B");
+        p.C1R = v.Int(TxtColor1R, "Color 1 R");
+        p.C1G = v.Int(TxtColor1G, "Color 1 G");
+        p.C1B = v.Int(TxtColor1B, "Color 1 B");
+        p.C2R = v.Int(TxtColor2R, "Color 2 R");
+        p.C2G = v.Int(TxtColor2G, "Color 2 G");
+        p.C2B = v.Int(TxtColor2B, "Color 2 B");
 
         if (!v.IsValid)
         {
@@ -226,61 +295,35 @@ public partial class BulkEditDialog : Window
             return;
         }
 
-        // Diff: determine which fields changed.
-        bool chHeroStats = heroStats != _baseHeroStats;
-        bool chTowerStats = towerStats != _baseTowerStats;
-        bool chResistances = resistances != _baseResistances;
-        bool chDamage = damage != _baseDamage;
-        bool chRangedDamage = rangedDamage != _baseRangedDamage;
-        bool chElementalDamage = elementalDamage != _baseElementalDamage;
-        bool chBlocking = blocking != _baseBlocking;
-        bool chKnockback = knockback != _baseKnockback;
-        bool chChargeSpeed = chargeSpeed != _baseChargeSpeed;
-        bool chShotsPerSecond = shotsPerSecond != _baseShotsPerSecond;
-        bool chProjectiles = projectiles != _baseProjectiles;
-        bool chProjectileSpeed = projectileSpeed != _baseProjectileSpeed;
-        bool chClipAmmo = clipAmmo != _baseClipAmmo;
-        bool chReloadSpeed = reloadSpeed != _baseReloadSpeed;
-        bool chDrawScale = Math.Abs(drawScale - _baseDrawScale) > 0.0001f;
-        bool chSwingSpeed = Math.Abs(swingSpeed - _baseSwingSpeed) > 0.0001f;
-        bool chDescription = description != (_baseDescription ?? string.Empty);
-        bool chForgerName = forgerName != (_baseForgerName ?? string.Empty);
-        bool chLevel = level != _baseLevel;
-        bool chMaxLevel = maxLevel != _baseMaxLevel;
-        bool chStoredMana = storedMana != _baseStoredMana;
-        bool chLevelReq = levelReq != _baseLevelRequirement;
+        // Diff: determine which fields changed vs the baseline.
+        p.ChHeroStats       = p.HeroStats != _baseHeroStats;
+        p.ChTowerStats      = p.TowerStats != _baseTowerStats;
+        p.ChResistances     = p.Resistances != _baseResistances;
+        p.ChDamage          = p.Damage != _baseDamage;
+        p.ChRangedDamage    = p.RangedDamage != _baseRangedDamage;
+        p.ChElementalDamage = p.ElementalDamage != _baseElementalDamage;
+        p.ChBlocking        = p.Blocking != _baseBlocking;
+        p.ChKnockback       = p.Knockback != _baseKnockback;
+        p.ChChargeSpeed     = p.ChargeSpeed != _baseChargeSpeed;
+        p.ChShotsPerSecond  = p.ShotsPerSecond != _baseShotsPerSecond;
+        p.ChProjectiles     = p.Projectiles != _baseProjectiles;
+        p.ChProjectileSpeed = p.ProjectileSpeed != _baseProjectileSpeed;
+        p.ChClipAmmo        = p.ClipAmmo != _baseClipAmmo;
+        p.ChReloadSpeed     = p.ReloadSpeed != _baseReloadSpeed;
+        p.ChDrawScale       = Math.Abs(p.DrawScale - _baseDrawScale) > 0.0001f;
+        p.ChSwingSpeed      = Math.Abs(p.SwingSpeed - _baseSwingSpeed) > 0.0001f;
+        p.ChDescription     = p.Description != (_baseDescription ?? string.Empty);
+        p.ChForgerName      = p.ForgerName != (_baseForgerName ?? string.Empty);
+        p.ChLevel           = p.Level != _baseLevel;
+        p.ChMaxLevel        = p.MaxLevel != _baseMaxLevel;
+        p.ChStoredMana      = p.StoredMana != _baseStoredMana;
+        p.ChLevelReq        = p.LevelReq != _baseLevelRequirement;
         // Colors are diffed as a whole card — if any channel changed we write
         // all three, so a tweak to just G doesn't accidentally reset R/B.
-        bool chColor1 = c1r != _baseColor1R || c1g != _baseColor1G || c1b != _baseColor1B;
-        bool chColor2 = c2r != _baseColor2R || c2g != _baseColor2G || c2b != _baseColor2B;
+        p.ChColor1 = p.C1R != _baseColor1R || p.C1G != _baseColor1G || p.C1B != _baseColor1B;
+        p.ChColor2 = p.C2R != _baseColor2R || p.C2G != _baseColor2G || p.C2B != _baseColor2B;
 
-        // Count changed fields.
-        int changedCount = 0;
-        if (chHeroStats) changedCount++;
-        if (chTowerStats) changedCount++;
-        if (chResistances) changedCount++;
-        if (chDamage) changedCount++;
-        if (chRangedDamage) changedCount++;
-        if (chElementalDamage) changedCount++;
-        if (chBlocking) changedCount++;
-        if (chKnockback) changedCount++;
-        if (chChargeSpeed) changedCount++;
-        if (chShotsPerSecond) changedCount++;
-        if (chProjectiles) changedCount++;
-        if (chProjectileSpeed) changedCount++;
-        if (chClipAmmo) changedCount++;
-        if (chReloadSpeed) changedCount++;
-        if (chDrawScale) changedCount++;
-        if (chSwingSpeed) changedCount++;
-        if (chDescription) changedCount++;
-        if (chForgerName) changedCount++;
-        if (chLevel) changedCount++;
-        if (chMaxLevel) changedCount++;
-        if (chStoredMana) changedCount++;
-        if (chLevelReq) changedCount++;
-        if (chColor1) changedCount++;
-        if (chColor2) changedCount++;
-
+        int changedCount = p.ChangedCount;
         if (changedCount == 0)
         {
             Base.RaiseMessage("No fields were changed.", "Bulk Edit");
@@ -298,82 +341,35 @@ public partial class BulkEditDialog : Window
 
         AppliedCount = 0;
         FailedCount = 0;
+        _stringWriteFailures = 0;
 
-        foreach (int address in _addresses)
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
         {
-            bool success = ApplyToItem(address,
-                heroStats, towerStats, resistances,
-                damage, rangedDamage, elementalDamage,
-                blocking, knockback, chargeSpeed, shotsPerSecond,
-                projectiles, projectileSpeed, clipAmmo, reloadSpeed,
-                drawScale, swingSpeed,
-                description, forgerName,
-                level, maxLevel, storedMana, levelReq,
-                c1r, c1g, c1b, c2r, c2g, c2b,
-                chHeroStats, chTowerStats, chResistances,
-                chDamage, chRangedDamage, chElementalDamage,
-                chBlocking, chKnockback, chChargeSpeed, chShotsPerSecond,
-                chProjectiles, chProjectileSpeed, chClipAmmo, chReloadSpeed,
-                chDrawScale, chSwingSpeed,
-                chDescription, chForgerName,
-                chLevel, chMaxLevel, chStoredMana, chLevelReq,
-                chColor1, chColor2);
-
-            if (!success)
+            foreach (int address in _addresses)
             {
-                // Retry once on failure.
-                success = ApplyToItem(address,
-                    heroStats, towerStats, resistances,
-                    damage, rangedDamage, elementalDamage,
-                    blocking, knockback, chargeSpeed, shotsPerSecond,
-                    projectiles, projectileSpeed, clipAmmo, reloadSpeed,
-                    drawScale, swingSpeed,
-                    description, forgerName,
-                    level, maxLevel, storedMana, levelReq,
-                    c1r, c1g, c1b, c2r, c2g, c2b,
-                    chHeroStats, chTowerStats, chResistances,
-                    chDamage, chRangedDamage, chElementalDamage,
-                    chBlocking, chKnockback, chChargeSpeed, chShotsPerSecond,
-                    chProjectiles, chProjectileSpeed, chClipAmmo, chReloadSpeed,
-                    chDrawScale, chSwingSpeed,
-                    chDescription, chForgerName,
-                    chLevel, chMaxLevel, chStoredMana, chLevelReq,
-                    chColor1, chColor2);
+                // Retry once — a target can transiently fail mid-game-tick.
+                bool success = ApplyToItem(address, p) || ApplyToItem(address, p);
+                if (success) AppliedCount++;
+                else FailedCount++;
             }
-
-            if (success)
-                AppliedCount++;
-            else
-                FailedCount++;
         }
+        finally { Mouse.OverrideCursor = null; }
 
-        if (FailedCount > 0)
+        if (FailedCount > 0 || _stringWriteFailures > 0)
         {
-            Base.RaiseMessage(
-                $"Bulk edit complete: {AppliedCount} succeeded, {FailedCount} failed.",
-                "Bulk Edit");
+            string msg = $"Bulk edit complete: {AppliedCount} succeeded, {FailedCount} failed.";
+            if (_stringWriteFailures > 0)
+                msg += $"\n\n{_stringWriteFailures} item(s) kept their old name/description " +
+                       "(game memory allocation failed) — their numeric stats were still " +
+                       "applied. Re-apply to retry the text.";
+            Base.RaiseMessage(msg, "Bulk Edit");
         }
 
         DialogResult = true;
     }
 
-    private bool ApplyToItem(int address,
-        int heroStats, int towerStats, int resistances,
-        int damage, int rangedDamage, int elementalDamage,
-        int blocking, int knockback, int chargeSpeed, int shotsPerSecond,
-        int projectiles, int projectileSpeed, int clipAmmo, int reloadSpeed,
-        float drawScale, float swingSpeed,
-        string description, string forgerName,
-        int level, int maxLevel, int storedMana, byte levelReq,
-        int c1r, int c1g, int c1b, int c2r, int c2g, int c2b,
-        bool chHeroStats, bool chTowerStats, bool chResistances,
-        bool chDamage, bool chRangedDamage, bool chElementalDamage,
-        bool chBlocking, bool chKnockback, bool chChargeSpeed, bool chShotsPerSecond,
-        bool chProjectiles, bool chProjectileSpeed, bool chClipAmmo, bool chReloadSpeed,
-        bool chDrawScale, bool chSwingSpeed,
-        bool chDescription, bool chForgerName,
-        bool chLevel, bool chMaxLevel, bool chStoredMana, bool chLevelReq,
-        bool chColor1, bool chColor2)
+    private bool ApplyToItem(int address, BulkPlan p)
     {
         try
         {
@@ -382,72 +378,64 @@ public partial class BulkEditDialog : Window
             ItemNative item = Base.Push<ItemNative>(raw);
 
             // Only overwrite changed fields.
-            if (chHeroStats)
+            if (p.ChHeroStats)
             {
                 for (int i = 0; i <= 5; i++)
-                    item.StatModifiers[i] = heroStats;
+                    item.StatModifiers[i] = p.HeroStats;
             }
 
-            if (chTowerStats)
+            if (p.ChTowerStats)
             {
                 for (int i = 6; i <= 9; i++)
-                    item.StatModifiers[i] = towerStats;
+                    item.StatModifiers[i] = p.TowerStats;
             }
 
-            if (chResistances)
+            if (p.ChResistances)
             {
                 for (int i = 0; i <= 3; i++)
-                    item.DamageReductions[i].Value = resistances;
+                    item.DamageReductions[i].Value = p.Resistances;
             }
 
-            if (chDamage) item.WeaponDamageBonus = damage;
-            if (chRangedDamage) item.WeaponAltDamageBonus = rangedDamage;
-            if (chElementalDamage) item.WeaponAdditionalDamage.Value = elementalDamage;
-            if (chBlocking) item.WeaponBlockingBonus = blocking;
-            if (chKnockback) item.WeaponKnockbackBonus = knockback;
-            if (chChargeSpeed) item.WeaponChargeSpeedBonus = chargeSpeed;
-            if (chShotsPerSecond) item.WeaponShotsPerSecondBonus = shotsPerSecond;
-            if (chProjectiles) item.WeaponNumberOfProjectilesBonus = projectiles;
-            if (chProjectileSpeed) item.WeaponSpeedOfProjectilesBonus = projectileSpeed;
-            if (chClipAmmo) item.WeaponClipAmmoBonus = clipAmmo;
-            if (chReloadSpeed) item.WeaponReloadSpeedBonus = reloadSpeed;
-            if (chDrawScale) item.WeaponDrawScaleMultiplier = drawScale;
-            if (chSwingSpeed) item.WeaponSwingSpeedMultiplier = swingSpeed;
-            if (chLevel) item.Level = level;
-            if (chMaxLevel) item.MaxEquipmentLevel = maxLevel;
-            if (chStoredMana) item.StoredMana = storedMana;
-            if (chLevelReq) item.ManualLR = levelReq;
+            if (p.ChDamage) item.WeaponDamageBonus = p.Damage;
+            if (p.ChRangedDamage) item.WeaponAltDamageBonus = p.RangedDamage;
+            if (p.ChElementalDamage) item.WeaponAdditionalDamage.Value = p.ElementalDamage;
+            if (p.ChBlocking) item.WeaponBlockingBonus = p.Blocking;
+            if (p.ChKnockback) item.WeaponKnockbackBonus = p.Knockback;
+            if (p.ChChargeSpeed) item.WeaponChargeSpeedBonus = p.ChargeSpeed;
+            if (p.ChShotsPerSecond) item.WeaponShotsPerSecondBonus = p.ShotsPerSecond;
+            if (p.ChProjectiles) item.WeaponNumberOfProjectilesBonus = p.Projectiles;
+            if (p.ChProjectileSpeed) item.WeaponSpeedOfProjectilesBonus = p.ProjectileSpeed;
+            if (p.ChClipAmmo) item.WeaponClipAmmoBonus = p.ClipAmmo;
+            if (p.ChReloadSpeed) item.WeaponReloadSpeedBonus = p.ReloadSpeed;
+            if (p.ChDrawScale) item.WeaponDrawScaleMultiplier = p.DrawScale;
+            if (p.ChSwingSpeed) item.WeaponSwingSpeedMultiplier = p.SwingSpeed;
+            if (p.ChLevel) item.Level = p.Level;
+            if (p.ChMaxLevel) item.MaxEquipmentLevel = p.MaxLevel;
+            if (p.ChStoredMana) item.StoredMana = p.StoredMana;
+            if (p.ChLevelReq) item.ManualLR = p.LevelReq;
 
             // Color overrides — build a LinearColor (float-backed) from the
             // ints and convert to native. Negative values pass straight through
             // because LinearColor.R setter is value/255f (not clamped).
-            if (chColor1)
+            if (p.ChColor1)
             {
-                var c = new LinearColor { R = c1r, G = c1g, B = c1b };
+                var c = new LinearColor { R = p.C1R, G = p.C1G, B = p.C1B };
                 item.PrimaryColorOverride = Base.LinearColorToNative(c);
             }
-            if (chColor2)
+            if (p.ChColor2)
             {
-                var c = new LinearColor { R = c2r, G = c2g, B = c2b };
+                var c = new LinearColor { R = p.C2R, G = p.C2G, B = p.C2B };
                 item.SecondaryColorOverride = Base.LinearColorToNative(c);
             }
 
-            // Handle string fields: try in-place first, fall back to new allocation.
-            if (chDescription)
-            {
-                if (item.Description.MaximumLength >= description.Length + 1)
-                    item.Description = Base.WriteUniInPlace(item.Description, description);
-                else
-                    item.Description = Base.WriteUni(address, "Description", description);
-            }
-
-            if (chForgerName)
-            {
-                if (item.ForgerName.MaximumLength >= forgerName.Length + 1)
-                    item.ForgerName = Base.WriteUniInPlace(item.ForgerName, forgerName);
-                else
-                    item.ForgerName = Base.WriteUni(address, "ForgerName", forgerName);
-            }
+            // Strings: in-place first, fresh allocation as fallback, and a
+            // failed allocation keeps the existing buffer (same best-effort
+            // contract as the MAX path) — the numeric writes below still
+            // land instead of the whole item counting as failed.
+            if (p.ChDescription)
+                item.Description = WriteStringBestEffort(item.Description, p.Description, address, "Description");
+            if (p.ChForgerName)
+                item.ForgerName = WriteStringBestEffort(item.ForgerName, p.ForgerName, address, "ForgerName");
 
             // Write back to memory.
             byte[] data = Base.Push(item);
@@ -457,9 +445,9 @@ public partial class BulkEditDialog : Window
             byte[] verify = Base.Instance.ReadMemory(address, _structSize);
             ItemNative verifyItem = Base.Push<ItemNative>(verify);
 
-            if (chLevel && verifyItem.Level != level) return false;
-            if (chDamage && verifyItem.WeaponDamageBonus != damage) return false;
-            if (chHeroStats && verifyItem.StatModifiers[0] != heroStats) return false;
+            if (p.ChLevel && verifyItem.Level != p.Level) return false;
+            if (p.ChDamage && verifyItem.WeaponDamageBonus != p.Damage) return false;
+            if (p.ChHeroStats && verifyItem.StatModifiers[0] != p.HeroStats) return false;
 
             return true;
         }
@@ -468,23 +456,6 @@ public partial class BulkEditDialog : Window
             return false;
         }
     }
-
-    // ── Placeholder + fallback helpers ──────────────────────────────
-
-    // Blank the TextBox and stuff the current value into the grey placeholder.
-    private static void SetHint(TextBox tb, string current)
-    {
-        tb.Text = "";
-        Modinator.Behaviors.Placeholder.SetText(tb, current);
-    }
-
-    // If the user typed something, parse it; otherwise keep the baseline value.
-    private static int IntOr(FieldValidator v, TextBox tb, string label, int fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Int(tb, label);
-    private static byte ByteOr(FieldValidator v, TextBox tb, string label, byte fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Byte(tb, label);
-    private static float FloatOr(FieldValidator v, TextBox tb, string label, float fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Float(tb, label);
 
     // ── MAX bulk ────────────────────────────────────────────────────
     //
@@ -503,6 +474,7 @@ public partial class BulkEditDialog : Window
 
     private void BtnMax_Click(object sender, RoutedEventArgs e)
     {
+        if (_loadFailed) return; // baselines are zeroed — dialog is closing
         var cfg = MaxItemConfig.Load();
 
         var confirm = MessageBox.Show(
@@ -514,21 +486,30 @@ public partial class BulkEditDialog : Window
 
         AppliedCount = 0;
         FailedCount = 0;
+        _stringWriteFailures = 0;
         var failures = new List<(int addr, string step, string err)>();
 
-        foreach (int address in _addresses)
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
         {
-            var (ok, step, err) = ApplyMaxToAddress(address, cfg);
-            if (!ok)
+            foreach (int address in _addresses)
             {
-                // Retry once on failure — silently; only log the retry result.
-                (ok, step, err) = ApplyMaxToAddress(address, cfg);
+                var (ok, step, err) = ApplyMaxToAddress(address, cfg);
+                if (!ok)
+                {
+                    // Retry once on failure — silently; only log the retry result.
+                    (ok, step, err) = ApplyMaxToAddress(address, cfg);
+                }
+                if (ok) AppliedCount++;
+                else { FailedCount++; failures.Add((address, step, err ?? "(unknown)")); }
             }
-            if (ok) AppliedCount++;
-            else { FailedCount++; failures.Add((address, step, err ?? "(unknown)")); }
         }
+        finally { Mouse.OverrideCursor = null; }
 
         string summary = $"MAX complete: {AppliedCount} succeeded, {FailedCount} failed.";
+        if (_stringWriteFailures > 0)
+            summary += $"\n{_stringWriteFailures} item(s) kept their old name/description " +
+                       "(allocation failed); numeric maxes still applied.";
         if (failures.Count > 0)
         {
             string logPath = WriteFailureLog(cfg, failures);
@@ -601,8 +582,10 @@ public partial class BulkEditDialog : Window
     // Try in-place first (zero risk), then fall back to a fresh allocation.
     // If the alloc throws (VirtualAllocEx occasionally fails during bulk
     // edits), swallow it and keep the existing NativeArray — the numeric
-    // writes for this item still succeed.
-    private static NativeArray WriteStringBestEffort(NativeArray existing, string data, int address, string fieldName)
+    // writes for this item still succeed. Counted into
+    // _stringWriteFailures so the summary can say so instead of silently
+    // reporting full success.
+    private NativeArray WriteStringBestEffort(NativeArray existing, string data, int address, string fieldName)
     {
         if (existing.MaximumLength >= data.Length + 1)
             return Base.WriteUniInPlace(existing, data);
@@ -612,6 +595,7 @@ public partial class BulkEditDialog : Window
         }
         catch
         {
+            _stringWriteFailures++;
             return existing;
         }
     }

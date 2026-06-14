@@ -95,18 +95,18 @@ public partial class ItemDupeView : UserControl
 
     private void ClearCard(bool sacrificial)
     {
-        TextBlock nameT = sacrificial ? TxtSacName : TxtSrcName;
         TextBlock metaT = sacrificial ? TxtSacMeta : TxtSrcMeta;
         TextBlock addrT = sacrificial ? TxtSacAddr : TxtSrcAddr;
-        nameT.Text = sacrificial ? "No target selected" : "No source selected";
-        nameT.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextMutedBrush");
         metaT.Text = "";
         addrT.Text = "";
         (sacrificial ? SacStats : SrcStats).Children.Clear();
+        // Back to the centered empty state ("No X selected" lives there now).
+        (sacrificial ? SacBody : SrcBody).Visibility = Visibility.Collapsed;
+        (sacrificial ? SacEmpty : SrcEmpty).Visibility = Visibility.Visible;
     }
 
-    // Fills one card's three text blocks; flips the name from the muted
-    // placeholder colour to the primary text colour once populated.
+    // Fills one card's three text blocks and swaps the empty state out
+    // for the populated body.
     private void ShowItem(bool sacrificial, int addr)
     {
         TextBlock nameT = sacrificial ? TxtSacName : TxtSrcName;
@@ -117,13 +117,12 @@ public partial class ItemDupeView : UserControl
             int size = Marshal.SizeOf(typeof(ItemNative));
             var native = Base.Push<ItemNative>(Base.Instance.ReadMemory(addr, size));
             var u = Base.ItemToUser(native);
-            string name = Base.ReadUni<ItemNative>(addr, "EquipmentName") ?? "";
-            string forger = Base.ReadUni<ItemNative>(addr, "ForgerName") ?? "";
-            if (string.IsNullOrWhiteSpace(name)) name = "(unnamed)";
+            string name = ResolveDisplayName(addr);
+            string forger = StripColorTags(Base.ReadUni<ItemNative>(addr, "ForgerName") ?? "");
 
             nameT.Text = name;
             nameT.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "TextPrimaryBrush");
-            metaT.Text = $"{u.EquipmentType}  /  {u.Quality2}  /  Lvl {u.Level}" +
+            metaT.Text = $"{u.EquipmentType}  /  {QualityDisplay.Name(u.Quality2)}  /  Lvl {u.Level}" +
                          (string.IsNullOrWhiteSpace(forger) ? "" : $"  /  forged by {forger}");
             addrT.Text = Base.AddressToString(addr);
             BuildStats(sacrificial ? SacStats : SrcStats, u);
@@ -136,6 +135,8 @@ public partial class ItemDupeView : UserControl
             addrT.Text = "";
             (sacrificial ? SacStats : SrcStats).Children.Clear();
         }
+        (sacrificial ? SacEmpty : SrcEmpty).Visibility = Visibility.Collapsed;
+        (sacrificial ? SacBody : SrcBody).Visibility = Visibility.Visible;
     }
 
     // Renders the item's stat block — same icon set / layout the Forge
@@ -294,11 +295,31 @@ public partial class ItemDupeView : UserControl
         return bmp;
     }
 
-    private static string ShortName(int addr)
+    // DD1 rich names/forgers embed <color:r,g,b>…</color> runs; strip
+    // them for display (the bytes in memory are untouched — the dupe
+    // copies the raw string, not this cleaned version).
+    // internal: HeroViewerView reuses it for hero/equipment names.
+    internal static string StripColorTags(string s) =>
+        System.Text.RegularExpressions.Regex.Replace(s, "</?color[^>]*>", "").Trim();
+
+    // Display name with the same spirit as ForgeViewerView.SafeReadName:
+    // custom name → the Forge snapshot's already-resolved name (the
+    // pickers are built from it, so it's present for every pickable
+    // item) → base name → placeholder. Fixes blank-named items showing
+    // "(unnamed)" when the Forge list shows a proper name for them.
+    private static string ResolveDisplayName(int addr)
     {
         try
         {
             string name = Base.ReadUni<ItemNative>(addr, "EquipmentName") ?? "";
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                foreach (var s in ForgeViewerView.LastSnapshot)
+                    if (s.Address == addr) { name = s.Name; break; }
+            }
+            if (string.IsNullOrWhiteSpace(name))
+                name = Base.ReadUni<ItemNative>(addr, "BaseEquipmentName") ?? "";
+            name = StripColorTags(name);
             return string.IsNullOrWhiteSpace(name) ? "(unnamed item)" : name;
         }
         catch { return "(unreadable item)"; }
@@ -310,7 +331,7 @@ public partial class ItemDupeView : UserControl
             return;
 
         var ok = MessageBox.Show(
-            $"Overwrite \"{ShortName(sacAddr)}\" with a copy of \"{ShortName(srcAddr)}\"?\n\n" +
+            $"Overwrite \"{ResolveDisplayName(sacAddr)}\" with a copy of \"{ResolveDisplayName(srcAddr)}\"?\n\n" +
             "This permanently replaces the target item.",
             "Confirm Dupe", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (ok != MessageBoxResult.Yes) return;

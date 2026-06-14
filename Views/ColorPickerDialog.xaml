@@ -234,7 +234,7 @@
         <!-- ═══ Action buttons ═══ -->
         <StackPanel Grid.Row="5" Orientation="Horizontal"
                     HorizontalAlignment="Right" Margin="0,8,0,0">
-            <Button Content="Cancel" Padding="18,7"
+            <Button Content="Cancel" IsCancel="True" Padding="18,7"
                     Click="BtnCancel_Click" />
             <Button Content="APPLY COLOR"
                     Style="{StaticResource AccentButton}"

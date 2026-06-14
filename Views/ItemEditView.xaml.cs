@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using static Modinator.Views.EditHelpers;
 
 namespace Modinator.Views;
 
@@ -17,7 +18,8 @@ public partial class ItemEditView : UserControl
     {
         InitializeComponent();
         Address = address;
-        ItemDisplayName = name;
+        ItemDisplayName = string.IsNullOrWhiteSpace(name) ? "Item" : name;
+        StatusText.Text = Base.Truncate(ItemDisplayName);
         Loaded += OnLoaded;
     }
 
@@ -29,8 +31,8 @@ public partial class ItemEditView : UserControl
             CboEquipmentType.Items.Add(val);
 
         CboQuality2.Items.Clear();
-        foreach (var val in Enum.GetValues(typeof(Quality2)))
-            CboQuality2.Items.Add(val);
+        foreach (Quality2 val in Enum.GetValues(typeof(Quality2)))
+            CboQuality2.Items.Add(new Quality2Choice(val));
 
         CboQuality3.Items.Clear();
         foreach (var val in Enum.GetValues(typeof(Quality3)))
@@ -100,7 +102,8 @@ public partial class ItemEditView : UserControl
 
             // Quality
             SetHint(TxtQuality1, user.Quality1.ToString());
-            CboQuality2.SelectedItem = user.Quality2;
+            foreach (Quality2Choice c in CboQuality2.Items)
+                if (c.Value == user.Quality2) { CboQuality2.SelectedItem = c; break; }
             CboQuality3.SelectedItem = user.Quality3;
             SetHint(TxtQualityFlag, user.QualityFlag.ToString());
 
@@ -159,30 +162,15 @@ public partial class ItemEditView : UserControl
             SetHint(TxtID1, user.ID1.ToString());
             SetHint(TxtID2, user.ID2.ToString());
 
-            StatusText.Text = "Refreshed";
+            // Keep the item's name visible — the user should always see
+            // WHICH item this screen is editing.
+            StatusText.Text = $"{Base.Truncate(ItemDisplayName)} — refreshed";
         }
         catch (Exception ex)
         {
             StatusText.Text = "Read error: " + ex.Message;
         }
     }
-
-    // Blank the text box and stuff the current value into the placeholder.
-    private static void SetHint(TextBox tb, string current)
-    {
-        tb.Text = "";
-        Modinator.Behaviors.Placeholder.SetText(tb, current);
-    }
-
-    // If the user typed something, parse it; otherwise keep the current value.
-    private static int IntOr(FieldValidator v, TextBox tb, string label, int fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Int(tb, label);
-    private static byte ByteOr(FieldValidator v, TextBox tb, string label, byte fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Byte(tb, label);
-    private static float FloatOr(FieldValidator v, TextBox tb, string label, float fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Float(tb, label);
-    private static string StrOr(TextBox tb, string? fallback)
-        => string.IsNullOrEmpty(tb.Text) ? (fallback ?? "") : tb.Text;
 
     // Try in-place write; fall back to a fresh allocation if the string is
     // longer than the existing buffer. WriteUniInPlace silently bails when
@@ -277,7 +265,7 @@ public partial class ItemEditView : UserControl
 
         // Quality
         user.Quality1 = ByteOr(v, TxtQuality1, "Quality 1", current.Quality1);
-        if (CboQuality2.SelectedItem is Quality2 q2) user.Quality2 = q2;
+        if (CboQuality2.SelectedItem is Quality2Choice q2) user.Quality2 = q2.Value;
         if (CboQuality3.SelectedItem is Quality3 q3) user.Quality3 = q3;
         user.QualityFlag = ByteOr(v, TxtQualityFlag, "Quality Flag", current.QualityFlag);
 
@@ -358,7 +346,7 @@ public partial class ItemEditView : UserControl
             byte[] bytes = Base.Push(native);
             Base.Instance.WriteMemory(Address, bytes);
 
-            StatusText.Text = "Updated";
+            StatusText.Text = $"{Base.Truncate(ItemDisplayName)} — updated";
             // Reload so placeholders reflect the new state and the boxes clear
             // — lets the user immediately edit again without re-selecting.
             Refresh();

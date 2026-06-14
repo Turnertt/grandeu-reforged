@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         WindowExtensions.SetTitleBarContent(this, BuildTitleBarToggles());
+        Tunables.EnsureLoaded();   // optional offline override file (idempotent)
         Hotkeys = HotkeyConfig.Load();
         Loaded += MainWindow_Loaded;
         Closed += (_, _) => _hotkeyMgr?.Dispose();
@@ -231,7 +232,7 @@ public partial class MainWindow : Window
                             ri.Name = Base.ReadUni<ItemNative>(addr, "EquipmentName");
                             if (string.IsNullOrEmpty(ri.Name))
                                 ri.Name = Base.ReadUni<ItemNative>(addr, "BaseEquipmentName");
-                            ri.Quality = user.Quality2.ToString();
+                            ri.Quality = QualityDisplay.Name(user.Quality2);
                             // Weapon class gate (EWeaponType) lives outside the
                             // marshaled ItemNative — a 1-byte read at
                             // addr + MaxCompat.WeaponTypeOffset. Weapons only;
@@ -283,21 +284,7 @@ public partial class MainWindow : Window
     }
 
     private static System.Windows.Media.Color GetQualityWpfColor(Quality2 q)
-    {
-        return q switch
-        {
-            Quality2.Ultimate => System.Windows.Media.Color.FromRgb(200, 140, 20),
-            Quality2.Supreme => System.Windows.Media.Color.FromRgb(130, 70, 190),
-            Quality2.Transcendent => System.Windows.Media.Color.FromRgb(40, 140, 200),
-            Quality2.Mythical => System.Windows.Media.Color.FromRgb(200, 50, 80),
-            Quality2.Godly => System.Windows.Media.Color.FromRgb(200, 160, 30),
-            Quality2.Legendary => System.Windows.Media.Color.FromRgb(200, 110, 30),
-            Quality2.Epic => System.Windows.Media.Color.FromRgb(140, 60, 200),
-            Quality2.Amazing => System.Windows.Media.Color.FromRgb(50, 160, 70),
-            Quality2.Powerful => System.Windows.Media.Color.FromRgb(80, 150, 90),
-            _ => System.Windows.Media.Color.FromRgb(120, 125, 135),
-        };
-    }
+        => Views.QualityColors.Get(q);
 
     // ── Sidebar navigation ──────────────────────────────────────────
 
@@ -321,6 +308,7 @@ public partial class MainWindow : Window
             "HeroSearch" => BtnSearchHero,
             "MiscSearch" => BtnSearchMisc,
             "ForgeViewer" => BtnForgeViewer,
+            "HeroViewer" => BtnHeroViewer,
             "ItemDupe" => BtnItemDupe,
             "Settings" => BtnSettings,
             _ => null,
@@ -345,6 +333,7 @@ public partial class MainWindow : Window
             "HeroSearch" => _heroSearchView ??= new Views.HeroSearchView(),
             "MiscSearch" => _miscSearchView ??= new Views.MiscSearchView(),
             "ForgeViewer" => _forgeViewerView ??= new Views.ForgeViewerView(),
+            "HeroViewer" => _heroViewerView ??= new Views.HeroViewerView(),
             "ItemDupe" => _itemDupeView ??= new Views.ItemDupeView(),
             "Settings" => new Views.SettingsView(), // fresh so it re-syncs state each time
             _ => null,
@@ -431,6 +420,7 @@ public partial class MainWindow : Window
     private Views.HeroSearchView? _heroSearchView;
     private Views.MiscSearchView? _miscSearchView;
     private Views.ForgeViewerView? _forgeViewerView;
+    private Views.HeroViewerView? _heroViewerView;
     private Views.ItemDupeView? _itemDupeView;
     private object? _lastContentBeforeEditor;
 
@@ -454,6 +444,87 @@ public partial class MainWindow : Window
     // ── Options (called from SettingsView and title bar toggles) ────
 
     public bool AutoKillEnabled => _autoKillEnabled;
+    public bool UnlimitedManaEnabled => _unlimitedMana;
+    public bool MaxTowerUnitsEnabled => _maxTowerUnits;
+
+    // Read-only diagnostics surface (Settings → Diagnostics card).
+    public uint CurrentPawnVtable => _pawnVtable;
+    public uint LiveGameStamp => _liveGameStamp;
+
+    // ── Calibration (Settings wizard) ──────────────────────────────
+    // Drop the seed + caches and re-derive everything from live memory,
+    // then pin from the PRI-verified chain TAIL only (the local player
+    // pawn) — same rule as the AutoKillTick auto-pin; the structural
+    // scan's first match is never persisted (DECISIONS.md). Read-only
+    // against the game except the overrides.json pin. Safe to call from
+    // a background task (same tolerated raciness as ResolvePlayerPawnAddress).
+    public sealed class CalibrationProbe
+    {
+        public int  WorldInfo;
+        public int  PlayerPawn;
+        public int  ChainLength;
+        public uint Seed;
+        public bool Pinned;
+        // GRI reports a gameplay level (not tavern/lobby/loading). Lets the
+        // wizard's combat check tell tavern NPCs apart from a real wave —
+        // ChainLength > 1 alone is true in the tavern too (shop NPCs).
+        public bool InGameplayLevel;
+    }
+
+    public CalibrationProbe ForceStructuralReseed()
+    {
+        var probe = new CalibrationProbe();
+        // Own the caches for the whole sweep: blocks until an in-flight AK
+        // tick drains; ticks arriving meanwhile skip (Monitor.TryEnter in
+        // AutoKillTick). Also serializes two concurrent reseeds (Calibrate
+        // + a viewer's auto-recalibrate) instead of letting them clobber
+        // each other's _pawnVtable/_cachedWorldInfo mid-derivation.
+        lock (_scanStateGate)
+        {
+            _pawnVtable = 0;
+            _cachedWorldInfo = 0;
+            _cachedPlayerPawn = 0;
+
+            int wi = FindWorldInfoViaPawnScan();
+            probe.WorldInfo = wi;
+            if (wi == 0) return probe;
+            _cachedWorldInfo = wi;
+            probe.InGameplayLevel = IsInGameplayLevel();
+
+            // Walk the pawn list, collecting each pawn + its PRI, then
+            // select the LOCAL PLAYER by verification — not by position
+            // (see SelectLocalPlayerPawn: the tail is an NPC in the tavern).
+            byte[]? plData = AKRead(wi + 0x041C, 4);
+            if (plData == null) return probe;
+            int cur = BitConverter.ToInt32(plData, 0);
+            var pawns = new List<(int addr, uint pri)>(16);
+            var visited = new HashSet<int>();
+            while (IsHeapPtr(cur) && visited.Add(cur) && visited.Count <= AK_CHAIN_MAX)
+            {
+                byte[]? pd = AKRead(cur, 0x32C);
+                if (pd == null || pd.Length < 0x32C) break;
+                uint pri = 0;
+                byte[]? priB = AKRead(cur + OFF_PAWN_PRI, 4);
+                if (priB != null && priB.Length >= 4)
+                    pri = BitConverter.ToUInt32(priB, 0);
+                pawns.Add((cur, pri));
+                int np = BitConverter.ToInt32(pd, 0x0230);
+                if (np == 0) break;
+                cur = np;
+            }
+            probe.ChainLength = pawns.Count;
+            int player = SelectLocalPlayerPawn(pawns);
+            probe.PlayerPawn = player;
+            if (player == 0) return probe;
+            _cachedPlayerPawn = player;
+
+            // Pin only from a verified player pawn (PRI check), never the
+            // scan's first match.
+            uint pv = TryPinPlayerSeed(player);
+            if (pv != 0) { probe.Seed = pv; probe.Pinned = true; }
+            return probe;
+        }
+    }
 
     public void SetAlwaysOnTop(bool on)
     {
@@ -689,7 +760,7 @@ public partial class MainWindow : Window
                 byte[] data = Base.Instance.ReadMemory(address, size);
                 var native = Base.Push<ItemNative>(data);
                 var user = Base.ItemToUser(native);
-                tracked.Quality = user.Quality2.ToString();
+                tracked.Quality = QualityDisplay.Name(user.Quality2);
                 tracked.Level = $"{user.Level} / {user.MaxLevel}";
                 tracked.ForgerName = Base.ReadUni<ItemNative>(address, "ForgerName") ?? "";
             }
@@ -896,7 +967,14 @@ public partial class MainWindow : Window
     // Orc 10.27M, Ogre 23.5M, Spider 7.2M. Too-low caps made the pawn
     // scan reject every beefy enemy and ValidateCachedWorldInfo evict the
     // cache on the first Ogre → permanent "no enemies found".
-    private const int AK_MAX_PLAUSIBLE_HP = 500_000_000;
+    // Sourced from Tunables so a future HP-cap drift is a one-line
+    // override-file edit, not a rebuild (default = 500M; see Tunables).
+    // Property, NOT a static-readonly snapshot: Settings → GAME ADDRESSES →
+    // RELOAD promises "apply it now", and MaxPlausibleHp is one of the two
+    // values the panel tells users to hand-edit. A type-init snapshot
+    // silently defeated that. The getter is a loaded-check + field read —
+    // free at tick/scan scale.
+    private static int AK_MAX_PLAUSIBLE_HP => Tunables.MaxPlausibleHp;
     private System.Threading.CancellationTokenSource? _akCts;
     private System.Threading.Tasks.Task? _akLoopTask;
 
@@ -983,21 +1061,103 @@ public partial class MainWindow : Window
         if (plData == null) return 0;
         int cur = BitConverter.ToInt32(plData, 0);
 
-        int tail = 0;
+        var pawns = new List<(int addr, uint pri)>(16);
         var visited = new HashSet<int>();
         while (IsHeapPtr(cur) && visited.Add(cur) && visited.Count <= AK_CHAIN_MAX)
         {
             byte[]? pd = AKRead(cur, 0x32C);
             if (pd == null || pd.Length < 0x32C) break;
-            tail = cur;
+            uint pri = 0;
+            byte[]? priB = AKRead(cur + OFF_PAWN_PRI, 4);
+            if (priB != null && priB.Length >= 4)
+                pri = BitConverter.ToUInt32(priB, 0);
+            pawns.Add((cur, pri));
             int np = BitConverter.ToInt32(pd, 0x0230);
             if (np == 0) break;
             cur = np;
         }
-        return tail;
+
+        // Any successful resolve has located the local player pawn —
+        // selected by verified PRI + ULocalPlayer, not by list position
+        // (SelectLocalPlayerPawn; the tail is an NPC in the tavern). Save
+        // its vtable as the durable seed so a good value found by a plain
+        // Forge/Hero scan persists. Gated on a verified PRI (player only,
+        // never an enemy); PinPawnVtable no-ops when unchanged, so this is
+        // free on repeat scans. Honors the "never persist the structural
+        // first match" rule — we pin the verified player, not the scan's
+        // first hit.
+        int player = SelectLocalPlayerPawn(pawns);
+        TryPinPlayerSeed(player);
+        return player;
     }
 
+    // Pin the player pawn's vtable as the durable seed, gated on a verified
+    // PRI. Returns the pinned vtable (0 if not pinned). Single home for the
+    // pin rule used by ResolvePlayerPawnAddress / AutoKillTick / calibration.
+    private uint TryPinPlayerSeed(int playerPawn)
+    {
+        if (playerPawn == 0) return 0;
+        byte[]? priB = AKRead(playerPawn + OFF_PAWN_PRI, 4);
+        if (priB == null || priB.Length < 4) return 0;
+        if (!IsVerifiedPri(BitConverter.ToUInt32(priB, 0))) return 0;
+        byte[]? vtb = AKRead(playerPawn, 4);
+        if (vtb == null || vtb.Length < 4) return 0;
+        uint pv = BitConverter.ToUInt32(vtb, 0);
+        if (pv < 0x00400000u || pv >= 0x02000000u) return 0;
+        _pawnVtable = pv;
+        Tunables.PinPawnVtable(pv, _liveGameStamp); // no-ops when unchanged
+        return pv;
+    }
+
+    // Select the LOCAL player's pawn from a walked PawnList chain.
+    // Position is NOT a reliable signal: UE3 inserts newly spawned pawns
+    // at the list HEAD, so the player is the tail in a solo mission
+    // (spawned before the enemies) but sits at/near the HEAD in the
+    // tavern, where the earlier-spawned shop NPCs / practice dummies
+    // occupy the tail — the old "tail = local player" rule made the
+    // Calibrate pin and the pawn→HeroManager resolve fail there
+    // (debug-proven 2026-06-11: the player's NextPawn points at a
+    // MaxHealth==0 shop pawn, so the player cannot be the tail).
+    // Selection: the pawn with a verified PRI whose controller carries a
+    // ULocalPlayer (+0x3B8) — only the locally-controlled player has one;
+    // remote multiplayer players' controllers don't. Fallbacks: the last
+    // PRI-verified pawn (controller/Player link still settling), then the
+    // tail (PRI not replicated yet, first tick after a map load — the
+    // historical rule, still correct in solo missions).
+    private int SelectLocalPlayerPawn(List<(int addr, uint pri)> pawns)
+    {
+        if (pawns.Count == 0) return 0;
+        int lastVerified = 0;
+        foreach (var p in pawns)
+        {
+            if (!IsVerifiedPri(p.pri)) continue;
+            lastVerified = p.addr;
+            int ctl = ReadU32(p.addr + OFF_PAWN_CONTROLLER);
+            if (!IsHeapPtr(ctl)) continue;
+            int lp = ReadU32(ctl + GameChain.OFF_CONTROLLER_PLAYER);
+            if (IsHeapPtr(lp)) return p.addr;
+        }
+        return lastVerified != 0 ? lastVerified : pawns[pawns.Count - 1].addr;
+    }
+
+    // Mutual exclusion between the AK tick body and ForceStructuralReseed
+    // (the Calibrate / viewer auto-recalibrate sweep). A tick that can't
+    // take the gate skips — the next one is 100 ms away; the reseed BLOCKS
+    // until an in-flight tick drains, then owns the shared cache fields
+    // (_pawnVtable/_cachedWorldInfo/_cachedPlayerPawn) and the AK handle
+    // for its whole sweep. This replaces an earlier one-directional
+    // volatile flag, which neither stopped a tick already in flight nor
+    // survived two concurrent reseeds (the first finisher cleared it).
+    private readonly object _scanStateGate = new();
+
     private void AutoKillTick()
+    {
+        if (!System.Threading.Monitor.TryEnter(_scanStateGate)) return; // a reseed owns the caches — skip this tick
+        try { AutoKillTickCore(); }
+        finally { System.Threading.Monitor.Exit(_scanStateGate); }
+    }
+
+    private void AutoKillTickCore()
     {
         // Ensure we have a live handle to DunDefGame
         if (GetAKHandle() == IntPtr.Zero)
@@ -1087,8 +1247,21 @@ public partial class MainWindow : Window
         }
 
         if (chain.Count == 0) return;
-        int playerPawn = chain[chain.Count - 1].addr;
+        var pawnPris = new List<(int addr, uint pri)>(chain.Count);
+        foreach (var p in chain) pawnPris.Add((p.addr, p.pri));
+        int playerPawn = SelectLocalPlayerPawn(pawnPris);
         _cachedPlayerPawn = playerPawn;
+
+        // Durable fast-scan seed: persist ONLY the local player's own
+        // pawn-class vtable (PRI-verified, position-independent — see
+        // SelectLocalPlayerPawn), via the shared TryPinPlayerSeed.
+        // Deliberately BEFORE the gameplay-level gate: it's a read + an
+        // overrides.json write (no game write), so a tavern/build-phase
+        // self-heal pins immediately instead of waiting for the first
+        // combat tick. PinPawnVtable no-ops when unchanged (no per-tick
+        // disk I/O). The recorded build stamp rides along so the next
+        // patch is detected on attach (EnsureGameBuildStampChecked).
+        TryPinPlayerSeed(playerPawn);
 
         // Level-loaded gate. Historically auto-kill glitched the level
         // when left on across a map transition — our writes were hitting
@@ -1139,9 +1312,17 @@ public partial class MainWindow : Window
         int protectedHeroes = 0;
         if (_autoKillEnabled && !learnOnly)
         {
-            for (int i = 0; i < chain.Count - 1; i++) // tail = local player, skip
+            // The positional tail-skip is the HISTORICAL rule (solo mission:
+            // player spawned first ⇒ player is the tail). It is debug-proven
+            // wrong in general (DECISIONS.md "tail rule retired 2026-06-11")
+            // but deliberately KEPT pending in-game re-validation — do NOT
+            // remove or "unify" it. The PRI-selected playerPawn skip below is
+            // purely ADDITIVE protection for states where the player is not
+            // the tail; an extra skip can only spare a pawn, never kill one.
+            for (int i = 0; i < chain.Count - 1; i++) // tail skip (historical — see above)
             {
                 var p = chain[i];
+                if (p.addr == playerPawn) { protectedHeroes++; continue; } // PRI-selected local player
                 if (p.klass != 0 && _heroClasses.Contains(p.klass)) { protectedHeroes++; continue; }
                 bool killable = p.hp > 0 && p.hpMax > 0;
                 if (!killable)
@@ -1199,9 +1380,10 @@ public partial class MainWindow : Window
         // Unlimited mana — refill the local player controller's ManaPower to
         // its current MaxManaPower every tick. Reading Max keeps this correct
         // across heroes / maps / mana-upgrade pickups (no baked-in cap) and
-        // leaves the HUD looking normal. _cachedPlayerPawn is the chain tail
-        // (local player); reached only past the gameplay-level gate, so this
-        // never fires in the tavern/menu/loading. Independent of Auto-Kill.
+        // leaves the HUD looking normal. _cachedPlayerPawn is the local
+        // player (PRI-verified, SelectLocalPlayerPawn); reached only past
+        // the gameplay-level gate, so this never fires in the
+        // tavern/menu/loading. Independent of Auto-Kill.
         if (_unlimitedMana && _cachedPlayerPawn != 0)
         {
             int ctrl = ReadU32(_cachedPlayerPawn + OFF_PAWN_CONTROLLER);
@@ -1409,7 +1591,10 @@ public partial class MainWindow : Window
     // ~260 DU) while keeping the HUD's "used / max" less absurd; well
     // within DD_ModMenu's 1,000,000 ceiling.
     private const int OFF_GRI_MAXTOWERUNITS = 0x039C;
-    private const int MAX_TOWER_UNITS_VALUE = 100_000;
+    // Value (not the offset) sourced from Tunables — see AK_MAX_PLAUSIBLE_HP.
+    // Property for the same reason as AK_MAX_PLAUSIBLE_HP: Settings RELOAD
+    // must actually apply a hand-edited MaxTowerUnits without a restart.
+    private static int MAX_TOWER_UNITS_VALUE => Tunables.MaxTowerUnits;
 
     // TargetableActors sweep (enemy towers / crystals / bosses). Offsets
     // from DD_ModMenu SDK:
@@ -1472,13 +1657,25 @@ public partial class MainWindow : Window
     //   0x00FCD9A8 — Grandeu-97-4-0-4-1669256200 (original)
     //   0x00FCD998 — DD1 patch April 2026 (16-byte rebase)
     //   0x00FCD7D8 — DD1 build 2026-05 (Steam Win32; live DLL dump, base 0x00400000 / +0xBCD7D8)
+    //   0x00FCC830 — DD1 v10.0 anti-cheat update beta 2026-05-18 (injector
+    //                player-pawn dump; base 0x00400000 / +0xBCC830). ~4 KB
+    //                code shift; struct offsets unchanged (SDK-verified).
     //
     // The seed only matters for the very first scan in a session. If
     // it misses, FindWorldInfoViaPawnScan's structural fallback rewrites
     // this field with the live vtable, and subsequent calls hit the
     // fast path again. Bumping the seed when a new patch ships is just
     // an optimization to skip the one-time rediscovery.
-    private uint _pawnVtable = 0x00FCD7D8;
+    //
+    // Seeded from Tunables: a moved seed can be re-pointed via the
+    // optional overrides.json (offline, no rebuild). The runtime
+    // structural self-heal below is unchanged and still authoritative —
+    // a wrong override is corrected on the first scan, never worse than
+    // the compiled default. Additionally, EnsureGameBuildStampChecked
+    // zeroes this on attach when the exe's PE TimeDateStamp differs from
+    // the stamp recorded with the pin — patch day then skips the doomed
+    // fast sweep and goes straight to the structural re-derive.
+    private uint _pawnVtable = Tunables.PawnVtableSeed;
 
     [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "OpenProcess")]
     private static extern IntPtr OpenProcess2(uint access, bool inherit, int pid);
@@ -1533,6 +1730,54 @@ public partial class MainWindow : Window
         if (pid != _akTargetPid) ResetAutoKillHandle();
     }
 
+    // ── Game-build (patch) detection ─────────────────────────────────
+    // The exe's PE COFF TimeDateStamp changes on every Steam patch and is
+    // readable straight out of the loaded module's header — no filesystem
+    // path needed, works through the existing AK handle. Comparing it to
+    // the stamp recorded beside the pinned seed turns patch day from
+    // "discover by a full wasted fast sweep" into "detect on attach and
+    // go straight to the structural scan".
+    private int  _stampCheckedPid;  // PID the stamp was read for (re-check on re-attach)
+    private uint _liveGameStamp;    // current exe's TimeDateStamp (0 = unknown)
+
+    private uint ReadGameTimeDateStamp()
+    {
+        // Module base is fixed at 0x00400000 (DD1 ships non-ASLR; every
+        // recorded seed in DD1_INTERNALS.md §6 assumes it).
+        byte[]? dos = AKRead(0x00400000, 0x40);
+        if (dos == null || dos.Length < 0x40) return 0;
+        if (dos[0] != (byte)'M' || dos[1] != (byte)'Z') return 0;
+        int e_lfanew = BitConverter.ToInt32(dos, 0x3C);
+        if (e_lfanew <= 0 || e_lfanew > 0x10000) return 0;
+        byte[]? pe = AKRead(0x00400000 + e_lfanew, 12);
+        if (pe == null || pe.Length < 12) return 0;
+        if (BitConverter.ToUInt32(pe, 0) != 0x00004550u) return 0; // "PE\0\0"
+        return BitConverter.ToUInt32(pe, 8); // IMAGE_FILE_HEADER.TimeDateStamp
+    }
+
+    // Once per attach: read the live build stamp and, if it differs from
+    // the one recorded with the pinned seed, presume the seed stale and
+    // drop it so FindWorldInfoViaPawnScan skips the doomed fast sweep.
+    // Fail-safe: an unreadable header (returns 0) changes nothing and is
+    // retried on the next call; with no recorded stamp (fresh install /
+    // pre-stamp overrides.json) behavior is identical to before.
+    private void EnsureGameBuildStampChecked()
+    {
+        if (GetAKHandle() == IntPtr.Zero) return;
+        if (_stampCheckedPid == _akTargetPid) return;
+        uint live = ReadGameTimeDateStamp();
+        if (live == 0) return;
+        _stampCheckedPid = _akTargetPid;
+        _liveGameStamp = live;
+        uint recorded = Tunables.GameTimeDateStamp;
+        if (recorded != 0 && recorded != live && _pawnVtable != 0)
+        {
+            Base.Log($"GameBuildStamp: exe TimeDateStamp 0x{recorded:X8} -> 0x{live:X8} (game updated); " +
+                     $"dropping seed 0x{_pawnVtable:X8}, structural scan will re-derive");
+            _pawnVtable = 0;
+        }
+    }
+
     private byte[]? AKRead(int addr, int size)
     {
         IntPtr h = GetAKHandle();
@@ -1547,6 +1792,25 @@ public partial class MainWindow : Window
         if (++_akFailCount >= 5)
             ResetAutoKillHandle();
         return null;
+    }
+
+    // Probe read for the structural sweep: identical to AKRead but does
+    // NOT touch the stale-handle fail counter. The sweep probes
+    // garbage-pointer candidates BY DESIGN (vtable probes, noise
+    // "PawnList heads"), so failed reads are expected in streaks — five
+    // in a row used to trip AKRead's detector, which CLOSED the shared
+    // handle mid-sweep. Later AKReads silently recovered (GetAKHandle
+    // reopens), but the sweep's VirtualQueryEx loop still held the closed
+    // handle, so the region walk died early (the truncated
+    // regions=200/309 ScanDiag sweeps) — calibration then failed
+    // intermittently depending on heap noise. Failure here is data, not
+    // a handle-health signal.
+    private byte[]? AKReadProbe(int addr, int size)
+    {
+        IntPtr h = GetAKHandle();
+        if (h == IntPtr.Zero) return null;
+        byte[] buf = new byte[size];
+        return (RPM(h, (IntPtr)addr, buf, size, out int read) && read > 0) ? buf : null;
     }
 
     private void AKWrite(int addr, int value)
@@ -1574,6 +1838,11 @@ public partial class MainWindow : Window
 
     private int FindWorldInfoViaPawnScan()
     {
+        // Patch-day shortcut: if the exe's build stamp no longer matches
+        // the one recorded with the pinned seed, this zeroes _pawnVtable
+        // so we skip a full fast sweep that cannot hit.
+        EnsureGameBuildStampChecked();
+
         // Fast path: try the cached vtable. Hits on every non-patched run.
         if (_pawnVtable != 0)
         {
@@ -1679,25 +1948,61 @@ public partial class MainWindow : Window
         IntPtr hProc = GetAKHandle();
         if (hProc == IntPtr.Zero) return 0;
 
+        // Liveness check before committing to the sweep: the sweep uses
+        // probe reads (no stale-handle detection by design — see
+        // AKReadProbe), so a genuinely dead handle must be caught HERE.
+        // The exe's MZ header at the fixed non-ASLR base is always
+        // readable through a live handle.
+        if (AKReadProbe(0x00400000, 4) == null)
+        {
+            ResetAutoKillHandle();
+            hProc = GetAKHandle();
+            if (hProc == IntPtr.Zero || AKReadProbe(0x00400000, 4) == null) return 0;
+        }
+
         bool fast = matchVtable != 0;
         byte b0 = (byte)(matchVtable & 0xFF);
         byte b1 = (byte)((matchVtable >> 8) & 0xFF);
         byte b2 = (byte)((matchVtable >> 16) & 0xFF);
         byte b3 = (byte)((matchVtable >> 24) & 0xFF);
 
+        // Scan diagnostics (debug builds only — Base.Log is
+        // [Conditional("DEBUG")]). Keep: the ScanDiag OK/FAIL counters are
+        // how the 2026-06-11 tavern-NPC rejection bug was found, and a
+        // failed structural scan is otherwise undiagnosable. The PawnList
+        // walk is cached per WI so candidates sharing the real WorldInfo
+        // cost one walk, not one each.
+        int _dbgRegions = 0, _dbgPrefilter = 0, _dbgWiOk = 0;
+        var wiPawnCache = new Dictionary<int, HashSet<int>?>();
+
         long address = 0;
         // DD1 is LARGEADDRESSAWARE on WOW64, so committed allocations can
         // sit up to ~0xFFFE0000. The older 0x7FFFFFFF ceiling silently cut
         // the scan in half for maps whose WorldInfo spilled into the
         // upper 2 GB.
+        //
+        // x86 HIGH-HALF SIGN-EXTENSION (fixed 2026-06-11): this binary is
+        // compiled x86, so IntPtr is 32-bit and `mbi.BaseAddress.ToInt64()`
+        // / `mbi.RegionSize.ToInt64()` SIGN-EXTEND any value with the top
+        // bit set — a region at 0x80000000 comes back as the negative long
+        // 0xFFFFFFFF80000000. That made `baseAddr >= 0x02000000` false for
+        // EVERY region in the upper 2 GB, so the scan silently skipped the
+        // whole high half. When the player pawn's heap landed above 2 GB
+        // (LARGEADDRESSAWARE — common) it sat in a skipped region → not
+        // found → "no character" (intermittent, heap-address dependent; a
+        // <2 GB heap worked). Mask both values to their low 32 bits so the
+        // address space is treated as the flat unsigned [0, 0xFFFFFFFF] it
+        // actually is. (The earlier "(IntPtr)long throws" theory was wrong
+        // — .NET 8 truncates — but building the IntPtr from the int is kept
+        // for clarity.)
         while (address < 0xFFFE0000L)
         {
             MEMORY_BASIC_INFORMATION mbi;
-            int result = VirtualQueryEx(hProc, (IntPtr)address, out mbi, Marshal.SizeOf<MEMORY_BASIC_INFORMATION>());
+            int result = VirtualQueryEx(hProc, (IntPtr)unchecked((int)address), out mbi, Marshal.SizeOf<MEMORY_BASIC_INFORMATION>());
             if (result == 0) break;
 
-            long baseAddr = mbi.BaseAddress.ToInt64();
-            long regionSize = mbi.RegionSize.ToInt64();
+            long baseAddr = mbi.BaseAddress.ToInt64() & 0xFFFFFFFFL;
+            long regionSize = mbi.RegionSize.ToInt64() & 0xFFFFFFFFL;
             if (regionSize <= 0) { address += 0x1000; continue; }
 
             // Only scan committed, readable memory
@@ -1705,9 +2010,10 @@ public partial class MainWindow : Window
 
             if (readable && regionSize > 0x32C && regionSize < 50_000_000 && baseAddr >= 0x02000000)
             {
-                byte[]? chunk = AKRead((int)baseAddr, (int)regionSize);
+                byte[]? chunk = AKReadProbe((int)baseAddr, (int)regionSize);
                 if (chunk != null && chunk.Length >= 0x32C)
                 {
+                    _dbgRegions++;
                     for (int i = 0; i + 0x32C < chunk.Length; i += 4)
                     {
                         if (fast)
@@ -1759,14 +2065,17 @@ public partial class MainWindow : Window
                         // 3. If NextPawn (+0x0230) is non-null, walk it
                         //    one step and require the entry to also
                         //    look pawn-shaped with the same WI backref.
-                        //    A real pawn list has at least the player
-                        //    pawn + monsters; chain length 1 (next=0)
-                        //    is plausible only for empty maps and we
-                        //    fall back to the first two checks alone.
+                        //    If NextPawn IS null (single-pawn chain:
+                        //    mission build phase with no enemies yet,
+                        //    or an empty tavern), require a verified
+                        //    PRI instead — only a possessed player
+                        //    pawn has one, which is a stronger signal
+                        //    than a second pawn.
                         //
                         // Fast path skips this — the literal vtable
                         // match already proves the candidate is a real
                         // instance of the cached APawn class.
+                        if (!fast) _dbgPrefilter++;
                         if (!fast)
                         {
                             // Probe candidate vtable: must be committed
@@ -1776,7 +2085,7 @@ public partial class MainWindow : Window
                             // unmapped first MB of address space and
                             // fail the read.
                             uint vt = BitConverter.ToUInt32(chunk, i);
-                            byte[]? vtProbe = AKRead((int)vt, 4);
+                            byte[]? vtProbe = AKReadProbe((int)vt, 4);
                             if (vtProbe == null || vtProbe.Length < 4) continue;
 
                             // UObject::Class pointer must be a real,
@@ -1786,30 +2095,95 @@ public partial class MainWindow : Window
                             if ((kls & 3u) != 0u) continue;
                             if (kls < 0x02000000u || kls >= 0xFFFE0000u) continue;
 
-                            // NextPawn must be non-null and walk one
-                            // step to a pawn-shaped object with the
-                            // same WI backref. Populated maps always
-                            // have ≥2 pawns (player + monsters), so
-                            // dropping the next=0 free pass is safe and
-                            // it kills false positives whose entire
-                            // structure is incidental noise.
-                            int next = BitConverter.ToInt32(chunk, i + 0x0230);
-                            if ((unchecked((uint)next) & 3u) != 0u) continue;
-                            if (!IsHeapPtr(next)) continue;
-                            byte[]? nd = AKRead(next, 0x32C);
-                            if (nd == null || nd.Length < 0x32C) continue;
-                            uint nvt = BitConverter.ToUInt32(nd, 0);
-                            if ((nvt & 3u) != 0u) continue;
-                            if (nvt < 0x00400000u || nvt >= 0x02000000u) continue;
-                            int nh = BitConverter.ToInt32(nd, 0x0324);
-                            int nhm = BitConverter.ToInt32(nd, 0x0328);
-                            if (nhm <= 0 || nhm > AK_MAX_PLAUSIBLE_HP || nh < 0 || nh > nhm) continue;
-                            int nwi = BitConverter.ToInt32(nd, 0x0110);
-                            if (nwi != wi) continue;
+                            // ── Real-pawn confirmation: validate the WORLD,
+                            //    not the neighbour (rewritten 2026-06-11).
+                            //
+                            // The previous split rejected the player pawn in
+                            // a populated tavern. It branched on NextPawn:
+                            // a lone pawn (NextPawn==0) was accepted via PRI
+                            // + "PawnList head == me", a pawn with a
+                            // neighbour (NextPawn!=0) by walking one step and
+                            // requiring a HEALTHY enemy there. In the tavern
+                            // the player's NextPawn points at a shop/NPC pawn
+                            // with MaxHealth==0, so the neighbour walk failed
+                            // and the player was rejected — debug-log proven
+                            // (14,605 such candidates, every one rejected,
+                            // "no character found"). It only ever worked when
+                            // the player happened to be the sole/last pawn.
+                            //
+                            // Robust replacement, independent of neighbours
+                            // and NPC health: (a) the backref WI must look
+                            // like a real WorldInfo (plausible TimeDilation,
+                            // heap Game pointer), and (b) this candidate must
+                            // be REACHABLE by walking that WI's PawnList —
+                            // true whether the player is head, mid-list, or
+                            // tail. The list walk is cached per WI, so the
+                            // many candidates sharing the real WorldInfo cost
+                            // one walk, not one each.
+                            int candAddr = (int)(baseAddr + i);
+                            if (!wiPawnCache.TryGetValue(wi, out HashSet<int>? pawnSet))
+                            {
+                                // First candidate for this WI: validate it once
+                                // (plausible TimeDilation + heap Game pointer),
+                                // walk its PawnList once, cache the verdict
+                                // (null = validated bad / unwalkable). The old
+                                // shape re-read+revalidated the 0x430 block for
+                                // EVERY candidate — ~14k redundant 1KB reads
+                                // per sweep, since all real candidates share
+                                // one WorldInfo.
+                                //
+                                // TimeDilation bounds cover the tool's OWN
+                                // speed feature (clamped 0.05–15): the old
+                                // (0.05, 10.0) gate rejected the REAL WorldInfo
+                                // whenever the user ran 10–15x game speed,
+                                // breaking every structural scan and CALIBRATE
+                                // until speed was reset.
+                                HashSet<int>? walked = null;
+                                byte[]? wiB = AKReadProbe(wi, 0x430);
+                                if (wiB != null && wiB.Length >= 0x430)
+                                {
+                                    float td = BitConverter.ToSingle(wiB, 0x374);
+                                    bool gameOk = IsHeapPtr(BitConverter.ToInt32(wiB, 0x3FC));
+                                    if (td > 0.04f && td < 15.5f && gameOk) // Game ptr
+                                    {
+                                        _dbgWiOk++;
+                                        walked = WalkPawnList(wiB);
+                                    }
+                                    // Debug-only per-WI verdict: which gate
+                                    // rejected it, or how many pawns its list
+                                    // walk reached. This is the line that
+                                    // diagnosed the 2026-06-11 truncated-sweep
+                                    // bug ("wiOk>0 but every candidate
+                                    // rejected"). Capped per sweep — a noisy
+                                    // heap can yield thousands of distinct WI
+                                    // candidates (~1 MB of log per sweep
+                                    // uncapped).
+                                    if (wiPawnCache.Count <= 200)
+                                        Base.Log($"ScanDiag: WI 0x{wi:X8} td={td:0.####} gameOk={gameOk} " +
+                                                 $"head=0x{BitConverter.ToInt32(wiB, 0x41C):X8} pawnsWalked={(walked?.Count.ToString() ?? "-")}");
+                                }
+                                pawnSet = walked;
+                                wiPawnCache[wi] = pawnSet;
+                            }
+                            if (pawnSet == null || !pawnSet.Contains(candAddr)) continue;
                         }
 
+                        // Teach the session seed from the first structural
+                        // match so this scan's WorldInfo resolution and the
+                        // immediate next ticks fast-path. Do NOT persist it
+                        // here: the first structural match scanning memory
+                        // low->high is frequently a transient ENEMY pawn.
+                        // Persisting that bricks the next launch's fast path
+                        // (enemy unloads -> no match -> WorldInfo goes stale
+                        // -> IsInGameplayLevel() auto-disables Auto-Kill).
+                        // The durable pin is taken in AutoKillTick from the
+                        // verified local player pawn only.
                         if (!fast)
+                        {
                             _pawnVtable = BitConverter.ToUInt32(chunk, i);
+                            Base.Log($"ScanDiag: OK wi=0x{wi:X8} pawn=0x{(uint)(baseAddr + i):X8} " +
+                                     $"vtable=0x{_pawnVtable:X8} regions={_dbgRegions} prefilter={_dbgPrefilter} wiOk={_dbgWiOk}");
+                        }
                         _diagSeedPawnAddr = (int)(baseAddr + i);
                         _diagWeakMatch = false;
                         return wi;
@@ -1820,7 +2194,35 @@ public partial class MainWindow : Window
             address = baseAddr + regionSize;
             if (address <= baseAddr) address += 0x1000;
         }
+        if (!fast)
+            Base.Log($"ScanDiag: FAIL regions={_dbgRegions} prefilter={_dbgPrefilter} " +
+                     $"wiOk={_dbgWiOk} maxHp={AK_MAX_PLAUSIBLE_HP}");
         return 0;
+    }
+
+    // Walks an AWorldInfo's PawnList into a set of pawn addresses (as the
+    // int bit-pattern, so high-half LAA pointers compare correctly). Used
+    // by the structural scan to confirm a candidate is a real, listed pawn
+    // — robust to where in the list it sits and to zero-health NPCs.
+    // PawnList head @ WorldInfo+0x41C; APawn.NextPawn @ +0x230.
+    private HashSet<int>? WalkPawnList(byte[] wiBlock)
+    {
+        int head = BitConverter.ToInt32(wiBlock, 0x41C);
+        if (!IsHeapPtr(head)) return null;
+        var set = new HashSet<int>();
+        int cur = head;
+        while (IsHeapPtr(cur) && set.Add(cur) && set.Count <= AK_CHAIN_MAX)
+        {
+            // Probe read: this is only called from the structural sweep,
+            // where "heads" are frequently noise — failures are expected
+            // and must not trip the stale-handle detector (see AKReadProbe).
+            byte[]? pd = AKReadProbe(cur, 0x234);
+            if (pd == null || pd.Length < 0x234) break;
+            int np = BitConverter.ToInt32(pd, 0x0230);
+            if (np == 0) break;
+            cur = np;
+        }
+        return set;
     }
 }
 

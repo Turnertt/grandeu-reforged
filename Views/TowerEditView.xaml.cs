@@ -15,7 +15,8 @@ public partial class TowerEditView : UserControl
     {
         InitializeComponent();
         Address = address;
-        TowerDisplayName = name;
+        TowerDisplayName = string.IsNullOrWhiteSpace(name) ? "Tower" : name;
+        StatusText.Text = Base.Truncate(TowerDisplayName);
         Loaded += OnLoaded;
     }
 
@@ -38,17 +39,19 @@ public partial class TowerEditView : UserControl
             TxtCurrentHP.Text = user.CurrentHP.ToString();
             TxtMaxHP.Text = user.MaxHP.ToString();
 
-            // Attack
-            TxtAttackDamage.Text = user.AttackDamage.ToString("G");
-            TxtAttackRate.Text = user.AttackRate.ToString("G");
-            TxtAttackRange.Text = user.AttackRange.ToString("G");
-            TxtAttackArc.Text = user.AttackArc.ToString("G");
+            // Attack — invariant culture so the value round-trips through
+            // FieldValidator (which parses invariant) on any OS locale.
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            TxtAttackDamage.Text = user.AttackDamage.ToString("G", inv);
+            TxtAttackRate.Text = user.AttackRate.ToString("G", inv);
+            TxtAttackRange.Text = user.AttackRange.ToString("G", inv);
+            TxtAttackArc.Text = user.AttackArc.ToString("G", inv);
 
             // Upgrades
-            TxtUpgradeLevel.Text = user.UpgradeLevel.ToString("G");
+            TxtUpgradeLevel.Text = user.UpgradeLevel.ToString("G", inv);
             TxtMaxUpgrades.Text = user.MaxUpgrades.ToString();
 
-            StatusText.Text = "Refreshed";
+            StatusText.Text = $"{Base.Truncate(TowerDisplayName)} — refreshed";
         }
         catch (Exception ex)
         {
@@ -96,7 +99,7 @@ public partial class TowerEditView : UserControl
             byte[] bytes = Base.Push(native);
             Base.Instance.WriteMemory(Address, bytes);
 
-            StatusText.Text = "Updated";
+            StatusText.Text = $"{Base.Truncate(TowerDisplayName)} — updated";
         }
         catch (Exception ex)
         {

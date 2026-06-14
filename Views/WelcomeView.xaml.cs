@@ -11,9 +11,9 @@ namespace Modinator.Views;
 public partial class WelcomeView : UserControl
 {
     // Latest DD1 Steam build this app was verified working on. DD1 patches
-    // ~weekly; bump this single string after a clean `sync_offsets.py`
-    // health check (see CLAUDE.md "Offset verification").
-    private const string CompatibleDdVersion = "10.6.14";
+    // ~weekly; bump this single string after the user confirms a clean
+    // in-game pass (scans + calibrate + toggles) on the new build.
+    private const string CompatibleDdVersion = "10.6.23";
 
     private DispatcherTimer? _statusTimer;
 
@@ -69,5 +69,17 @@ public partial class WelcomeView : UserControl
         string view = btn.Tag?.ToString() ?? "";
         if (Window.GetWindow(this) is MainWindow main)
             main.NavigateToView(view);
+    }
+
+    // Opens an external URL (GitHub) in the default browser. Best-effort:
+    // a missing/blocked browser must never crash the home view (matches
+    // the empty-catch convention used for other shell-out actions).
+    private void OpenLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn) return;
+        string url = btn.Tag?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try { Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true }); }
+        catch { }
     }
 }

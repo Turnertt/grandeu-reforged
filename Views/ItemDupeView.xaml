@@ -60,6 +60,7 @@
                             MinWidth="170"
                             Margin="8,0,0,0"
                             IsEnabled="False"
+                            ToolTip="Copy the source item's stats onto the target. The target's own stats are permanently replaced."
                             Click="BtnDupe_Click" />
                 </StackPanel>
 
@@ -116,107 +117,44 @@
                       Padding="24">
             <Grid MaxWidth="1120"
                   HorizontalAlignment="Center">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-
-                <Border Grid.Row="0"
-                        Style="{StaticResource DupePanel}"
-                        Padding="16,12"
-                        Margin="0,0,0,16">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Border Width="34" Height="34"
-                                    CornerRadius="6"
-                                    Background="{StaticResource SurfaceLightBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1">
-                                <TextBlock Text="&#xE8C8;"
-                                           FontFamily="Segoe MDL2 Assets"
-                                           FontSize="15"
-                                           Foreground="{StaticResource AccentBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Border>
-                            <TextBlock Text="Source"
-                                       Foreground="{StaticResource AccentBrush}"
-                                       FontSize="13"
-                                       FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="10,0,0,0" />
-                        </StackPanel>
-
-                        <Grid Grid.Column="1"
-                              Margin="22,0"
-                              VerticalAlignment="Center">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="44" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0"
-                                    Height="1"
-                                    Background="{StaticResource BorderBrush}"
-                                    Opacity="0.75"
-                                    VerticalAlignment="Center" />
-                            <Border Grid.Column="1"
-                                    Width="36"
-                                    Height="26"
-                                    CornerRadius="13"
-                                    Background="{StaticResource AccentSubtleBrush}"
-                                    BorderBrush="{StaticResource AccentBrush}"
-                                    BorderThickness="1"
-                                    HorizontalAlignment="Center">
-                                <TextBlock Text="&#xE72A;"
-                                           FontFamily="Segoe MDL2 Assets"
-                                           FontSize="13"
-                                           Foreground="{StaticResource AccentBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Border>
-                            <Border Grid.Column="2"
-                                    Height="1"
-                                    Background="{StaticResource BorderBrush}"
-                                    Opacity="0.75"
-                                    VerticalAlignment="Center" />
-                        </Grid>
-
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="Target"
-                                       Foreground="{StaticResource DangerBrush}"
-                                       FontSize="13"
-                                       FontWeight="Bold"
-                                       VerticalAlignment="Center"
-                                       Margin="0,0,10,0" />
-                            <Border Width="34" Height="34"
-                                    CornerRadius="6"
-                                    Background="{StaticResource SurfaceLightBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1">
-                                <TextBlock Text="&#xE74D;"
-                                           FontFamily="Segoe MDL2 Assets"
-                                           FontSize="15"
-                                           Foreground="{StaticResource DangerBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Border>
-                        </StackPanel>
-                    </Grid>
-                </Border>
-
-                <Grid Grid.Row="1">
+                <!-- Two cards with the copy-direction arrow living IN the
+                     gap between them (the old separate flow-header panel
+                     restated what the card headers already say). -->
+                <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" MinWidth="320" />
-                        <ColumnDefinition Width="18" />
+                        <ColumnDefinition Width="64" />
                         <ColumnDefinition Width="*" MinWidth="320" />
                     </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="1"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center">
+                        <Border Width="40" Height="40"
+                                CornerRadius="20"
+                                Background="{StaticResource AccentSubtleBrush}"
+                                BorderBrush="{StaticResource AccentBrush}"
+                                BorderThickness="1.5"
+                                ToolTip="The source is copied onto the target">
+                            <TextBlock Text="&#xE72A;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="16"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="COPIES"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="9"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,8,0,0" />
+                        <TextBlock Text="ONTO"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="9"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center" />
+                    </StackPanel>
 
                     <Border Grid.Column="0"
                             Style="{StaticResource DupePanel}"
@@ -252,7 +190,7 @@
                                             <TextBlock Text="SOURCE"
                                                        Style="{StaticResource PanelLabel}"
                                                        Foreground="{StaticResource AccentBrush}" />
-                                            <TextBlock Text="Copied from"
+                                            <TextBlock Text="The item to copy"
                                                        Foreground="{StaticResource TextMutedBrush}"
                                                        FontSize="11" />
                                         </StackPanel>
@@ -264,30 +202,66 @@
                                             Content="PICK SOURCE"
                                             Padding="14,7"
                                             Height="32"
+                                            ToolTip="Choose the item whose stats get copied. It is never modified."
                                             Click="BtnPickSource_Click" />
                                 </Grid>
                             </Border>
 
-                            <ScrollViewer Grid.Row="1"
-                                          VerticalScrollBarVisibility="Auto"
-                                          Padding="18,18,14,12">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtSrcName"
-                                               Style="{StaticResource ItemNameText}"
-                                               Text="No source selected" />
-                                    <TextBlock x:Name="TxtSrcMeta"
+                            <Grid Grid.Row="1">
+                                <!-- Empty state: shown until a source is picked -->
+                                <StackPanel x:Name="SrcEmpty"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Center"
+                                            Margin="24">
+                                    <Grid HorizontalAlignment="Center" Margin="0,0,0,14">
+                                        <Border Width="56" Height="56"
+                                                CornerRadius="28"
+                                                Background="{StaticResource SurfaceLightBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1" />
+                                        <TextBlock Text="&#xE8C8;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="22"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                    <TextBlock Text="No source selected"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
                                                Foreground="{StaticResource TextSecondaryBrush}"
-                                               FontSize="12"
-                                               Margin="0,7,0,0"
-                                               TextWrapping="Wrap" />
-                                    <TextBlock x:Name="TxtSrcAddr"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="Pick the item whose stats you want to duplicate."
+                                               FontSize="11.5"
                                                Foreground="{StaticResource TextMutedBrush}"
-                                               FontFamily="Consolas"
-                                               FontSize="11"
-                                               Margin="0,6,0,0" />
-                                    <StackPanel x:Name="SrcStats" Margin="0,14,0,0" />
+                                               HorizontalAlignment="Center"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="230"
+                                               Margin="0,5,0,0" />
                                 </StackPanel>
-                            </ScrollViewer>
+
+                                <ScrollViewer x:Name="SrcBody"
+                                              Visibility="Collapsed"
+                                              VerticalScrollBarVisibility="Auto"
+                                              Padding="18,18,14,12">
+                                    <StackPanel>
+                                        <TextBlock x:Name="TxtSrcName"
+                                                   Style="{StaticResource ItemNameText}" />
+                                        <TextBlock x:Name="TxtSrcMeta"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   FontSize="12"
+                                                   Margin="0,7,0,0"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="TxtSrcAddr"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Margin="0,6,0,0" />
+                                        <StackPanel x:Name="SrcStats" Margin="0,14,0,0" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
 
                             <Border Grid.Row="2"
                                     Background="{StaticResource BackgroundBrush}"
@@ -295,7 +269,7 @@
                                     BorderThickness="0,1,0,0"
                                     CornerRadius="0,0,8,8"
                                     Padding="14,10">
-                                <TextBlock Text="Source is unchanged"
+                                <TextBlock Text="Never modified"
                                            Foreground="{StaticResource TextMutedBrush}"
                                            FontSize="11"
                                            HorizontalAlignment="Center" />
@@ -337,7 +311,7 @@
                                             <TextBlock Text="TARGET"
                                                        Style="{StaticResource PanelLabel}"
                                                        Foreground="{StaticResource DangerBrush}" />
-                                            <TextBlock Text="Overwritten"
+                                            <TextBlock Text="Becomes the copy"
                                                        Foreground="{StaticResource TextMutedBrush}"
                                                        FontSize="11" />
                                         </StackPanel>
@@ -349,30 +323,66 @@
                                             Content="PICK TARGET"
                                             Padding="14,7"
                                             Height="32"
+                                            ToolTip="Choose the item that becomes the copy. Its own stats are lost."
                                             Click="BtnPickSacrificial_Click" />
                                 </Grid>
                             </Border>
 
-                            <ScrollViewer Grid.Row="1"
-                                          VerticalScrollBarVisibility="Auto"
-                                          Padding="18,18,14,12">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtSacName"
-                                               Style="{StaticResource ItemNameText}"
-                                               Text="No target selected" />
-                                    <TextBlock x:Name="TxtSacMeta"
+                            <Grid Grid.Row="1">
+                                <!-- Empty state: shown until a target is picked -->
+                                <StackPanel x:Name="SacEmpty"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Center"
+                                            Margin="24">
+                                    <Grid HorizontalAlignment="Center" Margin="0,0,0,14">
+                                        <Border Width="56" Height="56"
+                                                CornerRadius="28"
+                                                Background="{StaticResource SurfaceLightBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1" />
+                                        <TextBlock Text="&#xE74D;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="22"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                    <TextBlock Text="No target selected"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
                                                Foreground="{StaticResource TextSecondaryBrush}"
-                                               FontSize="12"
-                                               Margin="0,7,0,0"
-                                               TextWrapping="Wrap" />
-                                    <TextBlock x:Name="TxtSacAddr"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="Pick a throwaway item — it will be permanently overwritten."
+                                               FontSize="11.5"
                                                Foreground="{StaticResource TextMutedBrush}"
-                                               FontFamily="Consolas"
-                                               FontSize="11"
-                                               Margin="0,6,0,0" />
-                                    <StackPanel x:Name="SacStats" Margin="0,14,0,0" />
+                                               HorizontalAlignment="Center"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="230"
+                                               Margin="0,5,0,0" />
                                 </StackPanel>
-                            </ScrollViewer>
+
+                                <ScrollViewer x:Name="SacBody"
+                                              Visibility="Collapsed"
+                                              VerticalScrollBarVisibility="Auto"
+                                              Padding="18,18,14,12">
+                                    <StackPanel>
+                                        <TextBlock x:Name="TxtSacName"
+                                                   Style="{StaticResource ItemNameText}" />
+                                        <TextBlock x:Name="TxtSacMeta"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   FontSize="12"
+                                                   Margin="0,7,0,0"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="TxtSacAddr"
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Margin="0,6,0,0" />
+                                        <StackPanel x:Name="SacStats" Margin="0,14,0,0" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
 
                             <Border Grid.Row="2"
                                     Background="{StaticResource BackgroundBrush}"
@@ -380,7 +390,7 @@
                                     BorderThickness="0,1,0,0"
                                     CornerRadius="0,0,8,8"
                                     Padding="14,10">
-                                <TextBlock Text="Target is replaced"
+                                <TextBlock Text="Permanently overwritten"
                                            Foreground="{StaticResource DangerBrush}"
                                            FontSize="11"
                                            FontWeight="SemiBold"

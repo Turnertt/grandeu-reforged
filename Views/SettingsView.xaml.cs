@@ -30,9 +30,70 @@ public partial class SettingsView : UserControl
         {
             SwAlwaysOnTop.IsChecked = main.Topmost;
             SwAutoKill.IsChecked = main.AutoKillEnabled;
+            SwUnlimitedMana.IsChecked = main.UnlimitedManaEnabled;
+            SwMaxTowerUnits.IsChecked = main.MaxTowerUnitsEnabled;
             RefreshHotkeyLabels(main);
         }
+        TxtOverrideStatus.Text = Tunables.Status;
+        TxtOverridePath.Text = Tunables.FilePath;
+        RefreshDiagnostics();
         _suppressHandlers = false;
+    }
+
+    // ── Diagnostics card ────────────────────────────────────────────
+    // Read-only snapshot of the state that is otherwise invisible in a
+    // Release build (no log file): attach, session seed, build stamps.
+    // No scans, no game writes — only cached values + one cheap process
+    // lookup on demand.
+    private void RefreshDiagnostics()
+    {
+        TxtDiagVersion.Text =
+            typeof(SettingsView).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+
+        try
+        {
+            var procs = System.Diagnostics.Process.GetProcessesByName("DunDefGame");
+            if (procs.Length > 0)
+            {
+                bool? is32 = GameChain.GameIs32Bit();
+                string bits = is32 == true ? "32-bit"
+                            : is32 == false ? "64-BIT — UNSUPPORTED (use the 32-bit build)"
+                            : "bitness unknown";
+                TxtDiagGame.Text = $"running (PID {procs[0].Id}, {bits})";
+            }
+            else
+            {
+                TxtDiagGame.Text = "not running";
+            }
+            foreach (var p in procs) { try { p.Dispose(); } catch { } }
+        }
+        catch { TxtDiagGame.Text = "unknown"; }
+
+        if (Window.GetWindow(this) is MainWindow main)
+        {
+            TxtDiagSeed.Text = main.CurrentPawnVtable != 0
+                ? $"0x{main.CurrentPawnVtable:X8}"
+                : "not learned yet — happens automatically on the next scan";
+
+            uint recorded = Tunables.GameTimeDateStamp;
+            uint live = main.LiveGameStamp;
+            string rec = recorded != 0 ? $"0x{recorded:X8}" : "none yet";
+            string lv = live != 0 ? $"0x{live:X8}" : "not read yet";
+            string verdict = recorded != 0 && live != 0
+                ? (recorded == live ? "  (match)" : "  (game updated — will re-learn automatically)")
+                : "";
+            TxtDiagStamp.Text = $"saved {rec}  ·  game {lv}{verdict}";
+        }
+    }
+
+    private void BtnDiagRefresh_Click(object sender, RoutedEventArgs e) => RefreshDiagnostics();
+
+    private void BtnCalibrate_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is not MainWindow main) return;
+        var dlg = new CalibrationDialog(main) { Owner = main };
+        dlg.ShowDialog();
+        SyncFromState(); // pick up the new pin/status in the panels
     }
 
     // ── Hotkey buttons ──────────────────────────────────────────────
@@ -144,9 +205,61 @@ public partial class SettingsView : UserControl
             main.SetAutoKillEnabled(SwAutoKill.IsChecked == true);
     }
 
+    private void SwUnlimitedMana_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressHandlers) return;
+        if (Window.GetWindow(this) is MainWindow main)
+            main.SetUnlimitedMana(SwUnlimitedMana.IsChecked == true);
+    }
+
+    private void SwMaxTowerUnits_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressHandlers) return;
+        if (Window.GetWindow(this) is MainWindow main)
+            main.SetMaxTowerUnits(SwMaxTowerUnits.IsChecked == true);
+    }
+
     private void BtnMoreOptions_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is MainWindow main)
             main.ShowMoreOptionsDialog();
+    }
+
+    // ── Memory overrides ────────────────────────────────────────────
+    // Re-read the optional file and refresh the displayed status. This
+    // validates "does the file parse / what would it apply" — the live
+    // session keeps its current values (the override is read at startup;
+    // edits take effect on next launch, per the panel description).
+    private void BtnOverrideReload_Click(object sender, RoutedEventArgs e)
+    {
+        Tunables.Reload();
+        SyncFromState();
+    }
+
+    // Write a template populated from the current effective values, so
+    // the file is never hand-authored from a generic example.
+    private void BtnOverrideTemplate_Click(object sender, RoutedEventArgs e)
+    {
+        string? path = Tunables.WriteTemplate();
+        Tunables.Reload();
+        SyncFromState();
+        TxtOverrideStatus.Text = path != null
+            ? "Template written — " + Tunables.Status
+            : "Could not write template (check folder permissions).";
+    }
+
+    private void BtnOverrideOpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string dir = System.IO.Path.GetDirectoryName(Tunables.FilePath)!;
+            System.IO.Directory.CreateDirectory(dir);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = dir,
+                UseShellExecute = true,
+            });
+        }
+        catch { /* opening Explorer is best-effort; never crash Settings */ }
     }
 }

@@ -10,16 +10,18 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 
 ## Features
 
-- **Forge Viewer** — browse your forge inventory and pick items to modify in seconds. Filter by **Source** (All / Forge / Hero) with real folder names.
+- **Forge Viewer** — browse your forge inventory and pick items to modify in seconds. Filter by **Source** (All / Forge / Hero) with real folder names, type, quality (including Ultimate 93 / + / ++), and sort.
+- **Hero Viewer** — your full hero deck on cards: stats, level/XP/mana, and equipped items. Double-click a hero or an item to jump straight into its editor.
 - **Max Stat** — one-click max out any item's stats. **Class-aware**: only applies the stats valid for that item and weapon family. Works with Bulk Edit on any mix of item types.
 - **Item Dupe** — copy an item's stats onto another item, using the game's own value set for the lowest crash risk.
-- **Bulk Edit** — modify up to 100 items at once.
+- **Bulk Edit** — modify many items at once; only the fields you change are written.
 - **Auto Kill** — flip a switch to instantly clear enemies from the map. Multiplayer-safe hero protection covers every hero class, including DLC heroes, Summoner pets, and Series EV turrets.
 - **Unlimited Mana / Max Tower Units** — in-level title-bar toggles.
 - **Game Speed Control** — accelerate the game to blast through levels.
 - **Hero Editor** — customize hero stats and appearance, including color.
 - **Item Editor** — full control over item stats, affixes, and properties, including a read-only weapon-class indicator.
-- **Modern UI** — clean dark theme, sidebar navigation, touch- and small-screen-friendly scrollbars.
+- **Zero-touch game-update recovery** — the tool learns the game's memory addresses from the live game, saves them, and re-learns them automatically after every DD1 patch. No tool update needed on patch day. A guided **CALIBRATE** wizard (Settings → Diagnostics) walks you through it if anything ever looks off.
+- **Modern UI** — clean dark theme, sidebar navigation, tooltips everywhere, keyboard-friendly (Enter scans, Escape closes dialogs), touch- and small-screen-friendly scrollbars.
 
 ## Build requirements
 
@@ -55,7 +57,7 @@ Output:
 bin\Release\net8.0-windows\win-x86\publish\GrandeuReforged.exe
 ```
 
-End-users need the **.NET 8 Desktop Runtime (x86)** installed (https://dotnet.microsoft.com/download/dotnet/8.0). The runtime is intentionally not bundled to keep the binary small (~820 KB).
+End-users need the **.NET 8 Desktop Runtime (x86)** installed (https://dotnet.microsoft.com/download/dotnet/8.0). The runtime is intentionally not bundled to keep the binary small (~760 KB).
 
 ### Build notes
 
@@ -72,9 +74,16 @@ Output: `bin\Release\net8.0-windows\win-arm64\publish\GrandeuReforged.exe`. End-
 
 ## Running the program
 
-1. Launch *Dungeon Defenders 1* first.
+1. Launch *Dungeon Defenders 1* first (the **32-bit** Steam build — the 64-bit build is not supported, and the tool will tell you if it detects one).
 2. Run `GrandeuReforged.exe`. Administrator privileges may be required so it can open a handle to the game process.
 3. Pick a tool from the left sidebar.
+
+## Troubleshooting
+
+- **"No character found" / scans find nothing** — get your hero into the Tavern (or any level) and rescan; menus and loading screens have nothing to find. The first scan after a game update takes a few seconds while the tool re-learns the game's addresses — that's normal.
+- **Still nothing** — run **Settings → Diagnostics → CALIBRATE**. It checks the game step by step (running? 32-bit? character visible? item box reachable?) and tells you exactly which link is broken.
+- **The forge is empty mid-mission** — the game's item box only exists in the Tavern; that's game behavior, not a bug.
+- **Auto-Kill turned itself off** — it auto-disables in the Tavern/lobby and on loading screens; flip it back on once you're in a mission.
 
 ## Why "Reforged"?
 
@@ -90,9 +99,11 @@ MainWindow.xaml(.cs)  Main window + sidebar + auto-kill memory loop
 Models/               Plain C# — game memory layout (no WPF dependency)
   Base.cs               Static facade over Scanner (events, options, helpers)
   Scanner.cs            Memory read/write/scan
+  GameChain.cs          Shared read-only walk of the game's manager pointer chain
+  Tunables.cs           Learned game addresses, auto-saved to %LOCALAPPDATA%\Modinator
   *Native.cs            [StructLayout] structs matching DD1 in-memory layout
   *User.cs / *Search.cs Friendlier projections + per-genus search params
-Views/                WPF user controls — search forms, edit forms, dialogs
+Views/                WPF user controls — search forms, viewers, edit forms, dialogs
 Themes/               WPF resource dictionaries (colors, control styles, frameless window chrome)
 Behaviors/            Small attached behaviors (numeric input, placeholder text)
 Assets/               app-icon + per-stat icons used in the editor

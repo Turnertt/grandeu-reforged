@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using static Modinator.Views.EditHelpers;
 
 namespace Modinator.Views;
 
@@ -72,13 +73,6 @@ public partial class HeroEditView : UserControl
             UpdateSwatch(Sw2, TxtColor2R, TxtColor2G, TxtColor2B);
             UpdateSwatch(Sw3, TxtColor3R, TxtColor3G, TxtColor3B);
         }
-    }
-
-    // Blank the text box and stuff the current value into the placeholder.
-    private static void SetHint(TextBox tb, string current)
-    {
-        tb.Text = "";
-        Behaviors.Placeholder.SetText(tb, current);
     }
 
     private void BtnRefresh_Click(object sender, RoutedEventArgs e) => ShowDetails();
@@ -160,12 +154,6 @@ public partial class HeroEditView : UserControl
         }
         catch { Base.RaiseMessage("Failed to write hero data.", "Error"); }
     }
-
-    // Return the parsed int value if the user typed something; otherwise keep
-    // the current value. Skipping v.Int means no spurious "field required"
-    // errors on fields the user left blank.
-    private static int IntOr(FieldValidator v, TextBox tb, string label, int fallback)
-        => string.IsNullOrWhiteSpace(tb.Text) ? fallback : v.Int(tb, label);
 
     private static LinearColor ParseColor(FieldValidator v, TextBox r, TextBox g, TextBox b, string label)
     {

@@ -1,4 +1,4 @@
-<UserControl x:Class="Modinator.Views.HeroSearchView"
+﻿<UserControl x:Class="Modinator.Views.HeroSearchView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:beh="clr-namespace:Modinator.Behaviors">
@@ -20,17 +20,19 @@
                     <Button x:Name="BtnFirstScan"
                             Content="FIRST SCAN"
                             Style="{StaticResource AccentButton}"
-                            Padding="16,7"
+                            Padding="16,7" Height="32"
+                            ToolTip="Search the game's memory for heroes matching the values below. (Enter works too.)"
                             Click="BtnFirstScan_Click" />
                     <Button x:Name="BtnNextScan"
                             Content="NEXT SCAN"
-                            Padding="16,7"
+                            Padding="16,7" Height="32"
                             Margin="8,0,0,0"
                             IsEnabled="False"
+                            ToolTip="Narrow the previous results: change a value in-game, enter the new value, scan again."
                             Click="BtnNextScan_Click" />
                     <Button x:Name="BtnNewScan"
                             Content="NEW SCAN"
-                            Padding="16,7"
+                            Padding="16,7" Height="32"
                             Margin="8,0,0,0"
                             ToolTip="Clear inputs and results to start a fresh scan."
                             Click="BtnNewScan_Click" />
@@ -78,9 +80,11 @@
             </Grid>
         </Border>
 
-        <!-- Scrollable form area -->
+        <!-- Scrollable form area. Enter in any input runs the scan
+             (Form_KeyDown — buttons swallow their own Enter first). -->
         <ScrollViewer VerticalScrollBarVisibility="Auto"
-                      Padding="20,16">
+                      Padding="20,16"
+                      KeyDown="Form_KeyDown">
             <StackPanel MaxWidth="560">
 
                 <!-- Hero Stats -->
@@ -212,3 +216,4 @@
         </ScrollViewer>
     </DockPanel>
 </UserControl>
+
