@@ -92,7 +92,7 @@
                            FontSize="10.5" FontWeight="Bold"
                            Margin="0,0,0,14" />
 
-                <!-- Row 1: three tiles -->
+                <!-- Row 1: the three primary tools -->
                 <Grid Margin="0,0,0,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -103,52 +103,6 @@
                     </Grid.ColumnDefinitions>
 
                     <Button Grid.Column="0" Style="{StaticResource TileButton}"
-                            Click="Tile_Click" Tag="ItemSearch">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
-                                <Border Width="40" Height="40" CornerRadius="10"
-                                        Background="{StaticResource AccentSubtleBrush}" />
-                                <TextBlock Text="&#xECAD;"
-                                           FontFamily="Segoe MDL2 Assets" FontSize="20"
-                                           Foreground="{StaticResource AccentBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Grid>
-                            <TextBlock Text="Items"
-                                       FontSize="16" FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       Margin="0,0,0,4" />
-                            <TextBlock Text="Scan for weapons, armor and accessories. Edit stats, forger, quality."
-                                       FontSize="12"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       TextWrapping="Wrap" LineHeight="17" />
-                        </StackPanel>
-                    </Button>
-
-                    <Button Grid.Column="2" Style="{StaticResource TileButton}"
-                            Click="Tile_Click" Tag="HeroSearch">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
-                                <Border Width="40" Height="40" CornerRadius="10"
-                                        Background="{StaticResource AccentSubtleBrush}" />
-                                <TextBlock Text="&#xE77B;"
-                                           FontFamily="Segoe MDL2 Assets" FontSize="20"
-                                           Foreground="{StaticResource AccentBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Grid>
-                            <TextBlock Text="Heroes"
-                                       FontSize="16" FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       Margin="0,0,0,4" />
-                            <TextBlock Text="Find hero structs to edit stats, level, colors and name."
-                                       FontSize="12"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       TextWrapping="Wrap" LineHeight="17" />
-                        </StackPanel>
-                    </Button>
-
-                    <Button Grid.Column="4" Style="{StaticResource TileButton}"
                             Click="Tile_Click" Tag="ForgeViewer">
                         <StackPanel>
                             <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
@@ -164,7 +118,53 @@
                                        FontSize="16" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextPrimaryBrush}"
                                        Margin="0,0,0,4" />
-                            <TextBlock Text="Browse every item in your forge by folder. Bulk-edit across a whole folder."
+                            <TextBlock Text="Browse every item in your forge by folder. Double-click to edit, or bulk-edit a whole folder."
+                                       FontSize="12"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       TextWrapping="Wrap" LineHeight="17" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Grid.Column="2" Style="{StaticResource TileButton}"
+                            Click="Tile_Click" Tag="HeroViewer">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
+                                <Border Width="40" Height="40" CornerRadius="10"
+                                        Background="{StaticResource AccentSubtleBrush}" />
+                                <TextBlock Text="&#xE77B;"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="Hero Viewer"
+                                       FontSize="16" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Margin="0,0,0,4" />
+                            <TextBlock Text="See your whole hero deck — stats, level, mana and equipped gear. Double-click to edit a hero or item."
+                                       FontSize="12"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       TextWrapping="Wrap" LineHeight="17" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Grid.Column="4" Style="{StaticResource TileButton}"
+                            Click="Tile_Click" Tag="ItemDupe">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
+                                <Border Width="40" Height="40" CornerRadius="10"
+                                        Background="{StaticResource AccentSubtleBrush}" />
+                                <TextBlock Text="&#xE8C8;"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="Item Dupe"
+                                       FontSize="16" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Margin="0,0,0,4" />
+                            <TextBlock Text="Copy one item's stats onto another. Pick a source and a target, then overwrite."
                                        FontSize="12"
                                        Foreground="{StaticResource TextSecondaryBrush}"
                                        TextWrapping="Wrap" LineHeight="17" />
@@ -172,43 +172,18 @@
                     </Button>
                 </Grid>
 
-                <!-- Row 2: misc tile + tip card + update tile (3 equal
-                     slots, mirrors Row 1. Location tile removed — tracked
-                     Location items still open via the sidebar results). -->
+                <!-- Row 2: tip card + update tile (half-width each). The
+                     Item / Hero / Misc memory-search tools now live under
+                     "Advanced" in the sidebar. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="12" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Button Grid.Column="0" Style="{StaticResource TileButton}"
-                            Click="Tile_Click" Tag="MiscSearch">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
-                                <Border Width="40" Height="40" CornerRadius="10"
-                                        Background="{StaticResource AccentSubtleBrush}" />
-                                <TextBlock Text="&#xE950;"
-                                           FontFamily="Segoe MDL2 Assets" FontSize="20"
-                                           Foreground="{StaticResource AccentBrush}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Grid>
-                            <TextBlock Text="Misc Values"
-                                       FontSize="16" FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       Margin="0,0,0,4" />
-                            <TextBlock Text="Search for any 4-byte int or float — mana, wave number, gold."
-                                       FontSize="12"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       TextWrapping="Wrap" LineHeight="17" />
-                        </StackPanel>
-                    </Button>
-
                     <!-- Onboarding tip card -->
-                    <Border Grid.Column="2"
+                    <Border Grid.Column="0"
                             Background="{StaticResource SurfaceBrush}"
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                             CornerRadius="10" Padding="22,20">
@@ -217,7 +192,7 @@
                                        Foreground="{StaticResource AccentBrush}"
                                        FontSize="10" FontWeight="Bold"
                                        Margin="0,0,0,10" />
-                            <TextBlock Text="Double-click a result to open its editor. Tracked items stay in the list below — freeze, rename, or edit them any time."
+                            <TextBlock Text="Need the raw memory-search tools (Item / Hero / Misc)? They're under &#x201C;Advanced&#x201D; in the sidebar. Double-click any result to open its editor."
                                        FontSize="12"
                                        Foreground="{StaticResource TextSecondaryBrush}"
                                        TextWrapping="Wrap" LineHeight="17" />
@@ -225,7 +200,7 @@
                     </Border>
 
                     <!-- Update tile -->
-                    <Button Grid.Column="4" Style="{StaticResource TileButton}"
+                    <Button Grid.Column="2" Style="{StaticResource TileButton}"
                             Click="OpenLink_Click"
                             Tag="https://github.com/Turnertt/grandeu-reforged"
                             ToolTip="Opens the GrandeuReforged GitHub page in your browser">

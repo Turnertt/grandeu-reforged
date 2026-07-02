@@ -50,40 +50,7 @@
                             </StackPanel>
                         </Button>
 
-                        <!-- ── Search ── -->
-                        <TextBlock Text="S E A R C H"
-                                   Style="{StaticResource SectionHeader}" />
-
-                        <Button x:Name="BtnSearchItem"
-                                Style="{StaticResource SidebarButton}"
-                                Click="NavButton_Click" Tag="ItemSearch">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xECAD;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                           VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
-                                <TextBlock Text="Item" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-
-                        <Button x:Name="BtnSearchHero"
-                                Style="{StaticResource SidebarButton}"
-                                Click="NavButton_Click" Tag="HeroSearch">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                           VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
-                                <TextBlock Text="Hero" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-
-                        <Button x:Name="BtnSearchMisc"
-                                Style="{StaticResource SidebarButton}"
-                                Click="NavButton_Click" Tag="MiscSearch">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE950;" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                           VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
-                                <TextBlock Text="Misc" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-
+                        <!-- ── Primary tools ── -->
                         <Button x:Name="BtnForgeViewer"
                                 Style="{StaticResource SidebarButton}"
                                 Click="NavButton_Click" Tag="ForgeViewer">
@@ -113,6 +80,56 @@
                                 <TextBlock Text="Item Dupe" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
+
+                        <!-- ── Advanced (raw memory-search tools — kept as a
+                             fallback, collapsed by default) ── -->
+                        <Button x:Name="BtnAdvancedToggle"
+                                Style="{StaticResource SidebarButton}"
+                                Click="BtnAdvanced_Click" Tag="Advanced">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE712;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                               VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
+                                    <TextBlock Text="Advanced" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock x:Name="AdvancedChevron" Text="&#xE70D;"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="10"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Opacity="0.55" />
+                            </Grid>
+                        </Button>
+
+                        <StackPanel x:Name="AdvancedPanel" Visibility="Collapsed">
+                            <Button x:Name="BtnSearchItem"
+                                    Style="{StaticResource SidebarButton}" Padding="34,9"
+                                    Click="NavButton_Click" Tag="ItemSearch">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xECAD;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                               VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.6" />
+                                    <TextBlock Text="Item Search" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="BtnSearchHero"
+                                    Style="{StaticResource SidebarButton}" Padding="34,9"
+                                    Click="NavButton_Click" Tag="HeroSearch">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                               VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.6" />
+                                    <TextBlock Text="Hero Search" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="BtnSearchMisc"
+                                    Style="{StaticResource SidebarButton}" Padding="34,9"
+                                    Click="NavButton_Click" Tag="MiscSearch">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE950;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                               VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.6" />
+                                    <TextBlock Text="Misc Search" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
 
                         <Button x:Name="BtnSettings"
                                 Style="{StaticResource SidebarButton}"

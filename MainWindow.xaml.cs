@@ -297,6 +297,18 @@ public partial class MainWindow : Window
 
     private void BtnHome_Click(object sender, RoutedEventArgs e) => ShowHome();
 
+    // Advanced section = the raw memory-search tools (Item/Hero/Misc),
+    // kept as a fallback but collapsed by default so they don't crowd the
+    // sidebar. Toggle button expands/collapses the sub-list.
+    private void BtnAdvanced_Click(object sender, RoutedEventArgs e)
+        => SetAdvancedExpanded(AdvancedPanel.Visibility != Visibility.Visible);
+
+    private void SetAdvancedExpanded(bool expanded)
+    {
+        AdvancedPanel.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        AdvancedChevron.Text = expanded ? "\uE70E" : "\uE70D"; // ChevronUp / ChevronDown
+    }
+
     // Called by sidebar buttons AND by WelcomeView tiles. `source` is the
     // sidebar button to highlight; null when the call came from a tile, in
     // which case we look up the matching sidebar button ourselves.
@@ -314,6 +326,11 @@ public partial class MainWindow : Window
             _ => null,
         };
         SetActiveNavButton(target);
+
+        // The search tools live in the collapsed Advanced section; expand
+        // it when one of them is opened so the active highlight is visible.
+        if (view is "ItemSearch" or "HeroSearch" or "MiscSearch")
+            SetAdvancedExpanded(true);
 
         // Location search view was removed — tracked Location items still
         // open their editor via double-click in the results list, which
