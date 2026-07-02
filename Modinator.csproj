@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <AssemblyName>GrandeuReforged</AssemblyName>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <!-- No localized WPF/app satellites are produced; pin to en so none are emitted/copied. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>

@@ -960,15 +960,21 @@ public partial class MainWindow : Window
     private DateTime _akLastValidated = DateTime.MinValue;
     private const int AK_TICK_MS = 100;               // how often the background loop runs
     private const int AK_VALIDATE_MS = 2000;          // how often we re-verify the cache
-    private const int AK_CHAIN_MAX = 300;             // hard cap on pawn chain walk
+    // Hard cap on the pawn chain walk (runaway-list guard, not a target
+    // budget). Was 300 — high-wave/modded content can field more live
+    // pawns than that, and everything past the cap was silently never
+    // killed. Walk cost is ~2 small reads per pawn, so 1000 is still
+    // trivially cheap per 100 ms tick.
+    private const int AK_CHAIN_MAX = 1000;
     // Sanity ceiling for "is this int plausibly an HP value, not pointer
-    // garbage". The original 4.0.0.4-era heuristics (5M structural / 10M
-    // validate) are far below modern DD1 HP — live dump 2026-05 showed
-    // Orc 10.27M, Ogre 23.5M, Spider 7.2M. Too-low caps made the pawn
-    // scan reject every beefy enemy and ValidateCachedWorldInfo evict the
-    // cache on the first Ogre → permanent "no enemies found".
-    // Sourced from Tunables so a future HP-cap drift is a one-line
-    // override-file edit, not a rebuild (default = 500M; see Tunables).
+    // garbage". Historically it kept getting outgrown by real content:
+    // 5M/10M (4.0.0.4 era) → 500M (2026-05: Ogre 23.5M) → and 500M in
+    // turn silently broke high-HP late-game/modded enemies at three
+    // gates (scan pre-filter, WI-validate head-pawn eviction, tail hero
+    // gate). Default is now int.MaxValue — effectively off; the scan's
+    // real noise rejection is the vtable/backref/loop-closure chain.
+    // Sourced from Tunables so it can still be hand-tuned down via the
+    // override file without a rebuild.
     // Property, NOT a static-readonly snapshot: Settings → GAME ADDRESSES →
     // RELOAD promises "apply it now", and MaxPlausibleHp is one of the two
     // values the panel tells users to hand-edit. A type-init snapshot
@@ -1039,7 +1045,12 @@ public partial class MainWindow : Window
 
         int hp = BitConverter.ToInt32(first, 0x0324);
         int hpMax = BitConverter.ToInt32(first, 0x0328);
-        if (hpMax < 1 || hpMax > AK_MAX_PLAUSIBLE_HP || hp < -1 || hp > hpMax) return false;
+        // The head pawn is the NEWEST spawn — it can legitimately be a
+        // zero-max prop/decoy pawn, so hpMax==0 must not evict the cache
+        // (a spurious eviction here costs a full re-scan EVERY tick while
+        // that pawn stays at the head). The vtable check above plus the
+        // hp ≤ hpMax shape is enough staleness signal.
+        if (hpMax < 0 || hpMax > AK_MAX_PLAUSIBLE_HP || hp < -1 || hp > hpMax) return false;
         return true;
     }
 
@@ -1327,6 +1338,21 @@ public partial class MainWindow : Window
                 bool killable = p.hp > 0 && p.hpMax > 0;
                 if (!killable)
                 {
+                    // hp ≤ 0 with hpMax == 1 is OUR half-finished kill from
+                    // an earlier tick: Health/MaxHealth landed but the pawn
+                    // is still in the list, so the LifeSpan write missed
+                    // (transient WPM failure) or was reset. Re-assert it
+                    // instead of abandoning the pawn as a permanent zombie —
+                    // this was a real "some enemies randomly never die"
+                    // mode: one dropped write made the pawn unkillable for
+                    // its whole life (hp reads 0 ⇒ skipped every later tick).
+                    if (p.hp <= 0 && p.hpMax == 1)
+                    {
+                        if (!LifeSpanTicking(p.addr))
+                            AKWrite(p.addr + OFF_ACTOR_LIFESPAN, unchecked((int)0x3D4CCCCD));
+                        killed++;
+                        continue;
+                    }
                     // Log once per unique (class, hp/hpMax shape) combo so
                     // we can see what's escaping the kill. Deduped by pawn
                     // address + class so a given spared enemy logs exactly
@@ -1390,9 +1416,13 @@ public partial class MainWindow : Window
             if (IsHeapPtr(ctrl))
             {
                 int maxMana = ReadU32(ctrl + OFF_PC_MAXMANAPOWER);
-                // Sanity: reject a garbage read (bad ptr) — real mana caps are
-                // small (≈2k); anything huge means the controller read missed.
-                if (maxMana > 0 && maxMana < 100_000_000)
+                // Sanity: real in-mission mana caps are small (≈2k), so 1M is
+                // 500× headroom while sitting BELOW the heap-pointer range
+                // (0x01000000 = 16.7M) — if a DD1 patch ever shifts the
+                // ADunDefPlayerController layout, this offset reads some other
+                // field (pointer/float/garbage) and the gate makes the write
+                // no-op instead of stomping an unknown field every tick.
+                if (maxMana > 0 && maxMana <= 1_000_000)
                     AKWrite(ctrl + OFF_PC_MANAPOWER, maxMana);
             }
         }
@@ -1407,8 +1437,19 @@ public partial class MainWindow : Window
             int gri = ReadU32(_cachedWorldInfo + OFF_WI_GRI);
             if (IsHeapPtr(gri))
             {
-                AKWrite(gri + OFF_GRI_MAXTOWERUNITS, MAX_TOWER_UNITS_VALUE);
-                AKWrite(gri + OFF_GRI_MAXTOWERUNITS + 4, 0);
+                // Sanity pre-read: only write when the slot currently holds a
+                // plausible DU budget — real maps cap ~260, our own pinned
+                // value and the Tunables ceiling are ≤1M, and 0 (a no-DU map)
+                // still passes so behavior there is unchanged. If a DD1 patch
+                // shifts the GRI layout this offset reads a float/pointer/
+                // garbage (> 1M or negative) and the 8-byte write is skipped
+                // instead of corrupting two unknown dwords every tick.
+                int curUnits = ReadU32(gri + OFF_GRI_MAXTOWERUNITS);
+                if (curUnits >= 0 && curUnits <= 1_000_000)
+                {
+                    AKWrite(gri + OFF_GRI_MAXTOWERUNITS, MAX_TOWER_UNITS_VALUE);
+                    AKWrite(gri + OFF_GRI_MAXTOWERUNITS + 4, 0);
+                }
             }
         }
 
@@ -1496,7 +1537,12 @@ public partial class MainWindow : Window
             else teamOther++;
 
             if (team != ENEMY_TARGETING_TEAM) continue;
-            AKWrite(actor + OFF_ACTOR_LIFESPAN, unchecked((int)0x3D4CCCCD));
+            // Guarded write: the old unconditional per-tick rewrite reset
+            // the countdown every 100 ms, and LifeSpan decrements in GAME
+            // time — below ~0.5× game speed it could never reach zero, so
+            // enemy towers became unkillable whenever slo-mo was active.
+            if (!LifeSpanTicking(actor))
+                AKWrite(actor + OFF_ACTOR_LIFESPAN, unchecked((int)0x3D4CCCCD));
             killed++;
         }
 
@@ -1508,6 +1554,18 @@ public partial class MainWindow : Window
     {
         byte[]? b = AKRead(addr, 4);
         return (b != null && b.Length >= 4) ? BitConverter.ToInt32(b, 0) : 0;
+    }
+
+    // True when the actor already carries an in-flight LifeSpan countdown
+    // from one of our earlier writes (0 < LifeSpan ≤ 0.05). LifeSpan
+    // decrements in GAME time, so rewriting it every real-time tick resets
+    // the countdown — at game speeds below ~0.5× (0.05 s game-time needed
+    // vs 0.1 s real-time ticks) it would never reach zero and the actor
+    // would never die. Never reset a ticking countdown.
+    private bool LifeSpanTicking(int addr)
+    {
+        float ls = BitConverter.Int32BitsToSingle(ReadU32(addr + OFF_ACTOR_LIFESPAN));
+        return ls > 0f && ls <= 0.05f;
     }
 
     // True when GRI reports a gameplay level is loaded (not lobby, not a

@@ -156,25 +156,44 @@ public partial class CalibrationDialog : Window
             // Base.OpenProcess can raise the choose-process/message dialogs,
             // which must not be constructed on a thread-pool (MTA) thread.
             Base.OpenProcess();
-            int forgeCount = await Task.Run(() =>
+            // Discover the forge-box offset from live memory (a DD1 patch
+            // moved ItemBoxEquipments 0x39C → 0x3A8) and pin it, so the
+            // Forge Viewer relocates the box without the user touching
+            // anything. Only a fingerprint-verified candidate (the
+            // ItemBoxEntries parallel array next door — see GameChain) is
+            // pinned; offset==0 means "couldn't positively locate it" —
+            // usually an empty box (the forge only populates in the Tavern),
+            // in which case ReadItemBox reports reachability at the current
+            // offset without saving anything.
+            (int count, int offset) forge = await Task.Run(() =>
             {
                 int pawn = _main.ResolvePlayerPawnAddress();
                 int heroMgr = GameChain.ResolveHeroManager(pawn);
-                if (heroMgr == 0) return -1;
-                return GameChain.ReadPtrArray(heroMgr + GameChain.OFF_HM_ITEMBOX).Count;
+                if (heroMgr == 0) return (-1, 0);
+                (int found, bool verified, int n) = GameChain.DiscoverItemBox(heroMgr);
+                if (verified)
+                {
+                    Tunables.PinItemBoxOffset(found);
+                    return (n, found);
+                }
+                return (GameChain.ReadItemBox(heroMgr).Count, 0);
             });
 
-            if (forgeCount < 0)
+            if (forge.count < 0)
                 AddResult(false, "Forge chain",
                     "Couldn't reach the item manager. Rescan from the Forge Viewer " +
                     "once you're in the Tavern; if it persists, the game may have " +
                     "changed in a way that needs a tool update.");
-            else if (forgeCount == 0)
+            else if (forge.offset != 0)
+                AddResult(true, "Forge chain",
+                    $"located at HeroManager +0x{forge.offset:X} — {forge.count} item{(forge.count == 1 ? "" : "s")} in the box; " +
+                    "offset pinned (re-derives automatically after a patch)");
+            else if (forge.count == 0)
                 AddResult(true, "Forge chain",
                     "reachable — item box reports 0 items (the forge box only exists " +
                     "in the Tavern; this is normal mid-mission)");
             else
-                AddResult(true, "Forge chain", $"reachable — {forgeCount} items in the box");
+                AddResult(true, "Forge chain", $"reachable — {forge.count} items in the box");
 
             ShowStep2();
         }

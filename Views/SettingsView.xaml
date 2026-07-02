@@ -342,6 +342,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="App version"
@@ -374,17 +375,25 @@
                                    Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
                                    FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,6" />
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Saved values"
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Game layout"
                                    Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
                                    Margin="0,0,0,6"
-                                   ToolTip="What the saved addresses file currently provides (see Game Addresses above)." />
-                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtOverrideStatus"
+                                   ToolTip="Where the tool currently finds the forge box, the hero lists and the item manager inside the game. 'learned' means a game update moved it and the tool relocated it automatically." />
+                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtDiagOffsets"
                                    Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
                                    FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,6" />
 
-                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Saved file"
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Saved values"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
+                                   Margin="0,0,0,6"
+                                   ToolTip="What the saved addresses file currently provides (see Game Addresses above)." />
+                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtOverrideStatus"
+                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
+                                   FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,6" />
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Saved file"
                                    Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" />
-                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtOverridePath"
+                        <TextBlock Grid.Row="6" Grid.Column="1" x:Name="TxtOverridePath"
                                    Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
                                    FontFamily="Consolas" TextWrapping="Wrap" />
                     </Grid>

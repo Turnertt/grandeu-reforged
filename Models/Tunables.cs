@@ -45,8 +45,31 @@ internal static class Tunables
     // Shipped-value history (no longer used; kept in DD1_INTERNALS.md §6):
     // 0x00FCD7D8 → 0x00FCC830 → 0x00FCD870 → 0x00FCE738.
     public const uint DefaultPawnVtableSeed = 0;
-    public const int  DefaultMaxPlausibleHp = 500_000_000;
+    // int.MaxValue = the HP plausibility cap is effectively OFF by default
+    // (2026-07-02). The 500M default it replaces silently broke Auto-Kill
+    // on high-HP content at three gates: the structural scan pre-filter
+    // rejected >cap pawns, ValidateCachedWorldInfo evicted the WorldInfo
+    // cache every tick while a >cap enemy sat at the pawn-list head
+    // (newest spawn), and the tail hero gate refused to learn. The scan's
+    // real noise rejection is the vtable/backref/loop-closure chain, not
+    // this cap; the override key remains for hand-tuning if ever needed.
+    public const int  DefaultMaxPlausibleHp = int.MaxValue;
     public const int  DefaultMaxTowerUnits  = 100_000;
+    // Forge-box (ItemBoxEquipments) offset off the HeroManager. Unlike the
+    // other struct offsets (which are physics and live in code), this one
+    // has moved on a DD1 patch (0x39C → 0x3A8, 2026-06), so it is treated
+    // like the vtable seed: compiled last-known-good default, discovered +
+    // pinned from live memory on a patch. Keep in sync with
+    // GameChain.OFF_HM_ITEMBOX.
+    public const int  DefaultItemBoxOffset  = 0x39C;
+    // The two other game-class links on the same chain, promoted to
+    // discovered + pinned defaults for the same reason (same insertion
+    // mechanism that moved the box): the LocalLoadedHeroes/ActiveHeroes
+    // pair base off the HeroManager (ActiveHeroes is always +0xC above),
+    // and the TheHeroManager hop off the ViewportClient. Keep in sync
+    // with GameChain.OFF_HM_LOCALHEROES / OFF_VIEWPORT_HEROMGR.
+    public const int  DefaultLocalHeroesOffset = 0x360;
+    public const int  DefaultHeroManagerOffset = 0xCFC;
 
     // Accepted ranges for an overridden value. Outside the range → the
     // key is ignored and the default stands (defensive: a typo'd HP cap
@@ -54,8 +77,18 @@ internal static class Tunables
     // allocator). The vtable seed has no static range — it is validated
     // structurally at runtime by the pawn scan instead.
     private const long MinPlausibleHp = 1_000_000;
-    private const long MaxPlausibleHpCeil = 2_000_000_000;
+    private const long MaxPlausibleHpCeil = int.MaxValue;
     private const long MaxTowerUnitsCeil = 1_000_000; // DD_ModMenu's ceiling
+    // The discovered offsets are small, 4-aligned struct offsets. A value
+    // outside its band (or misaligned) is a typo/garbage and is ignored,
+    // leaving the discovered-or-default value to stand. The HeroManager
+    // hop lives much deeper into its class (0xCFC), hence the wider band.
+    private const int  MinItemBoxOffset = 0x100;
+    private const int  MaxItemBoxOffset = 0x800;
+    private const int  MinLocalHeroesOffset = 0x100;
+    private const int  MaxLocalHeroesOffset = 0x800;
+    private const int  MinHeroManagerOffset = 0x400;
+    private const int  MaxHeroManagerOffset = 0x3000;
 
     private static readonly object _gate = new();
     private static bool _loaded;
@@ -64,6 +97,9 @@ internal static class Tunables
     private static uint _pawnVtableSeed = DefaultPawnVtableSeed;
     private static int  _maxPlausibleHp = DefaultMaxPlausibleHp;
     private static int  _maxTowerUnits  = DefaultMaxTowerUnits;
+    private static int  _itemBoxOffset  = DefaultItemBoxOffset;
+    private static int  _localHeroesOffset = DefaultLocalHeroesOffset;
+    private static int  _heroManagerOffset = DefaultHeroManagerOffset;
     // PE COFF TimeDateStamp of the DunDefGame.exe the pinned seed was
     // derived from (0 = never recorded). Bookkeeping, not an override:
     // lets the Auto-Kill path detect "the game updated since the pin"
@@ -77,6 +113,9 @@ internal static class Tunables
     public static uint PawnVtableSeed { get { EnsureLoaded(); return _pawnVtableSeed; } }
     public static int  MaxPlausibleHp { get { EnsureLoaded(); return _maxPlausibleHp; } }
     public static int  MaxTowerUnits  { get { EnsureLoaded(); return _maxTowerUnits;  } }
+    public static int  ItemBoxOffset  { get { EnsureLoaded(); return _itemBoxOffset;  } }
+    public static int  LocalHeroesOffset { get { EnsureLoaded(); return _localHeroesOffset; } }
+    public static int  HeroManagerOffset { get { EnsureLoaded(); return _heroManagerOffset; } }
 
     // Human-readable summary for the Settings panel.
     public static string Status { get { EnsureLoaded(); return _status; } }
@@ -111,6 +150,9 @@ internal static class Tunables
         public string? PawnVtableSeed    { get; set; }
         public long?   MaxPlausibleHp    { get; set; }
         public long?   MaxTowerUnits     { get; set; }
+        public string? ItemBoxOffset     { get; set; }
+        public string? LocalHeroesOffset { get; set; }
+        public string? HeroManagerOffset { get; set; }
         public string? GameTimeDateStamp { get; set; }
         public string? Note              { get; set; }
     }
@@ -122,6 +164,9 @@ internal static class Tunables
         uint vtable = DefaultPawnVtableSeed;
         int  maxHp  = DefaultMaxPlausibleHp;
         int  maxTu  = DefaultMaxTowerUnits;
+        int  itemBox = DefaultItemBoxOffset;
+        int  localHeroes = DefaultLocalHeroesOffset;
+        int  heroMgrOff  = DefaultHeroManagerOffset;
         uint stamp  = 0;
         var applied = new List<string>();
         string outcome;
@@ -168,6 +213,27 @@ internal static class Tunables
                         applied.Add($"MaxTowerUnits={tu:N0}");
                     }
 
+                    if (TryParseU32(f.ItemBoxOffset, out uint ib) &&
+                        IsValidItemBoxOffset((int)ib))
+                    {
+                        itemBox = (int)ib;
+                        applied.Add($"ItemBoxOffset=0x{itemBox:X}");
+                    }
+
+                    if (TryParseU32(f.LocalHeroesOffset, out uint lh) &&
+                        IsValidLocalHeroesOffset((int)lh))
+                    {
+                        localHeroes = (int)lh;
+                        applied.Add($"LocalHeroesOffset=0x{localHeroes:X}");
+                    }
+
+                    if (TryParseU32(f.HeroManagerOffset, out uint hmo) &&
+                        IsValidHeroManagerOffset((int)hmo))
+                    {
+                        heroMgrOff = (int)hmo;
+                        applied.Add($"HeroManagerOffset=0x{heroMgrOff:X}");
+                    }
+
                     // Bookkeeping only — deliberately NOT in `applied`
                     // (it is metadata about the pin, not an override).
                     TryParseU32(f.GameTimeDateStamp, out stamp);
@@ -185,6 +251,9 @@ internal static class Tunables
             vtable = DefaultPawnVtableSeed;
             maxHp  = DefaultMaxPlausibleHp;
             maxTu  = DefaultMaxTowerUnits;
+            itemBox = DefaultItemBoxOffset;
+            localHeroes = DefaultLocalHeroesOffset;
+            heroMgrOff  = DefaultHeroManagerOffset;
             stamp  = 0;
             outcome = "Saved file couldn't be read — it will be rebuilt automatically on the next scan";
         }
@@ -192,10 +261,24 @@ internal static class Tunables
         _pawnVtableSeed = vtable;
         _maxPlausibleHp = maxHp;
         _maxTowerUnits  = maxTu;
+        _itemBoxOffset  = itemBox;
+        _localHeroesOffset = localHeroes;
+        _heroManagerOffset = heroMgrOff;
         _gameStamp      = stamp;
         _status = outcome;
         Base.Log($"Tunables: {outcome} (file: {FilePath})");
     }
+
+    // Discovered offsets must be small, dword-aligned struct offsets
+    // inside their class-appropriate bands.
+    private static bool IsValidItemBoxOffset(int off)
+        => off >= MinItemBoxOffset && off <= MaxItemBoxOffset && (off & 3) == 0;
+
+    private static bool IsValidLocalHeroesOffset(int off)
+        => off >= MinLocalHeroesOffset && off <= MaxLocalHeroesOffset && (off & 3) == 0;
+
+    private static bool IsValidHeroManagerOffset(int off)
+        => off >= MinHeroManagerOffset && off <= MaxHeroManagerOffset && (off & 3) == 0;
 
     private static bool TryParseU32(string? s, out uint value)
     {
@@ -235,6 +318,9 @@ internal static class Tunables
                 PawnVtableSeed = $"0x{PawnVtableSeed:X8}",
                 MaxPlausibleHp = MaxPlausibleHp,
                 MaxTowerUnits  = MaxTowerUnits,
+                ItemBoxOffset  = $"0x{ItemBoxOffset:X}",
+                LocalHeroesOffset = $"0x{LocalHeroesOffset:X}",
+                HeroManagerOffset = $"0x{HeroManagerOffset:X}",
                 // Preserve the recorded build stamp — losing it would just
                 // cost one wasted fast sweep after the next patch, but
                 // there's no reason for a template write to discard it.
@@ -288,11 +374,13 @@ internal static class Tunables
             if (DateTime.UtcNow < _pinRetryAfterUtc) return;
             try
             {
-                OverrideFile f = TryReadFileLocked() ?? new OverrideFile
-                {
-                    MaxPlausibleHp = _maxPlausibleHp,
-                    MaxTowerUnits  = _maxTowerUnits,
-                };
+                // Fresh pin files carry ONLY discovered values. Seeding the
+                // tuning defaults (MaxPlausibleHp/MaxTowerUnits) here froze
+                // them at pin time — a later compiled-default change was then
+                // silently overridden by every existing file (user-hit: the
+                // 500M HP cap survived its own removal). WriteTemplate (an
+                // explicit user action) still writes them for hand-editing.
+                OverrideFile f = TryReadFileLocked() ?? new OverrideFile();
                 f.PawnVtableSeed = $"0x{discovered:X8}";
                 if (liveStamp != 0)
                     f.GameTimeDateStamp = $"0x{liveStamp:X8}";
@@ -328,6 +416,148 @@ internal static class Tunables
                 _pinRetryAfterUtc = DateTime.UtcNow.AddSeconds(30);
             }
         }
+    }
+
+    // Auto-pin the discovered forge-box offset (ItemBoxEquipments off the
+    // HeroManager). Called by the Settings CALIBRATE wizard and the Forge
+    // Viewer self-heal the moment they relocate the box in live memory
+    // after a DD1 patch — the "automatic updater" for the one struct field
+    // that moves. Preserves the other keys; fail-safe + atomic; only writes
+    // when the value actually changed (≈ once per patch). Unlike the vtable
+    // seed there is no per-tick caller, so a lighter guard suffices.
+    public static void PinItemBoxOffset(int discovered)
+    {
+        if (!IsValidItemBoxOffset(discovered)) return;
+        lock (_gate)
+        {
+            EnsureLoadedLocked();
+            if (discovered == _itemBoxOffset && File.Exists(FilePath)) return;
+            if (DateTime.UtcNow < _pinRetryAfterUtc) return;
+            try
+            {
+                // Fresh pin files carry ONLY discovered values. Seeding the
+                // tuning defaults (MaxPlausibleHp/MaxTowerUnits) here froze
+                // them at pin time — a later compiled-default change was then
+                // silently overridden by every existing file (user-hit: the
+                // 500M HP cap survived its own removal). WriteTemplate (an
+                // explicit user action) still writes them for hand-editing.
+                OverrideFile f = TryReadFileLocked() ?? new OverrideFile();
+                f.ItemBoxOffset = $"0x{discovered:X}";
+                // Only stamp a note if the file is otherwise fresh — don't
+                // stomp the pawn-pin note when one is already present.
+                f.Note ??= "Auto-pinned by GrandeuReforged: the forge-box (ItemBoxEquipments) " +
+                           "offset was relocated in live memory after a game patch. Delete " +
+                           "this key (or the file) to fall back to the compiled default + " +
+                           "runtime re-discovery.";
+
+                string dir = System.IO.Path.GetDirectoryName(FilePath)!;
+                Directory.CreateDirectory(dir);
+                string tmp = FilePath + ".tmp";
+                File.WriteAllText(tmp,
+                    JsonSerializer.Serialize(f, new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                    }));
+                File.Move(tmp, FilePath, overwrite: true);
+
+                _itemBoxOffset = discovered;
+                _status = $"Forge-box offset learned and saved — ItemBoxOffset=0x{discovered:X}";
+                Base.Log($"Tunables: pinned ItemBoxOffset=0x{discovered:X}");
+            }
+            catch
+            {
+                _pinRetryAfterUtc = DateTime.UtcNow.AddSeconds(30);
+            }
+        }
+    }
+
+    // Auto-pin the discovered hero-array pair base (LocalLoadedHeroes off
+    // the HeroManager; ActiveHeroes is always +0xC above it). Same contract
+    // as PinItemBoxOffset.
+    public static void PinLocalHeroesOffset(int discovered)
+    {
+        if (!IsValidLocalHeroesOffset(discovered)) return;
+        lock (_gate)
+        {
+            EnsureLoadedLocked();
+            if (discovered == _localHeroesOffset && File.Exists(FilePath)) return;
+            if (DateTime.UtcNow < _pinRetryAfterUtc) return;
+            try
+            {
+                // Fresh pin files carry ONLY discovered values. Seeding the
+                // tuning defaults (MaxPlausibleHp/MaxTowerUnits) here froze
+                // them at pin time — a later compiled-default change was then
+                // silently overridden by every existing file (user-hit: the
+                // 500M HP cap survived its own removal). WriteTemplate (an
+                // explicit user action) still writes them for hand-editing.
+                OverrideFile f = TryReadFileLocked() ?? new OverrideFile();
+                f.LocalHeroesOffset = $"0x{discovered:X}";
+                f.Note ??= "Auto-pinned by GrandeuReforged: a game-class offset was " +
+                           "relocated in live memory after a game patch. Delete this " +
+                           "key (or the file) to fall back to the compiled default + " +
+                           "runtime re-discovery.";
+                WritePinnedFileLocked(f);
+                _localHeroesOffset = discovered;
+                _status = $"Hero-array offset learned and saved — LocalHeroesOffset=0x{discovered:X}";
+                Base.Log($"Tunables: pinned LocalHeroesOffset=0x{discovered:X}");
+            }
+            catch
+            {
+                _pinRetryAfterUtc = DateTime.UtcNow.AddSeconds(30);
+            }
+        }
+    }
+
+    // Auto-pin the discovered TheHeroManager hop (off the ViewportClient).
+    // Same contract as PinItemBoxOffset.
+    public static void PinHeroManagerOffset(int discovered)
+    {
+        if (!IsValidHeroManagerOffset(discovered)) return;
+        lock (_gate)
+        {
+            EnsureLoadedLocked();
+            if (discovered == _heroManagerOffset && File.Exists(FilePath)) return;
+            if (DateTime.UtcNow < _pinRetryAfterUtc) return;
+            try
+            {
+                // Fresh pin files carry ONLY discovered values. Seeding the
+                // tuning defaults (MaxPlausibleHp/MaxTowerUnits) here froze
+                // them at pin time — a later compiled-default change was then
+                // silently overridden by every existing file (user-hit: the
+                // 500M HP cap survived its own removal). WriteTemplate (an
+                // explicit user action) still writes them for hand-editing.
+                OverrideFile f = TryReadFileLocked() ?? new OverrideFile();
+                f.HeroManagerOffset = $"0x{discovered:X}";
+                f.Note ??= "Auto-pinned by GrandeuReforged: a game-class offset was " +
+                           "relocated in live memory after a game patch. Delete this " +
+                           "key (or the file) to fall back to the compiled default + " +
+                           "runtime re-discovery.";
+                WritePinnedFileLocked(f);
+                _heroManagerOffset = discovered;
+                _status = $"HeroManager hop learned and saved — HeroManagerOffset=0x{discovered:X}";
+                Base.Log($"Tunables: pinned HeroManagerOffset=0x{discovered:X}");
+            }
+            catch
+            {
+                _pinRetryAfterUtc = DateTime.UtcNow.AddSeconds(30);
+            }
+        }
+    }
+
+    // Shared atomic serialize + rename for the pin writers (lock held).
+    private static void WritePinnedFileLocked(OverrideFile f)
+    {
+        string dir = System.IO.Path.GetDirectoryName(FilePath)!;
+        Directory.CreateDirectory(dir);
+        string tmp = FilePath + ".tmp";
+        File.WriteAllText(tmp,
+            JsonSerializer.Serialize(f, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            }));
+        File.Move(tmp, FilePath, overwrite: true);
     }
 
     // Lock-held variants used by PinPawnVtable (the public EnsureLoaded

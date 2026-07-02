@@ -84,6 +84,16 @@ public partial class SettingsView : UserControl
                 : "";
             TxtDiagStamp.Text = $"saved {rec}  ·  game {lv}{verdict}";
         }
+
+        // The three self-locating game-layout links (see GameChain):
+        // "learned" = a game update moved it and discovery re-pinned it;
+        // "default" = the compiled last-known-good position still holds.
+        static string Off(int cur, int def) =>
+            $"0x{cur:X} ({(cur == def ? "default" : "learned")})";
+        TxtDiagOffsets.Text =
+            $"forge box {Off(GameChain.ItemBoxOffset, Tunables.DefaultItemBoxOffset)}  ·  " +
+            $"heroes {Off(GameChain.LocalHeroesOffset, Tunables.DefaultLocalHeroesOffset)}  ·  " +
+            $"manager {Off(GameChain.HeroManagerOffset, Tunables.DefaultHeroManagerOffset)}";
     }
 
     private void BtnDiagRefresh_Click(object sender, RoutedEventArgs e) => RefreshDiagnostics();

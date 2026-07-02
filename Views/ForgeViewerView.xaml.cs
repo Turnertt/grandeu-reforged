@@ -312,8 +312,11 @@ public partial class ForgeViewerView : UserControl
     //              +0x3B8 → Player (ULocalPlayer)
     //              +0x194 → ViewportClient (UDunDefViewportClient)
     //              +0xCFC → TheHeroManager (UDunDefHeroManager)
-    // Forge  = HeroManager.ItemBoxEquipments TArray @ +0x39C
-    // Hero   = HeroManager.ActiveHeroes TArray @ +0x36C, then each
+    // Forge  = HeroManager.ItemBoxEquipments TArray (offset is version-
+    //          fragile — DISCOVERED + pinned via GameChain.ReadItemBox, not
+    //          a fixed literal; a 2026-06 patch moved it 0x39C → 0x3A8)
+    // Hero   = HeroManager.ActiveHeroes TArray (discovered + pinned pair
+    //          base + 0xC — see GameChain), then each
     //          UDunDefHero.HeroEquipments TArray @ +0x5B0
     // Every element is a UHeroEquipment*; its inline ItemNative starts at
     // +0x38 (same layout as forge items / floor drops), so we return
@@ -329,11 +332,11 @@ public partial class ForgeViewerView : UserControl
         _heroResultAddrs.Clear();
 
         if (mode == SourceMode.Forge || mode == SourceMode.All)
-            foreach (int he in ReadPtrArray(heroMgr + 0x39C))      // ItemBoxEquipments
+            foreach (int he in GameChain.ReadItemBox(heroMgr))     // ItemBoxEquipments (self-healing offset)
                 list.Add(he + 0x38);
 
         if (mode == SourceMode.Hero || mode == SourceMode.All)
-            foreach (int hero in ReadPtrArray(heroMgr + 0x36C))    // ActiveHeroes
+            foreach (int hero in GameChain.ReadActiveHeroes(heroMgr)) // ActiveHeroes (self-healing offset)
                 foreach (int he in ReadPtrArray(hero + 0x5B0))     // UDunDefHero.HeroEquipments
                 {
                     int addr = he + 0x38;

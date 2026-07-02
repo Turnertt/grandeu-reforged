@@ -33,8 +33,9 @@ namespace Modinator.Views;
 // opens. All reads via Base.Instance (the sanctioned Scanner path).
 public partial class HeroViewerView : UserControl
 {
-    private const int OFF_LOCAL_HEROES       = 0x360; // UDunDefHeroManager.LocalLoadedHeroes (full roster, stride 8)
-    private const int OFF_ACTIVE_HEROES      = 0x36C; // UDunDefHeroManager.ActiveHeroes (in-play only, stride 4)
+    // LocalLoadedHeroes / ActiveHeroes are read via GameChain.ReadLocalHeroes /
+    // ReadActiveHeroes — their HeroManager offsets are version-fragile and
+    // discovered + pinned (see GameChain), not hardcoded here.
     private const int OFF_CLASS_DISPLAYNAME  = 0x424; // UDunDefHero.HeroClassDisplayName
     private const int OFF_HERO_NATIVE        = 0x504; // UDunDefHero.HeroHealthModifier — HeroNative base
     private const int OFF_HERO_MANA          = 0x53C; // UDunDefHero.ManaPower
@@ -101,14 +102,16 @@ public partial class HeroViewerView : UserControl
                 return;
             }
 
-            // LocalLoadedHeroes (+0x360, stride 8) is the player's FULL
-            // hero roster — verified live to hold every saved hero, vs
-            // ActiveHeroes (+0x36C, stride 4) which is only the in-play
-            // hero(es) and made the viewer look like it showed just one.
-            // Fall back to ActiveHeroes if the full list is somehow empty.
-            var heroes = GameChain.ReadPtrArray(heroMgr + OFF_LOCAL_HEROES, 8);
+            // LocalLoadedHeroes (stride 8) is the player's FULL hero
+            // roster — verified live to hold every saved hero, vs
+            // ActiveHeroes (stride 4) which is only the in-play hero(es)
+            // and made the viewer look like it showed just one. Both read
+            // through GameChain's self-healing (discovered + pinned)
+            // offsets. Fall back to ActiveHeroes if the full list is
+            // somehow empty.
+            var heroes = GameChain.ReadLocalHeroes(heroMgr);
             if (heroes.Count == 0)
-                heroes = ReadPtrArray(heroMgr + OFF_ACTIVE_HEROES);
+                heroes = GameChain.ReadActiveHeroes(heroMgr);
 
             int shown = 0;
             foreach (int hero in heroes)
