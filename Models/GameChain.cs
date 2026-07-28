@@ -259,8 +259,8 @@ internal static class GameChain
             return ReadPtrArray(heroMgr + off);
 
         // Pinned offset no longer positively reads as the box: a patch
-        // moved it, the box is simply empty (forge only populates in the
-        // Tavern), or the fingerprint assumption broke. Rediscover.
+        // moved it, the box is simply empty, or the fingerprint
+        // assumption broke. Rediscover.
         (int found, bool verified, int count) = DiscoverItemBox(heroMgr);
 
         if (verified)
@@ -300,8 +300,8 @@ internal static class GameChain
     // Scan the HeroManager window for the ItemBoxEquipments TArray.
     // Returns the best candidate offset (0 = none), whether it carries the
     // ItemBoxEntries fingerprint (only then may it be pinned), and its
-    // element count. Read-only; needs a populated box to succeed, so it
-    // only fires in the Tavern — which is where calibration sends the user.
+    // element count. Read-only; needs a populated box to succeed — an
+    // empty box keeps the current offset.
     public static (int offset, bool pairVerified, int count) DiscoverItemBox(int heroMgr)
     {
         var r = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd);

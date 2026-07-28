@@ -75,7 +75,7 @@
                         <Button x:Name="BtnScan"
                                 Style="{StaticResource AccentButton}"
                                 Padding="18,7" Height="32"
-                                ToolTip="List every item in your item box. The box only exists in the Tavern."
+                                ToolTip="List every item in your item box."
                                 Click="BtnScan_Click">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="BtnScanIcon"

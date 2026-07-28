@@ -61,8 +61,8 @@ End-users need the **.NET 8 Desktop Runtime (x86)** installed (https://dotnet.mi
 
 ### Build notes
 
-- `-p:SelfContained=false` **must** be passed as an MSBuild property (`-p:` prefix), not as the `--self-contained false` CLI flag. Recent SDKs silently ignore the CLI flag when `-r` is specified and produce a self-contained ~61 MB executable instead.
-- Do **not** add `-p:EnableCompressionInSingleFile=true`. Compression requires `SelfContained=true`; the SDK will hard-error `NETSDK1176` otherwise.
+- `-p:SelfContained=false` **must** be passed as an MSBuild property (`-p:` prefix), not as the `--self-contained false` CLI flag. Recent SDKs silently ignore the CLI flag when `-r` is specified and produce a bloated self-contained executable (~120 MB) instead.
+- Do **not** add `-p:EnableCompressionInSingleFile=true` to the framework-dependent builds. Compression requires `SelfContained=true`; the SDK will hard-error `NETSDK1176` otherwise. The portable builds (`build-portable.ps1`) use it legitimately.
 
 ## Optional: ARM64 build (Windows on ARM)
 
@@ -82,7 +82,6 @@ Output: `bin\Release\net8.0-windows\win-arm64\publish\GrandeuReforged.exe`. End-
 
 - **"No character found" / scans find nothing** — get your hero into the Tavern (or any level) and rescan; menus and loading screens have nothing to find. The first scan after a game update takes a few seconds while the tool re-learns the game's addresses — that's normal.
 - **Still nothing** — run **Settings → Diagnostics → CALIBRATE**. It checks the game step by step (running? 32-bit? character visible? item box reachable?) and tells you exactly which link is broken.
-- **The forge is empty mid-mission** — the game's item box only exists in the Tavern; that's game behavior, not a bug.
 - **Auto-Kill turned itself off** — it auto-disables in the Tavern/lobby and on loading screens; flip it back on once you're in a mission.
 
 ## Why "Reforged"?
@@ -107,7 +106,8 @@ Views/                WPF user controls — search forms, viewers, edit forms, d
 Themes/               WPF resource dictionaries (colors, control styles, frameless window chrome)
 Behaviors/            Small attached behaviors (numeric input, placeholder text)
 Assets/               app-icon + per-stat icons used in the editor
-build.ps1 / build.bat One-shot build wrappers
+build.ps1 / build.bat One-shot build wrappers (framework-dependent)
+build-portable.ps1    Self-contained portable build (x86; -Arm64 switch)
 ```
 
 ## Credits
@@ -115,3 +115,16 @@ build.ps1 / build.bat One-shot build wrappers
 - The original **Grandeu** author, whose decompiled WinForms tool was the structural starting point for this rewrite.
 - The **DD_ModMenu** project, for documenting offsets and reverse-engineering work that informed the auto-kill and enemy-tower logic.
 - The **Dungeon Defenders modding community**, for years of reverse-engineering work on UE3 struct layouts and item internals.
+
+## Which download do I need?
+
+Every release ships four builds of the same app — pick by your CPU and whether you want to install the .NET runtime:
+
+| Build | File | Machine | .NET 8 Desktop Runtime needed? |
+|---|---|---|---|
+| **Standard** | `GrandeuReforged.exe` | Normal Windows PC (Intel/AMD) | Yes — [x86 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (~1 MB download, install once) |
+| **Portable** | `GrandeuReforged-Portable.exe` | Normal Windows PC (Intel/AMD) | No — everything bundled in one larger exe |
+| **ARM64** | `GrandeuReforged-ARM64.exe` | Windows on ARM (Snapdragon laptops, Surface Pro X, …) | Yes — ARM64 runtime |
+| **ARM64 Portable** | `GrandeuReforged-ARM64-Portable.exe` | Windows on ARM | No |
+
+Not sure? Grab **Portable** — it runs anywhere on a normal PC with nothing to install. The **Portable** build is also the one to use on Linux/Steam Deck under Wine/Proton (launch it inside the game's prefix, e.g. via `protontricks-launch`).

@@ -162,9 +162,8 @@ public partial class CalibrationDialog : Window
             // anything. Only a fingerprint-verified candidate (the
             // ItemBoxEntries parallel array next door — see GameChain) is
             // pinned; offset==0 means "couldn't positively locate it" —
-            // usually an empty box (the forge only populates in the Tavern),
-            // in which case ReadItemBox reports reachability at the current
-            // offset without saving anything.
+            // usually an empty box, in which case ReadItemBox reports
+            // reachability at the current offset without saving anything.
             (int count, int offset) forge = await Task.Run(() =>
             {
                 int pawn = _main.ResolvePlayerPawnAddress();
@@ -182,7 +181,7 @@ public partial class CalibrationDialog : Window
             if (forge.count < 0)
                 AddResult(false, "Forge chain",
                     "Couldn't reach the item manager. Rescan from the Forge Viewer " +
-                    "once you're in the Tavern; if it persists, the game may have " +
+                    "with your hero in-game; if it persists, the game may have " +
                     "changed in a way that needs a tool update.");
             else if (forge.offset != 0)
                 AddResult(true, "Forge chain",
@@ -190,8 +189,8 @@ public partial class CalibrationDialog : Window
                     "offset pinned (re-derives automatically after a patch)");
             else if (forge.count == 0)
                 AddResult(true, "Forge chain",
-                    "reachable — item box reports 0 items (the forge box only exists " +
-                    "in the Tavern; this is normal mid-mission)");
+                    "reachable — item box reports 0 items (an empty box just means " +
+                    "nothing is stored in the forge right now)");
             else
                 AddResult(true, "Forge chain", $"reachable — {forge.count} items in the box");
 
