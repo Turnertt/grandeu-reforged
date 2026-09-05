@@ -26,7 +26,7 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 - **Game Speed Control** — accelerate the game to blast through levels.
 - **Hero Editor** — customize hero stats and appearance, including color.
 - **Item Editor** — full control over item stats, affixes, and properties, including a read-only weapon-class indicator.
-- **Colour editor** — colour item descriptions and forger names with a visual picker: select the text, click a colour. No tags to type.
+- **Color editor** — color item descriptions and forger names with a visual picker: select the text, click a color. No tags to type.
 - **Hotkeys** — every title-bar toggle (Auto Kill, Automate G, Unlimited Mana, Max Tower Units, Always On Top) can be bound to a key combo in Settings.
 - **Error log** — a one-session log you can attach when reporting a problem, next to the COPY REPORT button in Settings → Advanced.
 - **Save backups & restore** — your DD1 save (`DunDefHeroes.dun`) is backed up automatically when the tool starts and before the first edit of every session, so any session can be undone. Restore any backup from **Settings → Advanced** (with the game closed).

@@ -43,7 +43,11 @@ internal static class Watermark
     // Refuse to grow a description past this. Nothing in DD1 is known to cap
     // it (FEquipmentSaveInfo.Description is a variable-length FString), but an
     // unbounded append path on a field we re-read every edit deserves a stop.
-    private const int MaxTotalChars = 1024;
+    // 8192, not 1024: a description coloured per letter in the colour editor
+    // costs ~26 characters a letter, so 1024 silently skipped the mark on
+    // exactly the items people had just customised. ReadUni reads up to
+    // 16384, so this stays well inside what the rest of the tool handles.
+    private const int MaxTotalChars = 8192;
 
     private static readonly string Mark = BuildMark();
 

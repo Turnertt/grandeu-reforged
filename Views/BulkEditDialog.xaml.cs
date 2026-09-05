@@ -482,14 +482,17 @@ public partial class BulkEditDialog : Window
             // Color overrides — build a LinearColor (float-backed) from the
             // ints and convert to native. Negative values pass straight through
             // because LinearColor.R setter is value/255f (not clamped).
+            // A = 255: the in-memory layout is (A, R, G, B) and an override
+            // written with A = 0 rendered BLACK in game. 255 is the "override
+            // active" value the original tool always wrote.
             if (p.ChColor1)
             {
-                var c = new LinearColor { R = p.C1R, G = p.C1G, B = p.C1B };
+                var c = new LinearColor { R = p.C1R, G = p.C1G, B = p.C1B, A = 255 };
                 item.PrimaryColorOverride = Base.LinearColorToNative(c);
             }
             if (p.ChColor2)
             {
-                var c = new LinearColor { R = p.C2R, G = p.C2G, B = p.C2B };
+                var c = new LinearColor { R = p.C2R, G = p.C2G, B = p.C2B, A = 255 };
                 item.SecondaryColorOverride = Base.LinearColorToNative(c);
             }
 

@@ -13,6 +13,9 @@ public partial class ItemEditView : UserControl
     private int Address;
     private string ItemDisplayName;
     private ItemNative _lastNative;
+    // Colour values the boxes were seeded with on the last Refresh, so UPDATE
+    // can tell an untouched colour from an edited one.
+    private (int R, int G, int B) _seedC1, _seedC2;
     // Identity of the item as of the last Refresh. Every write re-reads the
     // address and refuses if a different item (or freed/reused memory) is
     // there now — see ItemIdentity. REFRESH re-captures, so a user who has
@@ -133,12 +136,14 @@ public partial class ItemEditView : UserControl
                 TxtColor1R.Text = user.Color1Override.R.ToString();
                 TxtColor1G.Text = user.Color1Override.G.ToString();
                 TxtColor1B.Text = user.Color1Override.B.ToString();
+                _seedC1 = (user.Color1Override.R, user.Color1Override.G, user.Color1Override.B);
             }
             if (user.Color2Override != null)
             {
                 TxtColor2R.Text = user.Color2Override.R.ToString();
                 TxtColor2G.Text = user.Color2Override.G.ToString();
                 TxtColor2B.Text = user.Color2Override.B.ToString();
+                _seedC2 = (user.Color2Override.R, user.Color2Override.G, user.Color2Override.B);
             }
 
             // Identity
@@ -358,16 +363,26 @@ public partial class ItemEditView : UserControl
         // Colors — the R/G/B boxes are kept populated so the picker/preview
         // works. DD1 items accept negative and HDR (>255) values for glow
         // effects, so parse as Int rather than Byte.
+        // Colour overrides are written ONLY when the boxes differ from what
+        // Refresh seeded. They used to be rebuilt from the boxes on every
+        // UPDATE with alpha 0 — the layout is (A, R, G, B) — which turned an
+        // item black the moment anything else on it was edited. When they
+        // are written, A = 255 marks the override active, as the original
+        // tool did.
         LinearColor c1 = new LinearColor();
         c1.R = v.Int(TxtColor1R, "Color 1 R");
         c1.G = v.Int(TxtColor1G, "Color 1 G");
         c1.B = v.Int(TxtColor1B, "Color 1 B");
+        c1.A = 255;
+        bool color1Edited = (c1.R, c1.G, c1.B) != _seedC1;
         user.Color1Override = c1;
 
         LinearColor c2 = new LinearColor();
         c2.R = v.Int(TxtColor2R, "Color 2 R");
         c2.G = v.Int(TxtColor2G, "Color 2 G");
         c2.B = v.Int(TxtColor2B, "Color 2 B");
+        c2.A = 255;
+        bool color2Edited = (c2.R, c2.G, c2.B) != _seedC2;
         user.Color2Override = c2;
 
         // Identity
@@ -414,6 +429,9 @@ public partial class ItemEditView : UserControl
             native.SecondaryColorSet = _lastNative.SecondaryColorSet;
             native.PrimaryColorSets = _lastNative.PrimaryColorSets;
             native.SecondaryColorSets = _lastNative.SecondaryColorSets;
+            // Untouched colour boxes keep the item's own override bytes verbatim.
+            if (!color1Edited) native.PrimaryColorOverride   = _lastNative.PrimaryColorOverride;
+            if (!color2Edited) native.SecondaryColorOverride = _lastNative.SecondaryColorOverride;
             native.ShopMinimumSellWorth = _lastNative.ShopMinimumSellWorth;
             native.MaxRandomElementalDamageMultiplier = _lastNative.MaxRandomElementalDamageMultiplier;
             native.FolderID = _lastNative.FolderID;

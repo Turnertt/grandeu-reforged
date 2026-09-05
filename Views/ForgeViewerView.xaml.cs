@@ -1238,12 +1238,37 @@ public partial class ForgeViewerView : UserControl
         string qualityText = QualityDisplay.Name(u.Quality2);
         if (u.Quality3 != Quality3.None) qualityText += " " + u.Quality3;
         desc.Inlines.Add(new System.Windows.Documents.Run(qualityText) { Foreground = qBrush, FontWeight = FontWeights.Bold });
-        if (!string.IsNullOrWhiteSpace(ci.Description))
+
+        // The watermark line is lifted out of the description and drawn on
+        // its own line below, outside the three-line cap — a long or coloured
+        // description would otherwise push it out of view, which reads as
+        // "the watermark wasn't applied" when it was.
+        string descText = ColorMarkup.NormalizeNewlines(ci.Description);
+        string? markLine = null;
+        if (Watermark.IsMarked(descText))
+        {
+            var lines = descText.Split('\n').ToList();
+            int mi = lines.FindIndex(Watermark.IsMarked);
+            if (mi >= 0) { markLine = lines[mi]; lines.RemoveAt(mi); descText = string.Join("\n", lines).Trim('\n'); }
+        }
+        if (!string.IsNullOrWhiteSpace(descText))
         {
             desc.Inlines.Add(new System.Windows.Documents.Run(" "));
-            AppendColorRuns(desc, ci.Description, textSecondary);
+            AppendColorRuns(desc, descText, textSecondary);
         }
         body.Children.Add(desc);
+        if (markLine != null)
+        {
+            var mark = new TextBlock
+            {
+                FontSize = 9.5,
+                TextAlignment = TextAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(4, 2, 4, 0)
+            };
+            AppendColorRuns(mark, markLine, textMuted);
+            body.Children.Add(mark);
+        }
 
         // ── Stat rows ──
         // Weapons AND familiars (pets) carry damage; everything else shows
