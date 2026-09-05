@@ -141,7 +141,7 @@
                                        FontSize="16" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextPrimaryBrush}"
                                        Margin="0,0,0,4" />
-                            <TextBlock Text="See your whole hero deck — stats, level, mana and equipped gear. Double-click to edit a hero or item."
+                            <TextBlock Text="Every hero's stats, level and equipped gear in one place. Double-click a hero or an item to edit it."
                                        FontSize="12"
                                        Foreground="{StaticResource TextSecondaryBrush}"
                                        TextWrapping="Wrap" LineHeight="17" />

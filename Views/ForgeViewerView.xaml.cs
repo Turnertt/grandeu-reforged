@@ -93,7 +93,7 @@ public partial class ForgeViewerView : UserControl
     private const int PageSize = 30;
 
     // Sentinel "icon path" for the weapon Elemental-damage tile, which has
-    // no dedicated asset — MakeStatTile renders a glyph placeholder for it.
+    // no dedicated asset — MakeIconTile renders a glyph placeholder for it.
     private const string SelectionMarkerTag = "SelectionMarker";
 
     private readonly Dictionary<string, ImageBrush?> _statIconBrushes = new();
@@ -152,52 +152,12 @@ public partial class ForgeViewerView : UserControl
         PopulateTypeCombo();
         PopulateSortCombo();
         _suppressFilterEvent = false;
-        BuildTypeLegend();
         _searchDebounce.Tick += (s, e) =>
         {
             _searchDebounce.Stop();
             currentPage = 0;
             PopulateCards();
         };
-    }
-
-    // Colour key for the per-category card strips. Swatches come from
-    // GetTypeColor itself so the legend can never drift from the cards.
-    private void BuildTypeLegend()
-    {
-        var entries = new (string label, EquipmentType type)[]
-        {
-            ("Weapon",    EquipmentType.Weapon),
-            ("Armor",     EquipmentType.ArmorTorso),
-            ("Accessory", EquipmentType.Hat),
-            ("Familiar",  EquipmentType.Familiar),
-        };
-        foreach (var (label, type) in entries)
-        {
-            var row = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(14, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            row.Children.Add(new Border
-            {
-                Width = 8,
-                Height = 8,
-                CornerRadius = new CornerRadius(4),
-                Background = new SolidColorBrush(GetTypeColor(type)),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 5, 0)
-            });
-            row.Children.Add(new TextBlock
-            {
-                Text = label,
-                FontSize = 10,
-                Foreground = (Brush)FindResource("TextMutedBrush"),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            TypeLegend.Children.Add(row);
-        }
     }
 
     // ── Combo population ─────────────────────────────────────────
@@ -1134,164 +1094,197 @@ public partial class ForgeViewerView : UserControl
         UpdateEmptyState();
     }
 
+    // ── Item card ────────────────────────────────────────────────────
+    // Laid out like DD1's own item panel (see DECISIONS.md, 2026-09-04):
+    // level and type top-left, forged-by top-right, name centred, the
+    // quality word leading straight into the description, then icon rows
+    // split by rule lines — primary stats as round icons, hero and tower
+    // bonuses as square tiles, weapon extras round again. Numbers sit under
+    // their icon. No per-tile boxes: the earlier bordered-pill grid gave
+    // every stat the same weight and read as a generic dashboard.
+    //
+    // Rows pack their live stats left (a zero stat is simply omitted) — the
+    // icon families already say which group a tile belongs to.
     private Border CreateCard(CachedItem ci, bool selectionMode)
     {
         bool isSelected = selectionMode && selectedAddresses.Contains(ci.Address);
-        var qColor = GetAccentColor(ci.User.Quality2);
-        var qBrush = new SolidColorBrush(qColor);
-        // Header gradient is keyed to the item *category* (weapon / armor /
-        // accessory / familiar), not quality — quality stays as the text.
-        var tColor = GetTypeColor(ci.User.EquipmentType);
+        var u = ci.User;
+        var qBrush = new SolidColorBrush(GetAccentColor(u.Quality2));
+        var tColor = GetTypeColor(u.EquipmentType);
+        var textPrimary   = (Brush)FindResource("TextPrimaryBrush");
+        var textSecondary = (Brush)FindResource("TextSecondaryBrush");
+        var textMuted     = (Brush)FindResource("TextMutedBrush");
 
-        string qualityText = QualityDisplay.Name(ci.User.Quality2);
-        if (ci.User.Quality3 != Quality3.None)
-            qualityText += "  \u00b7  " + ci.User.Quality3;
-
-        // ── Card shell — narrower + tighter so the board reads denser ──
         var card = new Border
         {
-            Width = 240,
-            Margin = new Thickness(4),
-            CornerRadius = new CornerRadius(8),
+            Width = 256,
+            Margin = new Thickness(5),
+            CornerRadius = new CornerRadius(6),
             BorderThickness = new Thickness(isSelected ? 2 : 1),
             BorderBrush = isSelected ? (Brush)FindResource("AccentBrush") : (Brush)FindResource("BorderBrush"),
-            Background = (Brush)FindResource("SurfaceLightBrush"),
+            Background = isSelected ? _selectedCardBrush : (Brush)FindResource("SurfaceLightBrush"),
             Cursor = Cursors.Hand,
             ClipToBounds = true,
             Tag = ci.Address
         };
-        if (isSelected)
-            card.Background = _selectedCardBrush;
-
+        // SetSelectionMarker overlays its check onto this Grid — keep it.
         var outerGrid = new Grid();
         card.Child = outerGrid;
+        var body = new StackPanel { Margin = new Thickness(12, 9, 12, 10) };
+        outerGrid.Children.Add(body);
 
-        var mainStack = new StackPanel();
-        outerGrid.Children.Add(mainStack);
+        // ── Top strip: [TYPE] Lv x / y ............ FORGED BY / Name ──
+        // Forged-by takes the game's two-line form (small label over the
+        // name) and every pixel the left group doesn't use, so a long forger
+        // name isn't squeezed by an inline "forged by" prefix.
+        var top = new Grid();
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        top.ColumnDefinitions.Add(new ColumnDefinition());
 
-        // ── Category identity — a restrained 3 px strip across the top
-        //    (the legend in the command bar is its key). Replaces the old
-        //    tall saturated gradient wash, which drowned the content and
-        //    forced drop shadows on every piece of header text.
-        mainStack.Children.Add(new Border
+        var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Top };
+        left.Children.Add(new Border
         {
-            Height = 3,
-            // Top corners follow the card radius — Border.ClipToBounds is
-            // rectangular, so without this the strip pokes past the curve.
-            CornerRadius = new CornerRadius(8, 8, 0, 0),
-            Background = new SolidColorBrush(tColor)
+            CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(6, 1, 6, 1),
+            Margin = new Thickness(0, 0, 8, 0),
+            Background = new SolidColorBrush(Color.FromArgb(46, tColor.R, tColor.G, tColor.B)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(110, tColor.R, tColor.G, tColor.B)),
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = TypeLabel(u.EquipmentType).ToUpperInvariant(),
+                FontSize = 8,
+                FontWeight = FontWeights.Bold,
+                Foreground = new SolidColorBrush(tColor)
+            }
         });
-
-        // ── Header — left-aligned: name, then quality · type · level,
-        //    then a one-line description. No shadows/plates needed on a
-        //    flat surface.
-        var headerStack = new StackPanel { Margin = new Thickness(10, 7, 10, 8) };
-
-        headerStack.Children.Add(new TextBlock
+        left.Children.Add(new TextBlock
         {
-            Text = ci.Name ?? "(unnamed)",
-            FontSize = 13.5,
+            Text = "Lv " + u.Level.ToString("N0") + " / " + u.MaxLevel.ToString("N0"),
+            FontSize = 9.5,
             FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)FindResource("TextPrimaryBrush"),
+            Foreground = textSecondary,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        top.Children.Add(left);
+
+        if (!string.IsNullOrWhiteSpace(ci.ForgerName))
+        {
+            // The game's two-line form: a small FORGED BY label over the name,
+            // right-aligned, and the name keeps its own line breaks (a coloured
+            // two-line forger is common). The strip may grow on THIS side only:
+            // the tag/level group is pinned to the top, so it never slides down
+            // with a taller forged-by block — that slide was the earlier bug,
+            // not the second line itself.
+            var forged = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            forged.Children.Add(new TextBlock
+            {
+                Text = "FORGED BY",
+                FontSize = 7.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = textMuted,
+                HorizontalAlignment = HorizontalAlignment.Right
+            });
+            var forger = new TextBlock
+            {
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Right,
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                LineHeight = 13,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                MaxHeight = 13 * 3   // three lines at most; beyond that, trim
+            };
+            AppendColorRuns(forger, ci.ForgerName, textSecondary);
+            forged.Children.Add(forger);
+            Grid.SetColumn(forged, 1);
+            top.Children.Add(forged);
+        }
+        body.Children.Add(top);
+
+        // ── Name, centred. Custom names can carry <color> runs too. ──
+        var name = new TextBlock
+        {
+            FontSize = 14.5,
+            FontWeight = FontWeights.SemiBold,
+            TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxHeight = 36
-        });
-
-        var meta = new TextBlock
-        {
-            Margin = new Thickness(0, 3, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis
+            MaxHeight = 40,
+            Margin = new Thickness(0, 6, 0, 0)
         };
-        meta.Inlines.Add(new System.Windows.Documents.Run(qualityText)
-        {
-            Foreground = qBrush,
-            FontWeight = FontWeights.Bold,
-            FontSize = 10.5
-        });
-        meta.Inlines.Add(new System.Windows.Documents.Run(
-            "  ·  " + TypeLabel(ci.User.EquipmentType) +
-            "  ·  Lv " + ci.User.Level + " / " + ci.User.MaxLevel)
-        {
-            Foreground = (Brush)FindResource("TextSecondaryBrush"),
-            FontSize = 10
-        });
-        headerStack.Children.Add(meta);
+        AppendColorRuns(name, string.IsNullOrWhiteSpace(ci.Name) ? "(unnamed)" : ci.Name, textPrimary);
+        body.Children.Add(name);
 
+        // ── "Ultimate++ The last gift bestowed to Etheria" ──
+        var desc = new TextBlock
+        {
+            FontSize = 10,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            LineHeight = 13.5,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            MaxHeight = 13.5 * 3,
+            Margin = new Thickness(4, 2, 4, 0)
+        };
+        string qualityText = QualityDisplay.Name(u.Quality2);
+        if (u.Quality3 != Quality3.None) qualityText += " " + u.Quality3;
+        desc.Inlines.Add(new System.Windows.Documents.Run(qualityText) { Foreground = qBrush, FontWeight = FontWeights.Bold });
         if (!string.IsNullOrWhiteSpace(ci.Description))
-            headerStack.Children.Add(new TextBlock
-            {
-                Text = ci.Description,
-                FontSize = 9.5,
-                FontStyle = FontStyles.Italic,
-                Foreground = (Brush)FindResource("TextMutedBrush"),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(0, 3, 0, 0)
-            });
-
-        mainStack.Children.Add(headerStack);
-
-        mainStack.Children.Add(new Border
         {
-            Height = 1,
-            Background = (Brush)FindResource("BorderBrush"),
-            Opacity = 0.5,
-            Margin = new Thickness(10, 0, 10, 0)
-        });
+            desc.Inlines.Add(new System.Windows.Documents.Run(" "));
+            AppendColorRuns(desc, ci.Description, textSecondary);
+        }
+        body.Children.Add(desc);
 
-        // ── Stats body — DD1-style icon tiles (label + framed icon plate
-        //    + value). Fixed row order mirrors the in-game item panel:
-        //    primary (weapon damages / armor resists) → hero → tower →
-        //    everything else. Skill bonuses are intentionally omitted. ──
-        var body = new StackPanel { Margin = new Thickness(10, 6, 10, 9) };
-        mainStack.Children.Add(body);
-
-        var u = ci.User;
-        // Weapons AND familiars (pets) carry damage — both show the damage
-        // row in slot 1. Everything else (armor/accessories) shows resists.
+        // ── Stat rows ──
+        // Weapons AND familiars (pets) carry damage; everything else shows
+        // the four resistances.
         bool isDamageItem = u.EquipmentType == EquipmentType.Weapon
                          || u.EquipmentType == EquipmentType.Familiar;
-
-        // Row 1 — primary, stretched edge-to-edge (the headline stats get
-        // the width). Damage items: Attack / Ranged / Elemental (the
-        // type-neutral energy-orb icon — elemental and resists never
-        // appear on the same card, so reuse doesn't collide).
-        // Armor/accessories: the 4 resistances. Zero-value tiles drop.
         if (isDamageItem)
         {
-            AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
+            AddIconRow(body, new (string?, string, int)[]
             {
                 ("/Assets/Icons/weapon_damage.png",  "Attack",    u.Damage),
                 ("/Assets/Icons/weapon_ranged.png",  "Ranged",    u.RangedDamage),
                 ("/Assets/Icons/resist_generic.png", "Elemental", u.ElementalDamage?.Value ?? 0),
-            }, primaryRow: true, plus: false);
+            }, round: true, plus: false, iconSize: 28, fontSize: 13);
         }
         else
         {
-            AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
+            AddIconRow(body, new (string?, string, int)[]
             {
                 ("/Assets/Icons/resist_generic.png",   "Generic",   u.Generic?.Value   ?? 0),
                 ("/Assets/Icons/resist_poison.png",    "Poison",    u.Poison?.Value    ?? 0),
                 ("/Assets/Icons/resist_fire.png",      "Fire",      u.Fire?.Value      ?? 0),
                 ("/Assets/Icons/resist_lightning.png", "Lightning", u.Lightning?.Value ?? 0),
-            }, primaryRow: true, plus: false);
+            }, round: true, plus: false, iconSize: 28, fontSize: 13);
         }
-
-        // Everything else — ONE continuous 3-column grid in fixed role
-        // order (hero → tower → misc). Per-group rows produced ragged
-        // 3+1 orphan lines with misaligned widths; a single aligned grid
-        // keeps every secondary tile the same size with no orphans, and
-        // the icon families still signal the grouping.
-        AddStatRow(body, new System.Collections.Generic.List<(string?, string, int)>
+        AddIconRow(body, new (string?, string, int)[]
         {
-            ("/Assets/Icons/hero_health.png",  "Hero HP",  u.HeroHealth),
-            ("/Assets/Icons/hero_speed.png",   "Hero Spd", u.HeroSpeed),
-            ("/Assets/Icons/hero_damage.png",  "Hero Dmg", u.HeroDamage),
-            ("/Assets/Icons/hero_casting.png", "Casting",  u.HeroCasting),
-            ("/Assets/Icons/tower_health.png", "Tower HP",  u.TowerHealth),
-            ("/Assets/Icons/tower_speed.png",  "Tower Spd", u.TowerSpeed),
-            ("/Assets/Icons/tower_damage.png", "Tower Dmg", u.TowerDamage),
-            ("/Assets/Icons/tower_range.png",  "Tower Rng", u.TowerRange),
+            ("/Assets/Icons/hero_health.png",  "Health",  u.HeroHealth),
+            ("/Assets/Icons/hero_speed.png",   "Speed",   u.HeroSpeed),
+            ("/Assets/Icons/hero_damage.png",  "Damage",  u.HeroDamage),
+            ("/Assets/Icons/hero_casting.png", "Casting", u.HeroCasting),
+        }, round: false, plus: true, iconSize: 22, fontSize: 12);
+        AddIconRow(body, new (string?, string, int)[]
+        {
+            ("/Assets/Icons/tower_health.png", "Health", u.TowerHealth),
+            ("/Assets/Icons/tower_speed.png",  "Speed",  u.TowerSpeed),
+            ("/Assets/Icons/tower_damage.png", "Damage", u.TowerDamage),
+            ("/Assets/Icons/tower_range.png",  "Range",  u.TowerRange),
+        }, round: false, plus: true, iconSize: 22, fontSize: 12);
+        AddIconRow(body, new (string?, string, int)[]
+        {
             ("/Assets/Icons/weapon_knockback.png",   "Knockback",   u.Knockback),
             ("/Assets/Icons/weapon_projectiles.png", "Projectiles", u.NumberOfProjectiles),
             ("/Assets/Icons/weapon_projspeed.png",   "Proj Spd",    u.SpeedOfProjectiles),
@@ -1300,7 +1293,7 @@ public partial class ForgeViewerView : UserControl
             ("/Assets/Icons/weapon_chargespeed.png", "Charge",      u.ChargeSpeed),
             ("/Assets/Icons/weapon_clipammo.png",    "Clip",        u.ClipAmmo),
             ("/Assets/Icons/weapon_blocking.png",    "Block",       u.Blocking),
-        }, primaryRow: false, plus: true);
+        }, round: true, plus: true, iconSize: 22, fontSize: 12);
 
         // ── Selection checkmark ──
         if (isSelected)
@@ -1339,43 +1332,115 @@ public partial class ForgeViewerView : UserControl
         return card;
     }
 
-    // One DD1-style stat row: a UniformGrid of tiles spread edge-to-edge
-    // across the card (4 across; >4 wraps). Any zero-value tile is dropped
-    // and an all-zero row omitted. `primaryRow` = larger tiles.
-    private void AddStatRow(Panel body,
-                            System.Collections.Generic.List<(string? icon, string label, int value)> stats,
-                            bool primaryRow, bool plus)
+    // DD1 <color:r,g,b> runs → coloured inlines. Uncoloured text takes
+    // `defaultBrush`; newlines inside a run become LineBreaks.
+    private static void AppendColorRuns(TextBlock target, string markup, Brush defaultBrush, FontWeight? weight = null)
     {
-        int liveCount = 0;
-        foreach (var stat in stats)
+        foreach (ColorRun r in ColorMarkup.Parse(markup))
         {
-            if (stat.value != 0) liveCount++;
+            string[] lines = r.Text.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0) target.Inlines.Add(new System.Windows.Documents.LineBreak());
+                if (lines[i].Length == 0) continue;
+                var run = new System.Windows.Documents.Run(lines[i])
+                {
+                    Foreground = r.HasColor ? new SolidColorBrush(Color.FromRgb(r.R, r.G, r.B)) : defaultBrush
+                };
+                if (weight is FontWeight w) run.FontWeight = w;
+                target.Inlines.Add(run);
+            }
         }
-        if (liveCount == 0) return;
-
-        // Equal-width aligned tiles. Primary row: as many columns as live
-        // stats, so the headline damage/resist tiles stretch edge-to-edge
-        // across the card. Secondary grid: fixed 3 columns — wide enough
-        // for "+10,000" exact (the base-stat ceiling), and every tile the
-        // same size so rows stay visually consistent.
-        var gridRow = new System.Windows.Controls.Primitives.UniformGrid
-        {
-            Columns = primaryRow ? Math.Min(liveCount, 4) : 3,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Margin = body.Children.Count > 0 ? new Thickness(0, 2, 0, 0) : new Thickness(0)
-        };
-        foreach (var (icon, label, value) in stats)
-        {
-            if (value == 0) continue;
-            gridRow.Children.Add(MakeStatTile(icon, label, value, primaryRow, plus));
-        }
-        body.Children.Add(gridRow);
     }
 
-    // Tile number formatting: base stats (ceiling ~10,000) stay exact;
-    // bigger rolls compact so they fit a fixed-width tile — above 10,000
-    // → "50K", a million and up → "12.5M". The tile tooltip always
-    // carries the exact value.
+    // One rule-separated row of icon tiles, four to a line, wrapping past
+    // four. Zero-valued stats are omitted and the rest pack left.
+    private void AddIconRow(Panel body, (string? icon, string label, int value)[] slots,
+                            bool round, bool plus, double iconSize, double fontSize)
+    {
+        bool any = false;
+        foreach (var s in slots) if (s.value != 0) { any = true; break; }
+        if (!any) return;
+
+        body.Children.Add(new Border
+        {
+            Height = 1,
+            Background = (Brush)FindResource("BorderBrush"),
+            Opacity = 0.55,
+            Margin = new Thickness(0, 8, 0, 8)
+        });
+        var grid = new System.Windows.Controls.Primitives.UniformGrid { Columns = 4 };
+        foreach (var (icon, label, value) in slots)
+        {
+            if (value == 0) continue;
+            grid.Children.Add(MakeIconTile(icon, label, value, round, plus, iconSize, fontSize));
+        }
+        body.Children.Add(grid);
+    }
+
+    // Icon over number over a small label, centred. Round for an item's own
+    // stats (damage / resists / weapon extras), square for hero and tower
+    // bonuses — the same visual grammar the game's panel uses.
+    private FrameworkElement MakeIconTile(string? iconPath, string label, int value,
+                                          bool round, bool plus, double iconSize, double fontSize)
+    {
+        var col = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 2),
+            // Exact value on hover — load-bearing once large values are
+            // compacted to "50K" / "12.5M" on the face.
+            ToolTip = label + ": " + value.ToString("N0")
+        };
+
+        ImageBrush? iconBrush = GetStatIconBrush(iconPath);
+        if (iconBrush != null)
+        {
+            col.Children.Add(new Border
+            {
+                Width = iconSize,
+                Height = iconSize,
+                CornerRadius = new CornerRadius(round ? iconSize / 2 : 4),
+                Background = iconBrush,
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+        }
+        else
+        {
+            col.Children.Add(new TextBlock
+            {
+                Text = ((char)0x2726).ToString(), // four-pointed star placeholder
+                FontSize = iconSize - 8,
+                Height = iconSize,
+                Foreground = (Brush)FindResource("AccentBrush"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center
+            });
+        }
+
+        var number = new TextBlock
+        {
+            Text = (plus && value > 0 ? "+" : "") + FormatStatValue(value),
+            FontSize = fontSize,
+            FontWeight = FontWeights.Bold,
+            Foreground = (Brush)FindResource("TextPrimaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 3, 0, 0)
+        };
+        System.Windows.Documents.Typography.SetNumeralAlignment(number, FontNumeralAlignment.Tabular);
+        col.Children.Add(number);
+
+        col.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 8,
+            Foreground = (Brush)FindResource("TextMutedBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, -1, 0, 0)
+        });
+        return col;
+    }
+
     internal static string FormatStatValue(int v)
     {
         // long, not int: a garbage read of 0x80000000 (int.MinValue) would
@@ -1392,74 +1457,6 @@ public partial class ForgeViewerView : UserControl
             return (k == Math.Floor(k) ? k.ToString("0") : k.ToString("0.#")) + "K";
         }
         return v.ToString("N0");
-    }
-
-    // A single stat tile: a compact inset box — icon + value on the first
-    // line, the label underneath. Same visual language as the Item Dupe
-    // card tiles. The Elemental sentinel and any unreadable icon fall back
-    // to a small star glyph in the icon slot.
-    private FrameworkElement MakeStatTile(string? iconPath, string label, int value, bool primary, bool plus)
-    {
-        double iconSize = primary ? 15 : 13;
-
-        var valRow = new StackPanel { Orientation = Orientation.Horizontal };
-
-        ImageBrush? iconBrush = GetStatIconBrush(iconPath);
-        if (iconBrush != null)
-        {
-            valRow.Children.Add(new Border
-            {
-                Width = iconSize,
-                Height = iconSize,
-                CornerRadius = new CornerRadius(3),
-                Background = iconBrush,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 4, 0)
-            });
-        }
-        else
-        {
-            valRow.Children.Add(new TextBlock
-            {
-                Text = ((char)0x2726).ToString(), // four-pointed star = elemental/placeholder
-                FontSize = iconSize - 2,
-                Foreground = (Brush)FindResource("AccentBrush"),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 4, 0)
-            });
-        }
-
-        valRow.Children.Add(new TextBlock
-        {
-            Text = (plus && value > 0 ? "+" : "") + FormatStatValue(value),
-            FontSize = primary ? 11.5 : 11,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)FindResource("TextPrimaryBrush"),
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
-        var stack = new StackPanel();
-        stack.Children.Add(valRow);
-        stack.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontSize = 8.5,
-            Foreground = (Brush)FindResource("TextMutedBrush")
-        });
-
-        return new Border
-        {
-            Background = (Brush)FindResource("SurfaceBrush"),
-            BorderBrush = (Brush)FindResource("BorderBrush"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(6, 4, 6, 4),
-            Margin = new Thickness(0, 0, 4, 4),
-            // Exact value on hover — load-bearing once large values are
-            // compacted to "50K" / "12.5M" on the tile face.
-            ToolTip = label + ": " + value.ToString("N0"),
-            Child = stack
-        };
     }
 
     private ImageBrush? GetStatIconBrush(string? iconPath)

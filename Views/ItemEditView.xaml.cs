@@ -146,7 +146,9 @@ public partial class ItemEditView : UserControl
             // Hint only — colour runs stripped so the watermark doesn't show
             // as tag soup. Leaving the box blank still writes the raw text
             // (BtnUpdate_Click re-reads it), so nothing is lost.
-            SetHint(TxtDescription, Watermark.StripColorTags(description));
+            // Stored line breaks surface as a literal \n so they can be seen and
+            // re-typed in a single-line box; the write path turns them back.
+            SetHint(TxtDescription, Watermark.StripColorTags(description).Replace("\n", "\\n"));
             // Stripped for the same reason as Description: a coloured forger
             // name would otherwise show as raw tags. Leaving the box blank
             // still preserves the stored text verbatim.
@@ -236,7 +238,10 @@ public partial class ItemEditView : UserControl
         // Stage into the textbox rather than writing to memory here: UPDATE
         // stays the single write path, so nothing lands on the item behind
         // the user's back and CANCEL on the editor really cancels.
-        box.Text = dlg.ResultMarkup;
+        // Stage line breaks as the literal escape the hint uses, so what sits
+        // in this single-line box is visible and re-typeable; the write path
+        // (NormalizeNewlines) turns them back into real newlines.
+        box.Text = dlg.ResultMarkup.Replace("\n", "\\n");
         StatusText.Text = "Colors staged — press UPDATE to write them to the item.";
     }
 
@@ -424,7 +429,7 @@ public partial class ItemEditView : UserControl
             // Watermark.Apply appends "[Grandeu Reforged]" once, and
             // returns the text unchanged if it's already there — so an item
             // only ever grows its Description buffer on the first edit.
-            native.Description   = WriteStringWithFallback(_lastNative.Description,   Watermark.Apply(user.Description), "Description");
+            native.Description   = WriteStringWithFallback(_lastNative.Description,   Watermark.Apply(ColorMarkup.NormalizeNewlines(user.Description)), "Description");
             native.ForgerName    = WriteStringWithFallback(_lastNative.ForgerName,    user.ForgerName ?? "",  "ForgerName");
 
             byte[] bytes = Base.Push(native);

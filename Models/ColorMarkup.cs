@@ -38,12 +38,20 @@ public static class ColorMarkup
 
     // Plain text with every colour run removed. The bytes in game memory are
     // untouched — callers use this on a copy, for display and comparison.
-    public static string Strip(string? s) => TagRx.Replace(s ?? string.Empty, string.Empty).Trim();
+    public static string Strip(string? s) => TagRx.Replace(NormalizeNewlines(s), string.Empty).Trim();
+
+    // A literal backslash-n typed into a single-line box is the only way a
+    // user can ask for a line break there, and other tools write it too.
+    // Treat it as a real newline everywhere: Parse (cards, colour editor) and
+    // the write paths both go through this, so "\n" in a box becomes an
+    // actual line break in game memory, never two literal characters.
+    public static string NormalizeNewlines(string? s) =>
+        (s ?? string.Empty).Replace("\\r\\n", "\n").Replace("\\n", "\n");
 
     public static List<ColorRun> Parse(string? markup)
     {
         var runs = new List<ColorRun>();
-        string s = markup ?? string.Empty;
+        string s = NormalizeNewlines(markup);
         if (s.Length == 0) return runs;
 
         // A stack, so nested runs behave and </color> restores the enclosing

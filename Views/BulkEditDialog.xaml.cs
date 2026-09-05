@@ -178,7 +178,7 @@ public partial class BulkEditDialog : Window
         SetHint(TxtSwingSpeed, _baseSwingSpeed.ToString(CultureInfo.InvariantCulture));
         // Hint only — the raw _baseDescription is what the diff and the write
         // use, so stripping colour runs here is display-safe.
-        SetHint(TxtDescription, Watermark.StripColorTags(_baseDescription));
+        SetHint(TxtDescription, Watermark.StripColorTags(_baseDescription).Replace("\n", "\\n"));
         SetHint(TxtForgerName, _baseForgerName ?? string.Empty);
         SetHint(TxtLevel, _baseLevel.ToString());
         SetHint(TxtMaxLevel, _baseMaxLevel.ToString());
@@ -498,7 +498,7 @@ public partial class BulkEditDialog : Window
             // contract as the MAX path) — the numeric writes below still
             // land instead of the whole item counting as failed.
             if (p.ChDescription)
-                item.Description = WriteStringBestEffort(item.Description, Watermark.Apply(p.Description), address, "Description");
+                item.Description = WriteStringBestEffort(item.Description, Watermark.Apply(ColorMarkup.NormalizeNewlines(p.Description)), address, "Description");
             else
                 item.Description = ApplyWatermarkOnly(item.Description, address);
             if (p.ChForgerName)
@@ -635,7 +635,7 @@ public partial class BulkEditDialog : Window
         try
         {
             if (!string.IsNullOrEmpty(cfg.Description))
-                item.Description = WriteStringBestEffort(item.Description, Watermark.Apply(cfg.Description), address, "Description");
+                item.Description = WriteStringBestEffort(item.Description, Watermark.Apply(ColorMarkup.NormalizeNewlines(cfg.Description)), address, "Description");
             else
                 item.Description = ApplyWatermarkOnly(item.Description, address);
             if (!string.IsNullOrEmpty(cfg.ForgerName))

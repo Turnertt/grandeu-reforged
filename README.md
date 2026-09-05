@@ -8,10 +8,16 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 
 ![Screenshot of the home screen](docs/screenshot.png)
 
+## Before you use this
+
+**Not for online or Ranked play.** Ranked stats are validated server-side; using an editor there can get heroes wiped or an account banned. Use it in solo, local or open play only.
+
+**Use at your own risk.** Edits can break the game or your save. The tool backs your save up before it changes anything, but we are not responsible for a broken game or a lost character.
+
 ## Features
 
 - **Forge Viewer** — browse your forge inventory and pick items to modify in seconds. Filter by **Source** (All / Forge / Hero) with real folder names, type, quality (including Ultimate 93 / + / ++), and sort.
-- **Hero Viewer** — your full hero deck on cards: stats, level/XP/mana, and equipped items. Double-click a hero or an item to jump straight into its editor.
+- **Hero Viewer** — every hero's stats, level and equipped items in one place. Double-click a hero or an item to jump straight into its editor.
 - **Max Stat** — one-click max out any item's stats. **Class-aware**: only applies the stats valid for that item and weapon family. Works with Bulk Edit on any mix of item types.
 - **Item Dupe** — copy an item's stats onto another item, using the game's own value set for the lowest crash risk.
 - **Bulk Edit** — modify many items at once; only the fields you change are written.
@@ -20,9 +26,12 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 - **Game Speed Control** — accelerate the game to blast through levels.
 - **Hero Editor** — customize hero stats and appearance, including color.
 - **Item Editor** — full control over item stats, affixes, and properties, including a read-only weapon-class indicator.
-- **Save backups & restore** — your DD1 save (`DunDefHeroes.dun`) is backed up automatically when the tool starts and before the first edit of every session, so any session can be undone. Restore any backup from **Settings → Save Backups** (with the game closed).
+- **Colour editor** — colour item descriptions and forger names with a visual picker: select the text, click a colour. No tags to type.
+- **Hotkeys** — every title-bar toggle (Auto Kill, Automate G, Unlimited Mana, Max Tower Units, Always On Top) can be bound to a key combo in Settings.
+- **Error log** — a one-session log you can attach when reporting a problem, next to the COPY REPORT button in Settings → Advanced.
+- **Save backups & restore** — your DD1 save (`DunDefHeroes.dun`) is backed up automatically when the tool starts and before the first edit of every session, so any session can be undone. Restore any backup from **Settings → Advanced** (with the game closed).
 - **Safe writes** — every edit checks that the item is still the one you selected before writing, so a stale Forge card (item sold or dropped since the scan) is refused instead of overwriting whatever the game put there.
-- **Zero-touch game-update recovery** — the tool learns the game's memory addresses from the live game, saves them, and re-learns them automatically after every DD1 patch. No tool update needed on patch day. A guided **CALIBRATE** wizard (Settings → Diagnostics) walks you through it if anything ever looks off.
+- **Zero-touch game-update recovery** — the tool learns the game's memory addresses from the live game, saves them, and re-learns them automatically after every DD1 patch. No tool update needed on patch day. A guided **FIX MY SETUP** wizard (Settings → Advanced) walks you through it if anything ever looks off.
 - **Modern UI** — clean dark theme, sidebar navigation, tooltips everywhere, keyboard-friendly (Enter scans, Escape closes dialogs), touch- and small-screen-friendly scrollbars.
 
 ## Build requirements
@@ -84,7 +93,7 @@ Output: `bin\Release\net8.0-windows\win-arm64\publish\GrandeuReforged.exe`. End-
 ## Troubleshooting
 
 - **"No character found" / scans find nothing** — get your hero into the Tavern (or any level) and rescan; menus and loading screens have nothing to find. The first scan after a game update takes a few seconds while the tool re-learns the game's addresses — that's normal.
-- **Still nothing** — run **Settings → Diagnostics → CALIBRATE**. It checks the game step by step (running? 32-bit? character visible? item box reachable?) and tells you exactly which link is broken.
+- **Still nothing** — run **Settings → Advanced → FIX MY SETUP**. It checks the game step by step (running? 32-bit? character visible? item box reachable?) and tells you exactly which link is broken.
 - **Auto-Kill turned itself off** — it auto-disables in the Tavern/lobby and on loading screens; flip it back on once you're in a mission.
 
 ## Why "Reforged"?
@@ -129,5 +138,7 @@ Every release ships four builds of the same app — pick by your CPU and whether
 | **Portable** | `GrandeuReforged-Portable.exe` | Normal Windows PC (Intel/AMD) | No — everything bundled in one larger exe |
 | **ARM64** | `GrandeuReforged-ARM64.exe` | Windows on ARM (Snapdragon laptops, Surface Pro X, …) | Yes — ARM64 runtime |
 | **ARM64 Portable** | `GrandeuReforged-ARM64-Portable.exe` | Windows on ARM | No |
+
+**If you don't know what the ARM version is, don't download it** — it will not run on a normal Intel/AMD PC. Take **Standard** or **Portable**.
 
 Not sure? Grab **Portable** — it runs anywhere on a normal PC with nothing to install. The **Portable** build is also the one to use on Linux/Steam Deck under Wine/Proton (launch it inside the game's prefix, e.g. via `protontricks-launch`).

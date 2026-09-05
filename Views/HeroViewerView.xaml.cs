@@ -38,7 +38,10 @@ public partial class HeroViewerView : UserControl
     // discovered + pinned (see GameChain), not hardcoded here.
     private const int OFF_CLASS_DISPLAYNAME  = 0x424; // UDunDefHero.HeroClassDisplayName
     private const int OFF_HERO_NATIVE        = 0x504; // UDunDefHero.HeroHealthModifier — HeroNative base
-    private const int OFF_HERO_MANA          = 0x53C; // UDunDefHero.ManaPower
+    // UDunDefHero.ManaPower per the SDK. A header readout was tried 2026-09-04
+    // and did NOT match the in-game mana, so it was removed; verify against a
+    // live value before displaying anything from this offset.
+    private const int OFF_HERO_MANA          = 0x53C;
     private const int OFF_HERO_EQUIPMENTS    = 0x5B0; // UDunDefHero.HeroEquipments
     private const int OFF_HERO_WEAPON        = 0x5C8; // UDunDefHero.HeroWeaponEquipment
     private const int OFF_HERO_TEMPLATE      = 0x5D8; // UDunDefHero.BasedOnHeroTemplate
@@ -171,8 +174,9 @@ public partial class HeroViewerView : UserControl
         }
         catch { return null; }
 
-        // Sanity: a real hero has a plausible level. Protects against a
-        // stale ActiveHeroes entry pointing at freed memory.
+        // Sanity: a real hero has a plausible level (cap is 100; 1000 is
+        // generous). Protects against a stale ActiveHeroes entry pointing at
+        // freed memory. Same bound as GameChain.LooksLikeHero.
         if (native.Level < 0 || native.Level > 1000) return null;
 
         string heroName = StripColorTags(SafeReadHeroName(nativeAddr));

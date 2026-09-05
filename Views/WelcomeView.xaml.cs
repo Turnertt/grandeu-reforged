@@ -13,7 +13,7 @@ public partial class WelcomeView : UserControl
     // Latest DD1 Steam build this app was verified working on. DD1 patches
     // ~weekly; bump this single string after the user confirms a clean
     // in-game pass (scans + calibrate + toggles) on the new build.
-    private const string CompatibleDdVersion = "10.7.7";
+    private const string CompatibleDdVersion = "10.8.6";
 
     private DispatcherTimer? _statusTimer;
 

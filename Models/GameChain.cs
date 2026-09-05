@@ -337,8 +337,11 @@ internal static class GameChain
         if (!HasEntriesFingerprint(heroMgr, off)) return false;
         if (ElementsLookLikeEquipment(data, num)) return true;
         // Mirror the lenient discovery tier so an offset pinned by it isn't
-        // re-discovered from scratch on every single scan.
-        return num >= ItemBoxLooseMinCount && ElementsLookLikeEquipment(data, num, lenient: true);
+        // re-discovered from scratch on every single scan. No size floor
+        // here: this offset is already trusted, and a SMALL box full of
+        // edited items (a low inventory on a modded save) would otherwise
+        // fail every scan and pay a window sweep each time.
+        return ElementsLookLikeEquipment(data, num, lenient: true);
     }
 
     // Scan the HeroManager window for the ItemBoxEquipments TArray.
@@ -363,6 +366,19 @@ internal static class GameChain
         // size floor so a small look-alike can never win this tier. Strict
         // wins whenever it can, so working saves never reach this code and
         // the documented +0x294 near-miss stays rejected there.
+        // Known offset FIRST, with no size floor. The window scan below
+        // keeps the largest fingerprint-verified candidate, which assumes the
+        // real box is the biggest equipment-shaped array around — true for a
+        // 2336-item box, false for a 12-item box on a modded save, which
+        // would lose the pin to a bigger look-alike (the documented
+        // 292-element array at +0x294). If the pinned/default offset itself
+        // passes the lenient gate + fingerprint, that is the answer.
+        if (IsItemBoxAt(heroMgr, ItemBoxOffset))
+        {
+            int pinnedCount = RdInt(heroMgr + ItemBoxOffset + 4);
+            Base.Log($"ItemBox: LENIENT tier — pinned +0x{ItemBoxOffset:X} verifies ({pinnedCount} items); keeping it");
+            return (ItemBoxOffset, true, pinnedCount);
+        }
         var lr = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, true);
         if (lr.pairVerified && lr.count >= ItemBoxLooseMinCount)
         {
@@ -720,6 +736,9 @@ internal static class GameChain
 
         int level = System.BitConverter.ToInt32(d, 0x28);  // hero+0x52C HeroLevel
         int cap   = System.BitConverter.ToInt32(d, 0x2C);  // hero+0x530 HeroLevelCap
+        // The hero level cap is 100, so 1000 is already 10x headroom. Kept
+        // tight on purpose: a wider bound buys nothing real and weakens the
+        // gate against freed / reused memory.
         if (level < 0 || level > 1000) return false;
         if (cap <= 0 || cap > 10000) return false;
 
