@@ -24,6 +24,30 @@ public partial class ItemDupeView : UserControl
 {
     private int? _sacrificialAddr;
     private int? _sourceAddr;
+    // Identity of each picked item CAPTURED AT PICK TIME, from live memory.
+    // Deliberately not looked up in ForgeViewerView.LastSnapshot at write
+    // time: that snapshot is replaced by any Forge rescan and emptied by the
+    // Forge RESET button, and the old code treated "address not in the
+    // snapshot" as a PASS — so the exact case the gate exists for (the item
+    // was sold, so it vanished from the new scan) sailed straight through
+    // into a write against freed, possibly reused memory.
+    private ItemIdentity? _sacrificialId;
+    private ItemIdentity? _sourceId;
+
+    // Read the item now and remember what it is. Returns false if it can't
+    // be read — a selection we can't identify is one we must never write to.
+    private static bool TryCaptureIdentity(int addr, out ItemIdentity id)
+    {
+        id = default;
+        try
+        {
+            int size = Marshal.SizeOf(typeof(ItemNative));
+            var native = Base.Push<ItemNative>(Base.Instance.ReadMemory(addr, size));
+            id = ItemIdentity.Of(native);
+            return true;
+        }
+        catch { return false; }
+    }
 
     public ItemDupeView()
     {
@@ -50,7 +74,13 @@ public partial class ItemDupeView : UserControl
         { Owner = Window.GetWindow(this) };
         if (picker.ShowDialog() == true && picker.PickedAddress is int a)
         {
+            if (!TryCaptureIdentity(a, out var id))
+            {
+                Base.RaiseMessage("Couldn't read that item — rescan the Forge Viewer and pick again.", "Item Dupe");
+                return;
+            }
             _sacrificialAddr = a;
+            _sacrificialId = id;
             ShowItem(true, a);
             RefreshDupeEnabled();
         }
@@ -67,7 +97,13 @@ public partial class ItemDupeView : UserControl
         { Owner = Window.GetWindow(this) };
         if (picker.ShowDialog() == true && picker.PickedAddress is int a)
         {
+            if (!TryCaptureIdentity(a, out var id))
+            {
+                Base.RaiseMessage("Couldn't read that item — rescan the Forge Viewer and pick again.", "Item Dupe");
+                return;
+            }
             _sourceAddr = a;
+            _sourceId = id;
             ShowItem(false, a);
             RefreshDupeEnabled();
         }
@@ -88,6 +124,8 @@ public partial class ItemDupeView : UserControl
     {
         _sacrificialAddr = null;
         _sourceAddr = null;
+        _sacrificialId = null;
+        _sourceId = null;
         ClearCard(true);
         ClearCard(false);
         RefreshDupeEnabled();
@@ -299,8 +337,7 @@ public partial class ItemDupeView : UserControl
     // them for display (the bytes in memory are untouched — the dupe
     // copies the raw string, not this cleaned version).
     // internal: HeroViewerView reuses it for hero/equipment names.
-    internal static string StripColorTags(string s) =>
-        System.Text.RegularExpressions.Regex.Replace(s, "</?color[^>]*>", "").Trim();
+    internal static string StripColorTags(string s) => Watermark.StripColorTags(s);
 
     // Display name with the same spirit as ForgeViewerView.SafeReadName:
     // custom name → the Forge snapshot's already-resolved name (the
@@ -341,6 +378,22 @@ public partial class ItemDupeView : UserControl
             int size = Marshal.SizeOf(typeof(ItemNative));
             ItemNative source = Base.Push<ItemNative>(Base.Instance.ReadMemory(srcAddr, size));
             ItemNative target = Base.Push<ItemNative>(Base.Instance.ReadMemory(sacAddr, size));
+
+            // Identity gate, fail-CLOSED: both addresses must still hold the
+            // items that were read when they were picked. A sold/dropped
+            // target is freed, pooled memory — writing an item over whatever
+            // reused it is the one thing this tab must never do, so a missing
+            // identity is a refusal, never a pass.
+            if (_sacrificialId is not ItemIdentity sacId || _sourceId is not ItemIdentity srcId ||
+                !sacId.Matches(target) || !srcId.Matches(source))
+            {
+                TxtStatus.Text = "Not duped — " + ItemIdentity.ChangedMessage;
+                Base.RaiseMessage(
+                    "The source or target item changed or moved in memory since the Forge scan " +
+                    "(sold, dropped, or reloaded). Rescan the Forge Viewer and pick again.",
+                    "Item Dupe");
+                return;
+            }
 
             // Start from the sacrificial so EVERYTHING is preserved by
             // default: identity (EquipmentID1/2, FolderID, UserID,
@@ -399,7 +452,7 @@ public partial class ItemDupeView : UserControl
             if (string.IsNullOrEmpty(srcName)) srcName = " ";
 
             merged.EquipmentName = WriteStr(target.EquipmentName, srcName, sacAddr, "EquipmentName");
-            merged.Description   = WriteStr(target.Description,   srcDesc, sacAddr, "Description");
+            merged.Description   = WriteStr(target.Description,   Watermark.Apply(srcDesc), sacAddr, "Description");
             merged.ForgerName    = WriteStr(target.ForgerName,    srcForg, sacAddr, "ForgerName");
 
             Base.Instance.WriteMemory(sacAddr, Base.Push(merged));

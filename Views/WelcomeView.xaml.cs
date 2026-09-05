@@ -45,13 +45,37 @@ public partial class WelcomeView : UserControl
         _statusTimer = null;
     }
 
+    // Cached across ticks: a process can't change bitness without restarting,
+    // and a restart flips `running`, so the extra check only costs anything on
+    // the transition rather than every 1.5 s.
+    private bool? _lastRunning;
+    private bool? _is32Bit;
+
     private void UpdateConnectionStatus()
     {
         bool running = false;
         try { running = Process.GetProcessesByName("DunDefGame").Length > 0; }
         catch { }
 
-        if (running)
+        if (running != _lastRunning)
+        {
+            _lastRunning = running;
+            _is32Bit = null;
+            if (running)
+            {
+                try { _is32Bit = GameChain.GameIs32Bit(); } catch { }
+            }
+        }
+
+        // A 64-bit game used to read as "Connected" here while nothing in the
+        // tool actually worked — the worst possible message, since it points
+        // the user away from the real cause.
+        if (running && _is32Bit == false)
+        {
+            StatusDot.Fill = (Brush)FindResource("DangerBrush");
+            StatusLabel.Text = "DunDefGame.exe is 64-bit · not supported";
+        }
+        else if (running)
         {
             StatusDot.Fill = (Brush)FindResource("SuccessBrush");
             StatusLabel.Text = "Connected · DunDefGame.exe";
@@ -59,7 +83,7 @@ public partial class WelcomeView : UserControl
         else
         {
             StatusDot.Fill = (Brush)FindResource("DangerBrush");
-            StatusLabel.Text = "DunDefGame.exe not running";
+            StatusLabel.Text = "DunDefGame.exe not running · 32-bit game only";
         }
     }
 

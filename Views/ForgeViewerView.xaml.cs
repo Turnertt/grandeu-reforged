@@ -101,10 +101,6 @@ public partial class ForgeViewerView : UserControl
 
     private List<int> forgeResults = new();
     private List<CachedItem> cachedItems = new();
-    // Addresses (he+0x38) that came from a hero's HeroEquipments rather
-    // than the forge ItemBox — used to tag snapshot items so the picker's
-    // Source dropdown can filter Forge vs Hero.
-    private readonly HashSet<int> _heroResultAddrs = new();
 
     // Snapshot of the most recent forge read, exposed so other views (the
     // Item Dupe picker) can surface the item list without having
@@ -131,6 +127,19 @@ public partial class ForgeViewerView : UserControl
     private HashSet<int> selectedAddresses = new();
     private bool _suppressFilterEvent;
     private Dictionary<int, string> _folderNames = new();
+    // The filtered+sorted list PopulateCards last rendered from — reused by
+    // the bulk-button / selection-status refreshers so a card click or a
+    // keystroke doesn't re-filter and re-sort the whole cache twice.
+    private List<CachedItem> _visibleFiltered = new();
+    // Search-box debounce: rebuilding 30 cards per keystroke is visibly
+    // laggy; wait for a short pause in typing instead.
+    private readonly System.Windows.Threading.DispatcherTimer _searchDebounce = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(150)
+    };
+    // Source combo changed while a scan was in flight — run once more when
+    // it finishes so the list can't silently disagree with the combo.
+    private bool _rescanPending;
 
     // ── Constructor ──────────────────────────────────────────────
 
@@ -144,6 +153,12 @@ public partial class ForgeViewerView : UserControl
         PopulateSortCombo();
         _suppressFilterEvent = false;
         BuildTypeLegend();
+        _searchDebounce.Tick += (s, e) =>
+        {
+            _searchDebounce.Stop();
+            currentPage = 0;
+            PopulateCards();
+        };
     }
 
     // Colour key for the per-category card strips. Swatches come from
@@ -239,51 +254,69 @@ public partial class ForgeViewerView : UserControl
         // Changing the source changes the underlying item set (not just a
         // view filter), so re-enumerate. Suppressed during ctor population.
         if (_suppressFilterEvent) return;
+        if (!BtnScan.IsEnabled) { _rescanPending = true; return; }
         RunForgeScan();
     }
 
     private async void RunForgeScan()
     {
         // Re-entrancy guard: the Source combo's SelectionChanged also calls
-        // this, and it stays enabled during the multi-second recalibrate
-        // await — a second concurrent scan would interleave with the first.
+        // this, and it stays enabled during the multi-second awaits — a
+        // second concurrent scan would interleave with the first.
         if (!BtnScan.IsEnabled) return;
+        // Attach on the UI thread (may show the choose-process dialog).
         if (!Base.OpenProcess()) return;
+        if (Window.GetWindow(this) is not Modinator.MainWindow mw) return;
 
+        var mode = (CboSource.SelectedItem as SourceEntry)?.Mode ?? SourceMode.Forge;
         BtnScan.IsEnabled = false;
         try
         {
-            LblStatus.Text = "Reading items...";
-            List<int>? items = EnumerateItemAddresses();
+            // Every game-memory step runs off the UI thread. The first
+            // resolve can be a multi-second WorldInfo sweep (cold cache on
+            // every launch / toggle change), and the per-item read is ~5
+            // RPMs × ~1,000 items — both used to freeze the window with
+            // "Reading items..." never even painting. The UI thread only
+            // commits results and builds cards. ResolvePlayerPawnAddress /
+            // InvalidatePawnScanCache / ForceStructuralReseed all serialize
+            // on MainWindow's scan gate against the Auto-Kill task.
+            LblStatus.Text = "Locating items...";
+            Enumeration? en = await System.Threading.Tasks.Task.Run(() => TryEnumerate(mw, mode));
 
-            if (items == null && Window.GetWindow(this) is Modinator.MainWindow mw0)
+            if (en == null)
             {
                 // Cheap retry first: a single stale read in the
                 // pawn→HeroManager chain (common right after a map change /
                 // game restart) yields null. Drop the cached pawn-scan + AK
                 // handle and resolve once more before the heavier path.
-                mw0.InvalidatePawnScanCache();
-                items = EnumerateItemAddresses();
+                en = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    mw.InvalidatePawnScanCache();
+                    return TryEnumerate(mw, mode);
+                });
             }
 
-            if (items == null && Window.GetWindow(this) is Modinator.MainWindow mw)
+            if (en == null)
             {
                 // Auto-recalibrate (self-healing): the cheap retry didn't
                 // help, so re-derive the WorldInfo + pawn-vtable seed
                 // structurally from live memory — exactly what Settings →
-                // CALIBRATE does — on a background thread so the UI stays
-                // responsive, then try the enumeration once more. This is
-                // the "if the forge fails, run forge calibration by default"
-                // behaviour: the user never has to open Settings for the
-                // common post-patch / post-restart miss. ForceStructuralReseed
-                // re-pins the seed and leaves a freshly-validated WorldInfo
-                // cached, which ResolvePlayerPawnAddress then reuses.
+                // CALIBRATE does — then try the enumeration once more. This
+                // is the "if the forge fails, run forge calibration by
+                // default" behaviour: the user never has to open Settings for
+                // the common post-patch / post-restart miss.
+                // ForceStructuralReseed re-pins the seed and leaves a
+                // freshly-validated WorldInfo cached, which
+                // ResolvePlayerPawnAddress then reuses.
                 LblStatus.Text = "Recalibrating from live memory...";
-                await System.Threading.Tasks.Task.Run(() => mw.ForceStructuralReseed());
-                items = EnumerateItemAddresses();
+                en = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    mw.ForceStructuralReseed();
+                    return TryEnumerate(mw, mode);
+                });
             }
 
-            if (items == null)
+            if (en == null)
             {
                 // Staged diagnosis: not running / 64-bit unsupported /
                 // menu (no pawn) / chain broke — say which.
@@ -294,13 +327,57 @@ public partial class ForgeViewerView : UserControl
                 return;
             }
 
-            forgeResults = items;
-            if (forgeResults.Count == 0) OnScanFail();
-            else OnScanSuccess();
+            if (en.Addresses.Count == 0)
+            {
+                forgeResults = en.Addresses;
+                OnScanFail();
+                return;
+            }
+
+            // Read every item (struct + strings + name fallback) off-thread,
+            // reporting progress; commit the finished lists in one swap so
+            // a filter change during the read can never enumerate a list
+            // that is being rebuilt underneath it.
+            int total = en.Addresses.Count;
+            var progress = new Progress<int>(n => LblStatus.Text = $"Reading items... {n} / {total}");
+            var read = await System.Threading.Tasks.Task.Run(() => ReadAllItems(en, progress));
+
+            // Addresses enumerated but NOTHING readable is a failed scan, not
+            // an empty forge. Publishing that as success shows a working box
+            // as empty with no hint why — and "my forge is empty" is the
+            // single hardest symptom to diagnose remotely.
+            if (read.items.Count == 0 && read.failed > 0)
+            {
+                _lastScanFailed = read.failed;
+                LblStatus.Text = $"Scan failed — none of the {read.failed} items could be read. " +
+                                 "The game may have closed or changed map; try again.";
+                OnScanFail();
+                return;
+            }
+
+            _lastScanFailed = read.failed;
+            forgeResults = en.Addresses;
+            _folderNames = read.folders;
+            cachedItems = read.items;
+            PublishSnapshot();
+            OnScanSuccess();
+        }
+        catch (Exception ex)
+        {
+            // An exception escaping an async void handler would take the
+            // whole app down; the memory paths swallow their own read
+            // races, so anything reaching here is unexpected — report it.
+            LblStatus.Text = "Scan failed: " + ex.Message;
+            OnScanFail();
         }
         finally
         {
             BtnScan.IsEnabled = true;
+            if (_rescanPending)
+            {
+                _rescanPending = false;
+                RunForgeScan();
+            }
         }
     }
 
@@ -322,41 +399,45 @@ public partial class ForgeViewerView : UserControl
     // +0x38 (same layout as forge items / floor drops), so we return
     // he+0x38 and the existing ReadAllItems/ItemNative/edit pipeline is
     // unchanged for both sources.
-    private List<int>? EnumerateItemAddresses()
+    // Result of one enumeration pass (built on a worker thread, committed
+    // on the UI thread). HeroMgr is kept so the item read can fetch folder
+    // names without walking the pawn chain a second time.
+    private sealed class Enumeration
     {
-        int heroMgr = ResolveHeroManager();
+        public int HeroMgr;
+        public List<int> Addresses = new();
+        public HashSet<int> HeroAddrs = new();
+    }
+
+    // Worker-thread body: resolve the chain and enumerate. Touches no UI
+    // (the Source mode is captured by the caller). null = chain unreachable.
+    private Enumeration? TryEnumerate(Modinator.MainWindow mw, SourceMode mode)
+    {
+        _lastResolvedPawn = mw.ResolvePlayerPawnAddress();
+        int heroMgr = GameChain.ResolveHeroManager(_lastResolvedPawn);
         if (!IsGamePtr(heroMgr)) return null;
 
-        var mode = (CboSource.SelectedItem as SourceEntry)?.Mode ?? SourceMode.Forge;
-        var list = new List<int>();
-        _heroResultAddrs.Clear();
+        var en = new Enumeration { HeroMgr = heroMgr };
 
         if (mode == SourceMode.Forge || mode == SourceMode.All)
             foreach (int he in GameChain.ReadItemBox(heroMgr))     // ItemBoxEquipments (self-healing offset)
-                list.Add(he + 0x38);
+                en.Addresses.Add(he + 0x38);
 
         if (mode == SourceMode.Hero || mode == SourceMode.All)
             foreach (int hero in GameChain.ReadActiveHeroes(heroMgr)) // ActiveHeroes (self-healing offset)
                 foreach (int he in ReadPtrArray(hero + 0x5B0))     // UDunDefHero.HeroEquipments
                 {
                     int addr = he + 0x38;
-                    list.Add(addr);
-                    _heroResultAddrs.Add(addr);
+                    en.Addresses.Add(addr);
+                    en.HeroAddrs.Add(addr);
                 }
 
-        return list;
+        return en;
     }
 
     // Last pawn the chain resolution saw — feeds the staged failure
     // message (distinguishes "no character" from "chain broke").
     private int _lastResolvedPawn;
-
-    private int ResolveHeroManager()
-    {
-        if (Window.GetWindow(this) is not Modinator.MainWindow main) return 0;
-        _lastResolvedPawn = main.ResolvePlayerPawnAddress();
-        return GameChain.ResolveHeroManager(_lastResolvedPawn);
-    }
 
     // Thin wrappers over the shared GameChain helpers (one home for the
     // chain logic; call sites here stay unchanged).
@@ -428,7 +509,33 @@ public partial class ForgeViewerView : UserControl
         string typeLabel = (typeEntry != null && !typeEntry.IsAll) ? typeEntry.Label : "selected items";
         var addresses = new List<int>(selectedAddresses);
 
-        var dlg = new BulkEditDialog(addresses, typeLabel);
+        // Identity of each selected item AS OF THIS SCAN, so the dialog can
+        // skip an address that no longer holds the item the user selected
+        // (sold/dropped → freed → reused by another object). An address with
+        // no entry here is treated as stale by the dialog — that is the point:
+        // the selection survives a rescan, so anything that vanished from the
+        // rebuilt cache is exactly what must not be written to.
+        var identities = new Dictionary<int, ItemIdentity>(addresses.Count);
+        foreach (var ci in cachedItems)
+            if (selectedAddresses.Contains(ci.Address))
+                identities[ci.Address] = new ItemIdentity(ci.EquipmentTemplate, ci.EquipmentID1, ci.EquipmentID2);
+
+        int unknown = addresses.Count - identities.Count;
+        if (unknown > 0 && identities.Count == 0)
+        {
+            Base.RaiseMessage(
+                "None of the selected items are in the current scan — they were probably sold, " +
+                "dropped, or the list was refreshed. Rescan and re-select.",
+                "Bulk Edit");
+            return;
+        }
+        if (unknown > 0)
+            Base.RaiseMessage(
+                $"{unknown} of the {addresses.Count} selected items are no longer in the current scan " +
+                "and will be skipped. Rescan the Forge to pick them up again.",
+                "Bulk Edit");
+
+        var dlg = new BulkEditDialog(addresses, typeLabel, identities);
         dlg.Owner = Application.Current.MainWindow;
         if (dlg.ShowDialog() == true)
         {
@@ -446,7 +553,18 @@ public partial class ForgeViewerView : UserControl
                         if (cachedItems[i].Address == addr)
                         {
                             cachedItems[i].User = user;
-                            cachedItems[i].SearchText = BuildSearchHaystack(cachedItems[i]);
+                            // The strings have to be re-read too, not just the
+                            // struct: BuildSearchHaystack pulls Name/Description/
+                            // ForgerName off the cached item, so rebuilding it
+                            // from stale strings leaves the search box (and the
+                            // card text) matching the pre-edit values until a
+                            // full rescan. Bulk edit writes all three — and since
+                            // the watermark, Description changes on EVERY bulk
+                            // edit, not just ones that set description text.
+                            cachedItems[i].Name = SafeReadName(addr, native, user);
+                            cachedItems[i].Description = SafeReadUni(addr, "Description");
+                            cachedItems[i].ForgerName = SafeReadUni(addr, "ForgerName");
+                            cachedItems[i].SearchText = BuildSearchHaystack(cachedItems[i], _folderNames);
                             break;
                         }
                     }
@@ -459,6 +577,8 @@ public partial class ForgeViewerView : UserControl
             string summary = "Bulk edit complete.\n\nUpdated: " + dlg.AppliedCount;
             if (dlg.FailedCount > 0)
                 summary += "\nFailed: " + dlg.FailedCount;
+            if (dlg.StaleCount > 0)
+                summary += "\nSkipped (changed since scan): " + dlg.StaleCount + " — rescan the Forge to see them.";
             Base.RaiseMessage(summary, "Bulk Edit");
         }
     }
@@ -505,19 +625,23 @@ public partial class ForgeViewerView : UserControl
 
     // ── Filter events ────────────────────────────────────────────
 
+    // Filters and the search box narrow the VIEW only — the selection is
+    // keyed by address and survives them, so a user can select across
+    // folders / searches and bulk-edit the union. The status line and the
+    // BULK (N) label count everything selected, and the status also says
+    // how many of those are hidden by the current filter.
     private void Filter_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressFilterEvent) return;
         currentPage = 0;
-        selectedAddresses.Clear();
         PopulateCards();
     }
 
     private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
     {
-        currentPage = 0;
-        selectedAddresses.Clear();
-        PopulateCards();
+        // Debounced — see _searchDebounce.
+        _searchDebounce.Stop();
+        _searchDebounce.Start();
     }
 
     // ── Bootstrap damage pointers ────────────────────────────────
@@ -628,15 +752,15 @@ public partial class ForgeViewerView : UserControl
         cachedItems.Clear();
         currentPage = 0;
         CardPanel.Children.Clear();
-        RepopulateFolderCombo();
+        RepopulateFolderCombo(preserveView: false);
         UpdateEmptyState();
     }
 
     private void OnScanSuccess()
     {
-        ReadAllItems();
-        ReadFolderNames();
-        RepopulateFolderCombo();
+        // A REFRESH keeps the folder the user was looking at and the page
+        // they were on (edit an item → refresh to verify → still there).
+        RepopulateFolderCombo(preserveView: true);
         // Once we have a cache, flip the primary button into REFRESH mode —
         // pressing it just reruns the same scan path.
         if (forgeResults.Count > 0)
@@ -648,13 +772,20 @@ public partial class ForgeViewerView : UserControl
 
     // ── Read all items from memory ───────────────────────────────
 
-    private void ReadAllItems()
+    // Worker-thread body: folder names first (so the search haystack can
+    // include them), then every item's struct + strings + name fallback.
+    // Builds fresh lists — the caller swaps them in on the UI thread, so a
+    // filter change mid-read can never enumerate a list being rebuilt.
+    private (List<CachedItem> items, Dictionary<int, string> folders, int failed) ReadAllItems(
+        Enumeration en, IProgress<int>? progress)
     {
-        cachedItems.Clear();
+        var folders = ReadFolderNames(en.HeroMgr);
+        var items = new List<CachedItem>(en.Addresses.Count);
+        int failed = 0;
         int structSize = Marshal.SizeOf(typeof(ItemNative));
-        for (int i = 0; i < forgeResults.Count; i++)
+        for (int i = 0; i < en.Addresses.Count; i++)
         {
-            int address = forgeResults[i];
+            int address = en.Addresses[i];
             try
             {
                 byte[] data = Base.Instance.ReadMemory(address, structSize);
@@ -677,15 +808,24 @@ public partial class ForgeViewerView : UserControl
                     FolderID = native.FolderID,
                     EquipmentID1 = native.EquipmentID1,
                     EquipmentID2 = native.EquipmentID2,
-                    IsHero = _heroResultAddrs.Contains(address)
+                    IsHero = en.HeroAddrs.Contains(address)
                 };
-                cached.SearchText = BuildSearchHaystack(cached);
-                cachedItems.Add(cached);
+                cached.SearchText = BuildSearchHaystack(cached, folders);
+                items.Add(cached);
             }
-            catch { }
+            // Per-item races are expected and deliberately swallowed (an item
+            // can be sold/moved mid-scan). But they must still be COUNTED:
+            // without that, every address failing produced an empty cache that
+            // was published as a successful scan, i.e. a working forge looked
+            // like an empty one — the exact symptom that is hardest to
+            // diagnose remotely.
+            catch { failed++; }
+            if (progress != null && ((i + 1) % 50 == 0 || i + 1 == en.Addresses.Count))
+                progress.Report(i + 1);
         }
-
-        PublishSnapshot();
+        if (failed > 0)
+            Base.LogEvent($"ReadAllItems: {failed} of {en.Addresses.Count} item reads failed");
+        return (items, folders, failed);
     }
 
     private void PublishSnapshot()
@@ -721,21 +861,23 @@ public partial class ForgeViewerView : UserControl
     // f.FolderID / f.FolderName). Reuses the same verified HeroManager
     // chain as the item enumeration — no scan, no heuristic.
 
-    private void ReadFolderNames()
+    // Takes the HeroManager the enumeration already resolved — walking the
+    // pawn chain a second time per scan (and re-running the seed pin) was
+    // pure overhead.
+    private static Dictionary<int, string> ReadFolderNames(int heroMgr)
     {
-        _folderNames.Clear();
-        int heroMgr = ResolveHeroManager();
-        if (!IsGamePtr(heroMgr)) return;
+        var names = new Dictionary<int, string>();
+        if (!IsGamePtr(heroMgr)) return names;
 
         int dataPtr = RdPtr(heroMgr + 0x98);   // ItemFolders TArray.Data
         int num     = RdInt(heroMgr + 0x9C);   // ItemFolders TArray.Num
-        if (!IsGamePtr(dataPtr) || num <= 0 || num > 100000) return;
+        if (!IsGamePtr(dataPtr) || num <= 0 || num > 100000) return names;
 
         const int Stride = 24;                 // sizeof(FItemFolder)
         byte[]? block;
         try { block = Base.Instance.ReadMemory(dataPtr, num * Stride); }
-        catch { return; }
-        if (block == null || block.Length < num * Stride) return;
+        catch { return names; }
+        if (block == null || block.Length < num * Stride) return names;
 
         for (int i = 0; i < num; i++)
         {
@@ -745,14 +887,22 @@ public partial class ForgeViewerView : UserControl
             int strLen   = BitConverter.ToInt32(block, b + 0x0C); // FolderName.Num (incl null)
             if (!IsGamePtr(strPtr) || strLen <= 1 || strLen > 512) continue;
             string? name = Base.ReadUniDirect(strPtr, strLen - 1);
-            if (!string.IsNullOrEmpty(name)) _folderNames[folderId] = name;
+            if (!string.IsNullOrEmpty(name)) names[folderId] = name;
         }
+        return names;
     }
 
     // ── Folder combo ─────────────────────────────────────────────
 
-    private void RepopulateFolderCombo()
+    // preserveView: keep the currently selected folder (if it still exists)
+    // and the current page — a REFRESH should not throw the user back to
+    // "All folders", page 1. A failed scan / RESET passes false.
+    private void RepopulateFolderCombo(bool preserveView)
     {
+        int prevFolder = preserveView && CboFolder.SelectedItem is FolderEntry prev
+            ? prev.FolderID : int.MinValue;
+        int prevPage = preserveView ? currentPage : 0;
+
         _suppressFilterEvent = true;
         CboFolder.Items.Clear();
 
@@ -780,11 +930,15 @@ public partial class ForgeViewerView : UserControl
             CboFolder.Items.Add(new FolderEntry(g.FolderID, folderName));
         }
 
+        int selectIdx = 0;
+        if (prevFolder != int.MinValue)
+            for (int i = 0; i < CboFolder.Items.Count; i++)
+                if (CboFolder.Items[i] is FolderEntry fe && fe.FolderID == prevFolder) { selectIdx = i; break; }
         if (CboFolder.Items.Count > 0)
-            CboFolder.SelectedIndex = 0;
+            CboFolder.SelectedIndex = selectIdx;
 
         _suppressFilterEvent = false;
-        currentPage = 0;
+        currentPage = prevPage; // PopulateCards clamps to the new page count
         PopulateCards();
     }
 
@@ -793,6 +947,8 @@ public partial class ForgeViewerView : UserControl
     // Selection / bulk is always available now \u2014 bulk MAX is class-aware
     // (each item maxed only with its compatible stats), so a mixed-type
     // selection is safe; no need to filter to one equipment type first.
+    // Uses _visibleFiltered (what PopulateCards last rendered) rather than
+    // re-filtering + re-sorting the whole cache on every click/keystroke.
     private void UpdateBulkButton()
     {
         bool active = selectedAddresses.Count > 0;
@@ -801,10 +957,33 @@ public partial class ForgeViewerView : UserControl
             tb.Text = active ? "BULK (" + selectedAddresses.Count + ")" : "BULK EDIT";
 
         BtnSelectAll.IsEnabled = true;
-        var filtered = GetFilteredItems();
+        var filtered = _visibleFiltered;
         bool allSelected = filtered.Count > 0 && filtered.All(ci => selectedAddresses.Contains(ci.Address));
         BtnSelectAllLabel.Text = allSelected ? "CLEAR" : "SELECT ALL";
         BtnSelectAllIcon.Text = allSelected ? "\uE8E6" : "\uE762"; // ClearSelection / SelectAll glyphs
+    }
+
+    // "  \u2014  N selected (M hidden by filter)" or the Ctrl+click hint. Shared
+    // by PopulateCards and UpdateSelectionStatus so the two never drift.
+    // Items that couldn't be read on the last scan. Rendered into the status
+    // line (which every page/filter render rebuilds, so it can't be set once
+    // and forgotten) because a silently short list is indistinguishable from
+    // a genuinely smaller forge.
+    private int _lastScanFailed;
+
+    private string ScanWarningSuffix()
+        => _lastScanFailed > 0 ? "  —  " + _lastScanFailed + " unreadable (rescan)" : "";
+
+    private string SelectionSuffix()
+    {
+        if (selectedAddresses.Count == 0) return "  \u2014  Ctrl+click to select";
+        int visible = 0;
+        foreach (var ci in _visibleFiltered)
+            if (selectedAddresses.Contains(ci.Address)) visible++;
+        int hidden = selectedAddresses.Count - visible;
+        string s = "  \u2014  " + selectedAddresses.Count + " selected";
+        if (hidden > 0) s += " (" + hidden + " hidden by filter)";
+        return s;
     }
 
     // Toggle the "selected" look on a card without rebuilding anything else.
@@ -863,11 +1042,7 @@ public partial class ForgeViewerView : UserControl
         int dashIdx = baseText.IndexOf('\u2014');
         if (dashIdx > 0) baseText = baseText.Substring(0, dashIdx).TrimEnd();
 
-        string sel = selectedAddresses.Count > 0
-            ? "  \u2014  " + selectedAddresses.Count + " selected" : "";
-        string hint = selectedAddresses.Count == 0
-            ? "  \u2014  Ctrl+click to select" : "";
-        LblStatus.Text = baseText + sel + hint;
+        LblStatus.Text = baseText + SelectionSuffix();
     }
 
     private List<CachedItem> GetFilteredItems()
@@ -895,27 +1070,30 @@ public partial class ForgeViewerView : UserControl
     private void ApplySort(List<CachedItem> list)
     {
         SortMode mode = CboSort.SelectedItem is SortEntry entry ? entry.Mode : SortMode.Quality;
-        switch (mode)
+        Comparison<CachedItem> primary = mode switch
         {
-            case SortMode.MaxLevelDesc:
-                list.Sort((a, b) => b.User.MaxLevel.CompareTo(a.User.MaxLevel)); break;
-            case SortMode.MaxLevelAsc:
-                list.Sort((a, b) => a.User.MaxLevel.CompareTo(b.User.MaxLevel)); break;
-            case SortMode.LevelDesc:
-                list.Sort((a, b) => b.User.Level.CompareTo(a.User.Level)); break;
-            case SortMode.HeroDamageDesc:
-                list.Sort((a, b) => b.User.HeroDamage.CompareTo(a.User.HeroDamage)); break;
-            case SortMode.TowerDamageDesc:
-                list.Sort((a, b) => b.User.TowerDamage.CompareTo(a.User.TowerDamage)); break;
-            case SortMode.WeaponDamageDesc:
-                list.Sort((a, b) => b.User.Damage.CompareTo(a.User.Damage)); break;
-            case SortMode.BestStat:
-                list.Sort((a, b) => StatTotal(b.User).CompareTo(StatTotal(a.User))); break;
-            case SortMode.NameAsc:
-                list.Sort((a, b) => string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.OrdinalIgnoreCase)); break;
-            default:
-                list.Sort((a, b) => QualityRank(b.User.Quality2).CompareTo(QualityRank(a.User.Quality2))); break;
-        }
+            SortMode.MaxLevelDesc     => (a, b) => b.User.MaxLevel.CompareTo(a.User.MaxLevel),
+            SortMode.MaxLevelAsc      => (a, b) => a.User.MaxLevel.CompareTo(b.User.MaxLevel),
+            SortMode.LevelDesc        => (a, b) => b.User.Level.CompareTo(a.User.Level),
+            SortMode.HeroDamageDesc   => (a, b) => b.User.HeroDamage.CompareTo(a.User.HeroDamage),
+            SortMode.TowerDamageDesc  => (a, b) => b.User.TowerDamage.CompareTo(a.User.TowerDamage),
+            SortMode.WeaponDamageDesc => (a, b) => b.User.Damage.CompareTo(a.User.Damage),
+            SortMode.BestStat         => (a, b) => StatTotal(b.User).CompareTo(StatTotal(a.User)),
+            SortMode.NameAsc          => (a, b) => string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.OrdinalIgnoreCase),
+            _                         => (a, b) => QualityRank(b.User.Quality2).CompareTo(QualityRank(a.User.Quality2)),
+        };
+        // List.Sort is unstable and most keys tie heavily (quality has ~20
+        // values across ~1,000 items), so without a total order the page
+        // contents reshuffled on every REFRESH. Name, then address, makes
+        // the order deterministic across scans.
+        list.Sort((a, b) =>
+        {
+            int c = primary(a, b);
+            if (c != 0) return c;
+            c = string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.OrdinalIgnoreCase);
+            if (c != 0) return c;
+            return ((uint)a.Address).CompareTo((uint)b.Address);
+        });
     }
 
     // ── Card rendering ───────────────────────────────────────────
@@ -926,6 +1104,7 @@ public partial class ForgeViewerView : UserControl
         CardPanel.Children.Clear();
 
         var list = GetFilteredItems();
+        _visibleFiltered = list;
         int totalPages = Math.Max(1, (list.Count + PageSize - 1) / PageSize);
         if (currentPage >= totalPages) currentPage = totalPages - 1;
         if (currentPage < 0) currentPage = 0;
@@ -950,11 +1129,8 @@ public partial class ForgeViewerView : UserControl
         LblPage.Text = "Page " + (currentPage + 1) + " / " + totalPages;
         UpdateBulkButton();
 
-        string sel = selectionMode && selectedAddresses.Count > 0
-            ? "  \u2014  " + selectedAddresses.Count + " selected" : "";
-        string hint = selectionMode && selectedAddresses.Count == 0
-            ? "  \u2014  Ctrl+click to select" : "";
-        LblStatus.Text = "Showing " + (end - start) + " of " + list.Count + " filtered" + sel + hint;
+        LblStatus.Text = "Showing " + (end - start) + " of " + list.Count + " filtered"
+                       + ScanWarningSuffix() + SelectionSuffix();
         UpdateEmptyState();
     }
 
@@ -1368,12 +1544,23 @@ public partial class ForgeViewerView : UserControl
             + u.TowerHealth + u.TowerSpeed + u.TowerDamage + u.TowerRange;
     }
 
-    private static string BuildSearchHaystack(CachedItem ci)
+    // Everything the search box matches against. Beyond the free text it
+    // covers what a user actually types to find gear: quality ("ultimate",
+    // "supreme"), the type both raw and as the card shows it ("ArmorBoots"
+    // / "Boots"), the base (archetype) name, and the folder name.
+    private static string BuildSearchHaystack(CachedItem ci, Dictionary<int, string> folderNames)
     {
-        var sb = new StringBuilder(128);
+        var sb = new StringBuilder(192);
         sb.Append(ci.Name ?? "").Append(' ');
+        sb.Append(ci.BaseName ?? "").Append(' ');
         sb.Append(ci.Description ?? "").Append(' ');
         sb.Append(ci.ForgerName ?? "").Append(' ');
+        sb.Append(QualityDisplay.Name(ci.User.Quality2)).Append(' ');
+        if (ci.User.Quality3 != Quality3.None) sb.Append(ci.User.Quality3).Append(' ');
+        sb.Append(ci.User.EquipmentType).Append(' ');
+        sb.Append(TypeLabel(ci.User.EquipmentType)).Append(' ');
+        if (folderNames.TryGetValue(ci.FolderID, out string? folder) && !string.IsNullOrEmpty(folder))
+            sb.Append(folder).Append(' ');
         sb.Append("Level ").Append(ci.User.Level).Append(' ');
         sb.Append("MaxLevel ").Append(ci.User.MaxLevel);
         return sb.ToString();
@@ -1472,13 +1659,17 @@ public partial class ForgeViewerView : UserControl
     {
         try
         {
-            int start = centerAddr - radiusBefore;
+            // Unsigned math: DD1 is LARGEADDRESSAWARE, so an item above 2 GB
+            // has a NEGATIVE int address. Signed `centerAddr - radiusBefore`
+            // went negative, tripped the low-address clamp, and the fallback
+            // silently scanned from 0x10000 instead of around the item.
+            long start = (long)(uint)centerAddr - radiusBefore;
             if (start < 0x10000) start = 0x10000;
             int size = radiusBefore + radiusAfter;
             if (size <= 0) return null;
 
             byte[] block;
-            try { block = Base.Instance.ReadMemory(start, size); }
+            try { block = Base.Instance.ReadMemory(unchecked((int)(uint)start), size); }
             catch { return null; }
 
             // NativeArray pointer scan, 4-byte aligned

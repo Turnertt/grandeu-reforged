@@ -73,22 +73,35 @@ public partial class HeroViewerView : UserControl
         }
         try
         {
-            int heroMgr = ResolveHeroManager();
+            if (Window.GetWindow(this) is not MainWindow mw) return; // finally re-enables the button
+
+            // The chain resolve can be a multi-second WorldInfo sweep on a
+            // cold cache — run it (and the roster read) off the UI thread,
+            // like the Forge Viewer. The pawn-scan calls serialize on
+            // MainWindow's scan gate against the Auto-Kill task.
+            LblStatus.Text = "Locating heroes...";
+            int heroMgr = await System.Threading.Tasks.Task.Run(() => ResolveHeroManager(mw));
 
             // Auto-recalibrate (self-healing), mirroring the Forge Viewer:
             // if the chain didn't resolve, re-derive the WorldInfo + seed
             // structurally from live memory in the background, then retry
             // once — no trip to Settings → CALIBRATE for the common
             // post-patch / post-restart miss.
-            if (heroMgr == 0 && Window.GetWindow(this) is MainWindow mw)
+            if (heroMgr == 0)
             {
-                mw.InvalidatePawnScanCache();
-                heroMgr = ResolveHeroManager();
+                heroMgr = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    mw.InvalidatePawnScanCache();
+                    return ResolveHeroManager(mw);
+                });
                 if (heroMgr == 0)
                 {
                     LblStatus.Text = "Recalibrating from live memory...";
-                    await System.Threading.Tasks.Task.Run(() => mw.ForceStructuralReseed());
-                    heroMgr = ResolveHeroManager();
+                    heroMgr = await System.Threading.Tasks.Task.Run(() =>
+                    {
+                        mw.ForceStructuralReseed();
+                        return ResolveHeroManager(mw);
+                    });
                 }
             }
 
@@ -109,9 +122,12 @@ public partial class HeroViewerView : UserControl
             // through GameChain's self-healing (discovered + pinned)
             // offsets. Fall back to ActiveHeroes if the full list is
             // somehow empty.
-            var heroes = GameChain.ReadLocalHeroes(heroMgr);
-            if (heroes.Count == 0)
-                heroes = GameChain.ReadActiveHeroes(heroMgr);
+            int hm = heroMgr;
+            var heroes = await System.Threading.Tasks.Task.Run(() =>
+            {
+                var list = GameChain.ReadLocalHeroes(hm);
+                return list.Count == 0 ? GameChain.ReadActiveHeroes(hm) : list;
+            });
 
             int shown = 0;
             foreach (int hero in heroes)
@@ -581,9 +597,10 @@ public partial class HeroViewerView : UserControl
     // Last pawn the chain resolution saw — feeds the staged failure message.
     private int _lastResolvedPawn;
 
-    private int ResolveHeroManager()
+    // Worker-thread safe: takes the window reference instead of calling
+    // Window.GetWindow (UI-thread only).
+    private int ResolveHeroManager(MainWindow main)
     {
-        if (Window.GetWindow(this) is not MainWindow main) return 0;
         _lastResolvedPawn = main.ResolvePlayerPawnAddress();
         return GameChain.ResolveHeroManager(_lastResolvedPawn);
     }

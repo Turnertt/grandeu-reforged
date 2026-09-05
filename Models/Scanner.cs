@@ -345,6 +345,11 @@ internal class Scanner
 		{
 			throw new InvalidOperationException();
 		}
+		// Every item/hero/misc edit funnels through here, so this is the one
+		// place to snapshot the DD1 save file before the session's FIRST
+		// write can be persisted by the game. One bool after the first call;
+		// never throws (SaveBackup swallows its own I/O errors).
+		Modinator.SaveBackup.OnGameWrite();
 		// NOTE: negative int32 addresses are valid on LARGEADDRESSAWARE processes
 		// like DunDefGame.exe (allocates in 2-4 GB range). Do not reject them.
 		if (data.Length == 0)

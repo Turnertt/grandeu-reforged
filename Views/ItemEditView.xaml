@@ -477,11 +477,31 @@
                         </StackPanel>
                         <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
                             <TextBlock Text="Description" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
-                            <TextBox x:Name="TxtDescription" />
+                            <DockPanel>
+                                <Button x:Name="BtnColorDescription" DockPanel.Dock="Right"
+                                        Content="&#xE790;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                        Width="34" Padding="0" Margin="6,0,0,0"
+                                        Style="{StaticResource GhostButton}"
+                                        ToolTip="Color editor — pick colors for this text."
+                                        Click="BtnColorDescription_Click" />
+                                <TextBox x:Name="TxtDescription" />
+                            </DockPanel>
                         </StackPanel>
                         <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,0,8,8">
                             <TextBlock Text="Forger Name" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />
-                            <TextBox x:Name="TxtForgerName" />
+                            <DockPanel>
+                                <Button x:Name="BtnColorForger" DockPanel.Dock="Right"
+                                        Content="&#xE790;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                        Width="34" Padding="0" Margin="6,0,0,0"
+                                        Style="{StaticResource GhostButton}"
+                                        ToolTip="Color editor — pick colors for this text."
+                                        Click="BtnColorForger_Click" />
+                                <TextBox x:Name="TxtForgerName" TextChanged="TxtForgerName_TextChanged" />
+                            </DockPanel>
+                            <TextBlock x:Name="LblForgerWarn" Visibility="Collapsed"
+                                       Foreground="{StaticResource DangerBrush}"
+                                       FontSize="10" TextWrapping="Wrap" Margin="0,4,0,0"
+                                       Text="Setting a forger name makes the item unsellable — the game only accepts names it verified itself. Clear this field to make it sellable again." />
                         </StackPanel>
                         <StackPanel Grid.Row="2" Grid.Column="1" Margin="8,0,0,8">
                             <TextBlock Text="Equipment Type" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" Margin="0,0,0,4" />

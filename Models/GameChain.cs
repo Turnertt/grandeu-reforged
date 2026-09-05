@@ -60,11 +60,25 @@ internal static class GameChain
 
     public static int ResolveHeroManager(int playerPawn)
     {
-        if (!IsGamePtr(playerPawn)) return 0;
+        if (!IsGamePtr(playerPawn)) { Base.Log("Chain: playerPawn=0 (no character resolved)"); return 0; }
         int controller = RdPtr(playerPawn + OFF_PAWN_CONTROLLER);
         int player     = RdPtr(controller + OFF_CONTROLLER_PLAYER);
         int vpClient   = RdPtr(player + OFF_PLAYER_VIEWPORT);
-        if (!IsGamePtr(vpClient)) return 0;
+        // Debug-only (Base.Log is [Conditional("DEBUG")]): the per-hop dump
+        // is what tells a remote report WHICH link died. A null Controller
+        // on every pawn is the client signature — UE3 doesn't replicate
+        // Pawn.Controller — and it takes out Mana + Forge + Hero together
+        // while leaving Auto-Kill and Max Tower Units working.
+        Base.Log($"Chain: pawn=0x{playerPawn:X8} +0x{OFF_PAWN_CONTROLLER:X}=0x{controller:X8} " +
+                 $"+0x{OFF_CONTROLLER_PLAYER:X}=0x{player:X8} +0x{OFF_PLAYER_VIEWPORT:X}=0x{vpClient:X8}");
+        if (!IsGamePtr(vpClient))
+        {
+            Base.Log("Chain: BROKE at " + (!IsGamePtr(controller) ? "Pawn.Controller (+0x22C) — null/invalid; " +
+                     "expected on a CLIENT (not hosting)" : !IsGamePtr(player)
+                     ? "PlayerController.Player (+0x3B8) — this pawn is not the local player"
+                     : "LocalPlayer.ViewportClient (+0x194)"));
+            return 0;
+        }
 
         // Fast path: the pinned/default hop still points at an object that
         // verifiably CONTAINS the hero arrays or the forge box (this also
@@ -100,6 +114,17 @@ internal static class GameChain
         if (vtable < 0x00400000u || vtable >= 0x02000000u) return false;
         return IsHeroPairAt(hm, LocalHeroesOffset) || IsItemBoxAt(hm, ItemBoxOffset);
     }
+
+    // Public form of the content gate. Callers need this to tell "the hop
+    // resolved to the real manager" from "ResolveHeroManager fell back to the
+    // raw pointer because nothing verified" — see the fallback at the end of
+    // ResolveHeroManager, which deliberately returns an UNVERIFIED pointer so
+    // staged diagnosis can still run. A non-zero HeroManager is therefore NOT
+    // by itself evidence of success, and anything that reports success to the
+    // user (CALIBRATE) has to check this too. The trap it guards against is
+    // concrete: HeroManagerTemplate sits at vpClient+0xCF8, one slot below the
+    // real hop, with the same vtable and empty arrays.
+    public static bool IsVerifiedHeroManager(int hm) => LooksLikeHeroManager(hm);
 
     // Window scanned for the TheHeroManager pointer, ViewportClient-
     // relative — ±0x100 around the known +0xCFC.
@@ -256,12 +281,25 @@ internal static class GameChain
         // the box, no scan needed.
         int off = ItemBoxOffset;
         if (IsItemBoxAt(heroMgr, off))
-            return ReadPtrArray(heroMgr + off);
+        {
+            var fast = ReadPtrArray(heroMgr + off);
+            Base.Log($"ItemBox: fast path OK at +0x{off:X} -> {fast.Count} items");
+            return fast;
+        }
+        // Everything below is a self-heal attempt. Log the inputs, because
+        // "the box is empty" and "the box moved" and "the pinned offset is
+        // reading a shop page" all look identical from the outside.
+        Base.Log($"ItemBox: pinned +0x{off:X} did NOT verify " +
+                 $"(num={RdInt(heroMgr + off + 4)} entriesNum={RdInt(heroMgr + off + 0x10)}) — rediscovering");
 
         // Pinned offset no longer positively reads as the box: a patch
         // moved it, the box is simply empty, or the fingerprint
         // assumption broke. Rediscover.
         (int found, bool verified, int count) = DiscoverItemBox(heroMgr);
+        // LogEvent, not Log: this single line is what identified the
+        // edited-item box bug from a remote machine — it has to survive into
+        // the shipped build's shareable log.
+        Base.LogEvent($"ItemBox: discovery -> offset=+0x{found:X} verified={verified} count={count}");
 
         if (verified)
         {
@@ -283,6 +321,8 @@ internal static class GameChain
             Base.Log($"ItemBox: loose candidate +0x{found:X} ({count} elems) used for display — not pinned (no ItemBoxEntries fingerprint)");
             return ReadPtrArray(heroMgr + found);
         }
+        Base.Log($"ItemBox: FELL BACK to +0x{off:X} -> {current.Count} items " +
+                 "(no fingerprint-verified box; an EMPTY box does this legitimately)");
         return current;
     }
 
@@ -294,7 +334,11 @@ internal static class GameChain
         int num  = RdInt(heroMgr + off + 4);
         int max  = RdInt(heroMgr + off + 8);
         if (!IsGamePtr(data) || num <= 0 || max < num || max > 200000) return false;
-        return ElementsLookLikeEquipment(data, num) && HasEntriesFingerprint(heroMgr, off);
+        if (!HasEntriesFingerprint(heroMgr, off)) return false;
+        if (ElementsLookLikeEquipment(data, num)) return true;
+        // Mirror the lenient discovery tier so an offset pinned by it isn't
+        // re-discovered from scratch on every single scan.
+        return num >= ItemBoxLooseMinCount && ElementsLookLikeEquipment(data, num, lenient: true);
     }
 
     // Scan the HeroManager window for the ItemBoxEquipments TArray.
@@ -304,15 +348,39 @@ internal static class GameChain
     // empty box keeps the current offset.
     public static (int offset, bool pairVerified, int count) DiscoverItemBox(int heroMgr)
     {
-        var r = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd);
+        var r = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, false);
         if (r.pairVerified) return r;
-        var w = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd);
+        var w = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd, false);
         if (w.pairVerified) return w;
+
+        // ── Fallback tier: EDITED-ITEM saves (added 2026-09-04) ──
+        // Nothing passed the vanilla value ranges. A real user's 2336-item
+        // box was invisible here while the 3-item shop pages beside it
+        // passed, so the forge silently read a shop page instead. Retry with
+        // the value ranges dropped (structure still fully enforced), and buy
+        // the looseness back three ways: near-unanimous element agreement
+        // (90 %), the ItemBoxEntries fingerprint still REQUIRED to pin, and a
+        // size floor so a small look-alike can never win this tier. Strict
+        // wins whenever it can, so working saves never reach this code and
+        // the documented +0x294 near-miss stays rejected there.
+        var lr = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, true);
+        if (lr.pairVerified && lr.count >= ItemBoxLooseMinCount)
+        {
+            Base.Log($"ItemBox: LENIENT tier matched +0x{lr.offset:X} ({lr.count} items) — " +
+                     "strict value ranges rejected every candidate (edited items?)");
+            return lr;
+        }
+        var lw = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd, true);
+        if (lw.pairVerified && lw.count >= ItemBoxLooseMinCount)
+        {
+            Base.Log($"ItemBox: LENIENT tier matched +0x{lw.offset:X} ({lw.count} items, wide window)");
+            return lw;
+        }
         return w.count > r.count ? w : r;
     }
 
     private static (int offset, bool pairVerified, int count) DiscoverItemBoxIn(
-        int heroMgr, int scanStart, int scanEnd)
+        int heroMgr, int scanStart, int scanEnd, bool lenient)
     {
         if (!IsGamePtr(heroMgr)) return (0, false, 0);
 
@@ -335,7 +403,7 @@ internal static class GameChain
             // Plausible populated TArray header (UE3 invariant: Num ≤ Max).
             if (!IsGamePtr(data) || num <= 0 || num > 200000 || max < num || max > 200000)
                 continue;
-            if (!ElementsLookLikeEquipment(data, num)) continue;
+            if (!ElementsLookLikeEquipment(data, num, lenient)) continue;
 
             // Fingerprint: the next field is a valid populated NON-equipment
             // TArray (ItemBoxEntries — per-user entries, Num ≥ 1). A shop
@@ -346,10 +414,13 @@ internal static class GameChain
             int pData = System.BitConverter.ToInt32(win, i + 0xC);
             int pNum  = System.BitConverter.ToInt32(win, i + 0x10);
             int pMax  = System.BitConverter.ToInt32(win, i + 0x14);
+            // NotEquipment, not !Equipment: an unreadable neighbour must not
+            // count as "the entries array is next door" (see ClassifyArray).
             bool pair = IsGamePtr(pData) && pNum > 0 && pMax >= pNum && pMax <= 200000 &&
-                        !ElementsLookLikeEquipment(pData, pNum);
+                        ClassifyArray(pData, pNum, lenient) == ArrayKind.NotEquipment;
 
-            Base.Log($"ItemBox: candidate HeroManager+0x{off:X} num={num} pair={pair}");
+            Base.Log($"ItemBox: candidate HeroManager+0x{off:X} num={num} pair={pair}" +
+                     (lenient ? " [lenient]" : ""));
             if (pair) { if (num > bestNum)  { bestNum = num;  bestOff = off;  } }
             else      { if (num > looseNum) { looseNum = num; looseOff = off; } }
         }
@@ -368,26 +439,61 @@ internal static class GameChain
         int pNum  = RdInt(heroMgr + off + 0x10);
         int pMax  = RdInt(heroMgr + off + 0x14);
         return IsGamePtr(pData) && pNum > 0 && pMax >= pNum && pMax <= 200000 &&
-               !ElementsLookLikeEquipment(pData, pNum);
+               ClassifyArray(pData, pNum, lenient: false) == ArrayKind.NotEquipment;
     }
 
-    // Do the first elements of this array read as live UHeroEquipment*?
+    // Do this array's elements read as live UHeroEquipment*?
     // Requires ≥ItemBoxMinScore hits (capped at Num) AND ≥75 % of the
     // sample, so stride-aliased struct arrays don't sneak past.
+    //
+    // The sample is SPREAD ACROSS THE WHOLE ARRAY, not taken from the front
+    // (fixed 2026-09-04). Sampling elements 0..7 of a 2336-item box judges
+    // the entire box by whatever happens to sit in its first eight slots —
+    // and a real user's report had exactly that: the box at +0x3A8 (2336
+    // items) was rejected outright while the 3-item shop pages beside it
+    // passed, so the forge fell back to reading a shop page. Reading the
+    // array end-to-end is the same cost per sample and immune to a local
+    // cluster of odd items.
     private static bool ElementsLookLikeEquipment(int dataPtr, int num)
+        => ClassifyArray(dataPtr, num, lenient: false) == ArrayKind.Equipment;
+
+    private static bool ElementsLookLikeEquipment(int dataPtr, int num, bool lenient)
+        => ClassifyArray(dataPtr, num, lenient) == ArrayKind.Equipment;
+
+    // Three outcomes, and the third one matters. The item-box fingerprint asks
+    // whether the NEIGHBOUR array is *not* equipment — so if a failed read
+    // collapses into "not equipment", a transient read race becomes positive
+    // evidence and can promote a look-alike into the verified tier, which is
+    // then PINNED to overrides.json. Only a read that completed and then
+    // failed the gate is evidence of anything; "couldn't read it" is not.
+    private enum ArrayKind { Unreadable, Equipment, NotEquipment }
+
+    private static ArrayKind ClassifyArray(int dataPtr, int num, bool lenient)
     {
-        if (!IsGamePtr(dataPtr) || num <= 0) return false;
+        if (!IsGamePtr(dataPtr) || num <= 0) return ArrayKind.Unreadable;
         int sample = num < ItemBoxSampleCount ? num : ItemBoxSampleCount;
         byte[]? arr;
-        try { arr = Base.Instance.ReadMemory(dataPtr, sample * 4); }
-        catch { return false; }
-        if (arr == null || arr.Length < sample * 4) return false;
+        try { arr = Base.Instance.ReadMemory(dataPtr, num * 4); }
+        catch { return ArrayKind.Unreadable; }
+        if (arr == null || arr.Length < num * 4) return ArrayKind.Unreadable;
 
         int hits = 0;
-        for (int i = 0; i < sample; i++)
-            if (LooksLikeEquipment(System.BitConverter.ToInt32(arr, i * 4))) hits++;
+        for (int s = 0; s < sample; s++)
+        {
+            // Even spread: first, last, and evenly spaced in between.
+            int i = sample == 1 ? 0 : (int)((long)s * (num - 1) / (sample - 1));
+            if (LooksLikeEquipment(System.BitConverter.ToInt32(arr, i * 4), lenient)) hits++;
+        }
         int needed = ItemBoxMinScore < sample ? ItemBoxMinScore : sample;
-        return hits >= needed && hits * 4 >= sample * 3;
+        // Lenient mode drops the vanilla value ranges, so it has to buy that
+        // back with near-unanimity (90 % vs 75 %) — see DiscoverItemBox.
+        bool ok = hits >= needed &&
+                  (lenient ? hits * 10 >= sample * 9 : hits * 4 >= sample * 3);
+        // A big array that ALMOST passes is the interesting failure — that is
+        // a real box being rejected. Log it so a remote report shows it.
+        if (!ok && !lenient && num >= ItemBoxLooseMinCount)
+            Base.Log($"ItemBox: array of {num} REJECTED by the strict equipment gate ({hits}/{sample} passed)");
+        return ok ? ArrayKind.Equipment : ArrayKind.NotEquipment;
     }
 
     private static readonly int ItemNativeSize =
@@ -397,7 +503,12 @@ internal static class GameChain
     // ItemNative (he + 0x38) passes the same sanity gates the forge's
     // bootstrap trusts for a genuine item. Strong enough that a hero object
     // or a garbage pointer landing here at a wrong offset scores ~0.
-    private static bool LooksLikeEquipment(int he)
+    private static bool LooksLikeEquipment(int he) => LooksLikeEquipment(he, lenient: false);
+
+    // lenient: keep every STRUCTURAL check, drop the vanilla VALUE ranges.
+    // Only used by the fallback discovery tier (see DiscoverItemBox) for
+    // saves full of edited items, where the vanilla ranges reject a real box.
+    private static bool LooksLikeEquipment(int he, bool lenient)
     {
         if (!IsGamePtr(he)) return false;
         uint vtable = (uint)RdInt(he);
@@ -414,9 +525,20 @@ internal static class GameChain
 
         // EquipmentTemplate is the archetype UObject pointer (heap, aligned).
         if ((uint)it.EquipmentTemplate < 0x100000u || (it.EquipmentTemplate & 3) != 0) return false;
-        if (it.Level < 0 || it.Level > 500) return false;
-        if (it.MaxEquipmentLevel <= 0 || it.MaxEquipmentLevel > 500) return false;
-        if (it.MaxEquipmentLevel < it.Level) return false;
+        // Level bounds are a PLAUSIBILITY heuristic, not structure. Vanilla
+        // items sit well under 500; EDITED items (by this very tool, or
+        // traded in from someone who did) routinely don't, and in lenient
+        // mode the only job left is to stay below the heap-pointer floor
+        // (0x01000000 = 16.7M) so a pointer-shaped dword can't pass as a
+        // level. The real rejection power is structural — code-section
+        // vtable, aligned EquipmentTemplate, consistent name header —
+        // reinforced by the percentage rule at the call site.
+        int lvlCap = lenient ? 1_000_000 : 500;
+        if (it.Level < 0 || it.Level > lvlCap) return false;
+        if (it.MaxEquipmentLevel <= 0 || it.MaxEquipmentLevel > lvlCap) return false;
+        // Max >= Level is a vanilla INVARIANT, not a structural one: an
+        // edited item can carry Level above its own cap.
+        if (!lenient && it.MaxEquipmentLevel < it.Level) return false;
         if (!NativeArrayConsistent(it.EquipmentName)) return false;
         return true;
     }
@@ -459,7 +581,11 @@ internal static class GameChain
         int off = LocalHeroesOffset;
         if (!IsHeroPairAt(heroMgr, off))
         {
+            Base.Log($"HeroArrays: pinned +0x{off:X} did NOT verify " +
+                     $"(local num={RdInt(heroMgr + off + 4)} active num={RdInt(heroMgr + off + 0x10)}) — rediscovering");
             int found = DiscoverHeroArraysOffset(heroMgr);
+            Base.Log($"HeroArrays: discovery -> offset=+0x{found:X}" +
+                     (found == 0 ? " (NOTHING verified — the dense-roster + sparse-active pair test failed)" : ""));
             if (found != 0)
             {
                 if (found != off) Tunables.PinLocalHeroesOffset(found);
@@ -468,8 +594,11 @@ internal static class GameChain
             // else: keep the pinned/default offset — empty menus and
             // transient stale reads must not degrade a good pin.
         }
-        return activeOnly ? ReadPtrArray(heroMgr + off + 0xC)
-                          : ReadPtrArray(heroMgr + off, 8);
+        var result = activeOnly ? ReadPtrArray(heroMgr + off + 0xC)
+                                : ReadPtrArray(heroMgr + off, 8);
+        Base.Log($"HeroArrays: read {(activeOnly ? "active" : "local")} at +0x{(activeOnly ? off + 0xC : off):X} " +
+                 $"-> {result.Count} heroes");
+        return result;
     }
 
     // The pinned offset's fingerprint, from live reads (fast path): a
@@ -602,6 +731,53 @@ internal static class GameChain
         return nLen >= 0 && nLen <= 4096 && nMax >= 0 && nMax <= 4096;
     }
 
+    // ── Diagnostic: what do this save's arrays actually look like? ──
+    //
+    // The counts at the PINNED offsets only say "we read N items there". When
+    // a save behaves differently from a known-good one, the question is what
+    // is at every OTHER candidate offset — is the box somewhere else, is it
+    // empty, does the ItemBoxEntries neighbour exist, do the hero arrays have
+    // the dense+sparse shape discovery requires? This dumps the whole
+    // HeroManager window through the same gates discovery uses, so a remote
+    // report shows the real layout instead of a verdict. Read-only; the exact
+    // shape of data that solved the 2026-07-02 shop-page bug.
+    internal static string DescribeArrayWindow(int heroMgr)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (!IsGamePtr(heroMgr)) return "  (no HeroManager)\n";
+        const int start = 0x280, end = 0x480;
+        int hits = 0;
+        for (int off = start; off <= end; off += 4)
+        {
+            int data = RdPtr(heroMgr + off);
+            int num  = RdInt(heroMgr + off + 4);
+            int max  = RdInt(heroMgr + off + 8);
+            // Same plausible-TArray-header gate as discovery (UE3 Num <= Max).
+            if (!IsGamePtr(data) || num <= 0 || num > 200000 || max < num || max > 200000) continue;
+
+            bool eq    = ElementsLookLikeEquipment(data, num);
+            bool dense = ElementsLookLikeHeroes(data, num, 8) || ElementsLookLikeHeroes(data, num, 4);
+            // ActiveHeroes is a SPARSE slot array (live: 40 slots, one hero),
+            // so the dense >=75% rule never matches it — but it is the second
+            // half of the pair discovery requires, so it has to be visible
+            // here or a failed hero discovery is unreadable.
+            bool sparse = !dense && SparseSlotsLookLikeHeroes(data, num);
+            // The box's tell: next field is a populated NON-equipment TArray.
+            int pData = RdPtr(heroMgr + off + 0xC);
+            int pNum  = RdInt(heroMgr + off + 0x10);
+            bool entriesNext = IsGamePtr(pData) && pNum > 0 && !ElementsLookLikeEquipment(pData, pNum);
+
+            string tag = eq ? (entriesNext ? "EQUIPMENT +entries-next => ITEM BOX" : "equipment (shop page / lobby?)")
+                       : dense ? "heroes (dense => LocalLoadedHeroes)"
+                       : sparse ? "heroes (sparse => ActiveHeroes)"
+                       : "other";
+            sb.Append($"    +0x{off:X3} num={num,-6} max={max,-6} {tag}\n");
+            if (++hits >= 40) { sb.Append("    ...truncated\n"); break; }
+        }
+        if (hits == 0) sb.Append("    (no TArray-shaped fields found in the window — chain target may be wrong)\n");
+        return sb.ToString();
+    }
+
     // Mirror of ForgeViewerView.NativeArrayConsistent — a UE3 FString/array
     // header is consistent only as (null,0,0) or (ptr, 0<len<=cap).
     private static bool NativeArrayConsistent(NativeArray na)
@@ -683,8 +859,16 @@ internal static class GameChain
             return "No character found — the game looks like it's in a menu or loading screen. " +
                    "Go to the Tavern or a mission, then rescan. " +
                    "If that doesn't help, run CALIBRATE in Settings.";
-        return "Couldn't reach the item manager from the player character " +
-               "(a transient stale read is common right after a map change). " +
-               "Rescan in a few seconds, or run CALIBRATE in Settings.";
+        // The pawn resolved but the chain off it didn't. The common causes
+        // are ordered by how often they actually bite: a transient read right
+        // after a map change, or the tool locking onto the wrong character
+        // (an online game where another player's pawn was picked — the same
+        // fault also makes Unlimited Mana stop working while Auto-Kill and
+        // Max Tower Units keep going, because those never use the character).
+        return "Found your character but couldn't reach the item manager from it. " +
+               "If you're in an online game, this tool only works reliably in solo/local play — " +
+               "try a solo game. Otherwise rescan in a few seconds (common right after a map change), " +
+               "or run CALIBRATE in Settings. Settings → Diagnostics → COPY REPORT shows exactly " +
+               "which link is broken.";
     }
 }

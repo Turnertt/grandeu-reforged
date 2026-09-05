@@ -18,92 +18,271 @@ public partial class SettingsView : UserControl
     private void OnLoaded(object sender, RoutedEventArgs e) => SyncFromState();
 
     // Call whenever the underlying state changes (e.g. a hotkey toggled a
-    // feature) so the switches stay in sync with reality. _suppressHandlers
+    // feature) so the page stays in sync with reality. _suppressHandlers
     // blocks the Toggled events that setting IsChecked would otherwise fire.
+    //
+    // The gameplay switches deliberately no longer live here — every one of
+    // them is a title-bar toggle, and duplicating them meant two controls to
+    // keep in sync for no benefit. Settings owns their HOTKEYS instead.
     public void SyncFromState()
     {
         _suppressHandlers = true;
         SwFullScanning.IsChecked = Base.FullScan;
         SwPauseOnScan.IsChecked = Base.PauseScan;
-        SwSimulateG.IsChecked = Base.SimulateG;
+        SwErrorLog.IsChecked = Prefs.Current.ErrorLogEnabled;
         if (Window.GetWindow(this) is MainWindow main)
-        {
-            SwAlwaysOnTop.IsChecked = main.Topmost;
-            SwAutoKill.IsChecked = main.AutoKillEnabled;
-            SwUnlimitedMana.IsChecked = main.UnlimitedManaEnabled;
-            SwMaxTowerUnits.IsChecked = main.MaxTowerUnitsEnabled;
             RefreshHotkeyLabels(main);
-        }
-        TxtOverrideStatus.Text = Tunables.Status;
-        TxtOverridePath.Text = Tunables.FilePath;
-        RefreshDiagnostics();
+        RefreshStatus();
         _suppressHandlers = false;
     }
 
-    // ── Diagnostics card ────────────────────────────────────────────
-    // Read-only snapshot of the state that is otherwise invisible in a
-    // Release build (no log file): attach, session seed, build stamps.
-    // No scans, no game writes — only cached values + one cheap process
-    // lookup on demand.
-    private void RefreshDiagnostics()
+    // ── Advanced status values ──────────────────────────────────────
+    // A few words each. These sit next to a label inside a card that already
+    // explains what the thing is, so the value should not re-explain it —
+    // "13 backups", not a sentence. Anything longer belongs in COPY REPORT.
+    private void RefreshStatus()
     {
-        TxtDiagVersion.Text =
-            typeof(SettingsView).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-
+        // Game
         try
         {
             var procs = System.Diagnostics.Process.GetProcessesByName("DunDefGame");
             if (procs.Length > 0)
-            {
-                bool? is32 = GameChain.GameIs32Bit();
-                string bits = is32 == true ? "32-bit"
-                            : is32 == false ? "64-BIT — UNSUPPORTED (use the 32-bit build)"
-                            : "bitness unknown";
-                TxtDiagGame.Text = $"running (PID {procs[0].Id}, {bits})";
-            }
+                TxtStatusGame.Text = GameChain.GameIs32Bit() == false
+                    ? "Running — but 64-bit, which isn't supported"
+                    : "Running";
             else
-            {
-                TxtDiagGame.Text = "not running";
-            }
+                TxtStatusGame.Text = "Not running";
             foreach (var p in procs) { try { p.Dispose(); } catch { } }
         }
-        catch { TxtDiagGame.Text = "unknown"; }
+        catch { TxtStatusGame.Text = "Unknown"; }
 
-        if (Window.GetWindow(this) is MainWindow main)
+        // Addresses — "learned" vs "default" without showing anyone a hex offset.
+        try
         {
-            TxtDiagSeed.Text = main.CurrentPawnVtable != 0
-                ? $"0x{main.CurrentPawnVtable:X8}"
-                : "not learned yet — happens automatically on the next scan";
+            bool haveSeed = Window.GetWindow(this) is MainWindow m && m.CurrentPawnVtable != 0;
+            int moved = 0;
+            if (GameChain.ItemBoxOffset != Tunables.DefaultItemBoxOffset) moved++;
+            if (GameChain.LocalHeroesOffset != Tunables.DefaultLocalHeroesOffset) moved++;
+            if (GameChain.HeroManagerOffset != Tunables.DefaultHeroManagerOffset) moved++;
 
-            uint recorded = Tunables.GameTimeDateStamp;
-            uint live = main.LiveGameStamp;
-            string rec = recorded != 0 ? $"0x{recorded:X8}" : "none yet";
-            string lv = live != 0 ? $"0x{live:X8}" : "not read yet";
-            string verdict = recorded != 0 && live != 0
-                ? (recorded == live ? "  (match)" : "  (game updated — will re-learn automatically)")
-                : "";
-            TxtDiagStamp.Text = $"saved {rec}  ·  game {lv}{verdict}";
+            TxtStatusAddresses.Text = !haveSeed ? "Not learned yet"
+                                    : moved == 0 ? "Up to date"
+                                    : "Up to date (" + moved + " relocated)";
         }
+        catch { TxtStatusAddresses.Text = "Unknown"; }
 
-        // The three self-locating game-layout links (see GameChain):
-        // "learned" = a game update moved it and discovery re-pinned it;
-        // "default" = the compiled last-known-good position still holds.
-        static string Off(int cur, int def) =>
-            $"0x{cur:X} ({(cur == def ? "default" : "learned")})";
-        TxtDiagOffsets.Text =
-            $"forge box {Off(GameChain.ItemBoxOffset, Tunables.DefaultItemBoxOffset)}  ·  " +
-            $"heroes {Off(GameChain.LocalHeroesOffset, Tunables.DefaultLocalHeroesOffset)}  ·  " +
-            $"manager {Off(GameChain.HeroManagerOffset, Tunables.DefaultHeroManagerOffset)}";
+        RefreshBackupStatus();
+        RefreshLogStatus();
+        RefreshAddressFileStatus();
     }
 
-    private void BtnDiagRefresh_Click(object sender, RoutedEventArgs e) => RefreshDiagnostics();
+    // The toggle beside the card title already says on/off — repeating it here
+    // is what made the old layout state it twice. Show only the size.
+    private void RefreshLogStatus()
+    {
+        if (!Prefs.Current.ErrorLogEnabled)
+        {
+            TxtStatusLog.Text = "Not being kept";
+            return;
+        }
+        try
+        {
+            var fi = new System.IO.FileInfo(Base.LogPath);
+            TxtStatusLog.Text = fi.Exists ? FormatSize(fi.Length) + " this session" : "Empty so far";
+        }
+        catch { TxtStatusLog.Text = "Empty so far"; }
+    }
+
+    private void RefreshAddressFileStatus()
+    {
+        try
+        {
+            TxtStatusAddrFile.Text = System.IO.File.Exists(Tunables.FilePath)
+                ? "Saved" : "Not written yet";
+        }
+        catch { TxtStatusAddrFile.Text = "Unknown"; }
+    }
+
+    private static string FormatSize(long bytes)
+        => bytes < 1024 ? bytes + " bytes"
+         : bytes < 1024 * 1024 ? (bytes / 1024) + " KB"
+         : (bytes / (1024 * 1024)) + " MB";
+
+    private void RefreshBackupStatus()
+    {
+        try
+        {
+            BtnResetSaveFolder.Visibility = string.IsNullOrWhiteSpace(Prefs.Current.SaveFolderOverride)
+                ? Visibility.Collapsed : Visibility.Visible;
+
+            string? folder = SaveBackup.ResolveSaveFolder(out _);
+            if (folder == null)
+            {
+                TxtStatusBackups.Text = "Save folder not found";
+                TxtStatusSession.Text = "Skipped until the folder is set";
+                return;
+            }
+
+            var list = SaveBackup.ListBackups();
+            TxtStatusBackups.Text = list.Count == 0
+                ? "None yet"
+                : list.Count + (list.Count == 1 ? " backup" : " backups")
+                  + ", newest " + Describe(list[0].CreatedLocal);
+
+            TxtStatusSession.Text = SaveBackup.SessionBackupDone
+                ? "Backed up"
+                : "Not yet — happens before your next edit";
+            if (SaveBackup.LastError != null)
+                TxtStatusSession.Text += "\n" + SaveBackup.LastError;
+        }
+        catch (System.Exception ex)
+        {
+            TxtStatusBackups.Text = "Couldn't check";
+            TxtStatusSession.Text = ex.Message;
+        }
+    }
+
+    // "3 minutes ago" reads better than a timestamp for the one thing users
+    // actually want to know: is my backup recent enough to rely on.
+    private static string Describe(System.DateTime when)
+    {
+        var ago = System.DateTime.Now - when;
+        if (ago.TotalMinutes < 1) return "just now";
+        if (ago.TotalMinutes < 60) return (int)ago.TotalMinutes + " min ago";
+        if (ago.TotalHours < 24) return (int)ago.TotalHours + " hour" + ((int)ago.TotalHours == 1 ? "" : "s") + " ago";
+        if (ago.TotalDays < 30) return (int)ago.TotalDays + " day" + ((int)ago.TotalDays == 1 ? "" : "s") + " ago";
+        return when.ToString("yyyy-MM-dd");
+    }
+
+    private void BtnDiagRefresh_Click(object sender, RoutedEventArgs e) => RefreshStatus();
+
+    private void BtnOpenLog_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string dir = System.IO.Path.GetDirectoryName(Base.LogPath)!;
+            System.IO.Directory.CreateDirectory(dir);
+            // Select the file rather than just opening the folder, so the one
+            // to attach is unambiguous among the other files that live there.
+            if (System.IO.File.Exists(Base.LogPath))
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    "explorer.exe", "/select,\"" + Base.LogPath + "\"") { UseShellExecute = true });
+            else
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dir) { UseShellExecute = true });
+        }
+        catch { /* opening Explorer is best-effort; never crash Settings */ }
+    }
+
+    private void SwErrorLog_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressHandlers) return;
+        Prefs.Current.ErrorLogEnabled = SwErrorLog.IsChecked == true;
+        Prefs.Current.Save();
+        if (Prefs.Current.ErrorLogEnabled)
+            Base.LogEvent("Error log re-enabled from Settings.");
+        RefreshLogStatus();
+    }
+
+    // ── Save backups ────────────────────────────────────────────────
+
+    private void BtnBackupNow_Click(object sender, RoutedEventArgs e)
+    {
+        var b = SaveBackup.CreateBackup("manual", skipIfUnchanged: false);
+        Base.RaiseMessage(
+            b != null ? "Backup saved to:\n" + b.Folder
+                      : (SaveBackup.LastError ?? "Backup failed."),
+            "Save Backups");
+        RefreshBackupStatus();
+    }
+
+    private void BtnBackupRestore_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new RestoreBackupDialog { Owner = Window.GetWindow(this) };
+        dlg.ShowDialog();
+        RefreshBackupStatus();
+    }
+
+    private void BtnBackupFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(SaveBackup.BackupRoot);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", "\"" + SaveBackup.BackupRoot + "\"") { UseShellExecute = true });
+        }
+        catch { }
+    }
+
+    private void BtnChangeSaveFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Pick the folder that contains DunDefHeroes.dun",
+        };
+        string? cur = SaveBackup.ResolveSaveFolder(out _);
+        if (cur != null) dlg.InitialDirectory = cur;
+        if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
+
+        string picked = dlg.FolderName;
+        if (!System.IO.File.Exists(System.IO.Path.Combine(picked, SaveBackup.SaveFileName)))
+        {
+            Base.RaiseMessage(
+                "That folder doesn't contain " + SaveBackup.SaveFileName + ".\n\n" +
+                "The Steam save normally lives in Steam\\userdata\\<account>\\65800\\remote.",
+                "Save Backups");
+            return;
+        }
+        Prefs.Current.SaveFolderOverride = picked;
+        Prefs.Current.Save();
+        RefreshBackupStatus();
+    }
+
+    private void BtnResetSaveFolder_Click(object sender, RoutedEventArgs e)
+    {
+        Prefs.Current.SaveFolderOverride = null;
+        Prefs.Current.Save();
+        RefreshBackupStatus();
+    }
+
+    private void BtnViewDisclaimer_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new DisclaimerDialog(reviewOnly: true) { Owner = Window.GetWindow(this) };
+        dlg.ShowDialog();
+    }
+
+    // Read-only chain dump → clipboard, for "it works here but not there".
+    private async void BtnCopyReport_Click(object sender, RoutedEventArgs e)
+    {
+        if (Window.GetWindow(this) is not MainWindow main) return;
+        if (sender is not Button btn) return;
+        // Attach on the UI thread first (may raise the choose-process dialog):
+        // the report's HeroManager window dump reads through Base.Instance,
+        // which is unattached if no scan has run this session.
+        try { Base.OpenProcess(); } catch { /* reported inside the dump */ }
+        object? label = btn.Content;
+        btn.IsEnabled = false;
+        btn.Content = "WORKING...";
+        try
+        {
+            // The report can run a full structural sweep on a cold cache —
+            // same rule as the scans, keep it off the UI thread.
+            string text = await System.Threading.Tasks.Task.Run(main.BuildDiagnosticReport);
+            try { Clipboard.SetText(text); }
+            catch { /* clipboard can transiently fail when another app holds it */ }
+            Base.RaiseMessage(text + "\n\n(copied to the clipboard)", "Diagnostic report");
+        }
+        catch (System.Exception ex)
+        {
+            Base.RaiseMessage("Couldn't build the report: " + ex.Message, "Diagnostic report");
+        }
+        finally { btn.Content = label; btn.IsEnabled = true; }
+    }
 
     private void BtnCalibrate_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is not MainWindow main) return;
         var dlg = new CalibrationDialog(main) { Owner = main };
         dlg.ShowDialog();
-        SyncFromState(); // pick up the new pin/status in the panels
+        SyncFromState(); // pick up the new pin/status
     }
 
     // ── Hotkey buttons ──────────────────────────────────────────────
@@ -115,6 +294,8 @@ public partial class SettingsView : UserControl
         BtnHkAutoKill.Content = main.Hotkeys.AutoKill.Display();
         BtnHkAutoG.Content = main.Hotkeys.AutoG.Display();
         BtnHkAlwaysOnTop.Content = main.Hotkeys.AlwaysOnTop.Display();
+        BtnHkUnlimitedMana.Content = main.Hotkeys.UnlimitedMana.Display();
+        BtnHkMaxTowerUnits.Content = main.Hotkeys.MaxTowerUnits.Display();
     }
 
     private void HkButton_Click(object sender, RoutedEventArgs e)
@@ -164,6 +345,8 @@ public partial class SettingsView : UserControl
                 case "AutoKill": main.Hotkeys.AutoKill = binding; break;
                 case "AutoG": main.Hotkeys.AutoG = binding; break;
                 case "AlwaysOnTop": main.Hotkeys.AlwaysOnTop = binding; break;
+                case "UnlimitedMana": main.Hotkeys.UnlimitedMana = binding; break;
+                case "MaxTowerUnits": main.Hotkeys.MaxTowerUnits = binding; break;
             }
             main.SaveHotkeys();
             RefreshHotkeyLabels(main);
@@ -180,6 +363,15 @@ public partial class SettingsView : UserControl
         }
     }
 
+    // ── Legacy ──────────────────────────────────────────────────────
+
+    private void BtnLegacyToggle_Click(object sender, RoutedEventArgs e)
+    {
+        bool show = LegacyPanel.Visibility != Visibility.Visible;
+        LegacyPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        BtnLegacyToggle.Content = show ? "HIDE" : "SHOW";
+    }
+
     private void SwFullScanning_Toggled(object sender, RoutedEventArgs e)
     {
         if (_suppressHandlers) return;
@@ -192,70 +384,33 @@ public partial class SettingsView : UserControl
         Base.PauseScan = SwPauseOnScan.IsChecked == true;
     }
 
-    private void SwSimulateG_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressHandlers) return;
-        if (Window.GetWindow(this) is MainWindow main)
-            main.SetSimulateG(SwSimulateG.IsChecked == true);
-        else
-            Base.SimulateG = SwSimulateG.IsChecked == true;
-    }
-
-    private void SwAlwaysOnTop_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressHandlers) return;
-        if (Window.GetWindow(this) is MainWindow main)
-            main.SetAlwaysOnTop(SwAlwaysOnTop.IsChecked == true);
-    }
-
-    private void SwAutoKill_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressHandlers) return;
-        if (Window.GetWindow(this) is MainWindow main)
-            main.SetAutoKillEnabled(SwAutoKill.IsChecked == true);
-    }
-
-    private void SwUnlimitedMana_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressHandlers) return;
-        if (Window.GetWindow(this) is MainWindow main)
-            main.SetUnlimitedMana(SwUnlimitedMana.IsChecked == true);
-    }
-
-    private void SwMaxTowerUnits_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressHandlers) return;
-        if (Window.GetWindow(this) is MainWindow main)
-            main.SetMaxTowerUnits(SwMaxTowerUnits.IsChecked == true);
-    }
-
     private void BtnMoreOptions_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is MainWindow main)
             main.ShowMoreOptionsDialog();
     }
 
-    // ── Memory overrides ────────────────────────────────────────────
-    // Re-read the optional file and refresh the displayed status. This
-    // validates "does the file parse / what would it apply" — the live
-    // session keeps its current values (the override is read at startup;
-    // edits take effect on next launch, per the panel description).
+    // Re-read the optional overrides file and refresh the displayed status.
+    // The live session keeps its current values (the file is read at startup;
+    // hand edits take effect on the next launch).
     private void BtnOverrideReload_Click(object sender, RoutedEventArgs e)
     {
         Tunables.Reload();
         SyncFromState();
     }
 
-    // Write a template populated from the current effective values, so
-    // the file is never hand-authored from a generic example.
+    // Write a template populated from the current effective values, so the
+    // file is never hand-authored from a generic example.
     private void BtnOverrideTemplate_Click(object sender, RoutedEventArgs e)
     {
         string? path = Tunables.WriteTemplate();
         Tunables.Reload();
         SyncFromState();
-        TxtOverrideStatus.Text = path != null
-            ? "Template written — " + Tunables.Status
-            : "Could not write template (check folder permissions).";
+        Base.RaiseMessage(
+            path != null
+                ? "Written to:\n" + path + "\n\n" + Tunables.Status
+                : "Could not write the template (check folder permissions).",
+            "Saved addresses");
     }
 
     private void BtnOverrideOpenFolder_Click(object sender, RoutedEventArgs e)

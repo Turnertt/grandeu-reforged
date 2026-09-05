@@ -139,7 +139,10 @@ internal static class Tunables
     // defaults so removing a key / deleting the file also takes effect.
     public static void Reload()
     {
-        lock (_gate) { Apply(); _loaded = true; }
+        // An explicit RELOAD also lifts the post-failure write backoff, so
+        // a user who just fixed folder permissions / an AV lock gets the
+        // next pin written immediately instead of up to 30 s later.
+        lock (_gate) { Apply(); _loaded = true; _pinRetryAfterUtc = DateTime.MinValue; }
     }
 
     // Mirrors the on-disk JSON. Nullable everywhere → an absent key keeps
@@ -279,6 +282,30 @@ internal static class Tunables
 
     private static bool IsValidHeroManagerOffset(int off)
         => off >= MinHeroManagerOffset && off <= MaxHeroManagerOffset && (off & 3) == 0;
+
+    // Re-read the pin file from disk and report the seed it actually holds.
+    // CALIBRATE needs this to prove ITS write landed: File.Exists is not
+    // evidence, because an older file satisfies it even when this pin never
+    // reached disk — PinPlayerPawnSeed swallows write failures (best-effort
+    // by design) AND returns silently while _pinRetryAfterUtc backoff is in
+    // effect, so "no exception" is not evidence either. Returns null when the
+    // file is missing/unreadable or carries no usable seed.
+    public static uint? ReadPinnedSeedFromDisk()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return null;
+            var f = JsonSerializer.Deserialize<OverrideFile>(File.ReadAllText(FilePath),
+                new JsonSerializerOptions
+                {
+                    ReadCommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true,
+                });
+            if (f == null) return null;
+            return TryParseU32(f.PawnVtableSeed, out uint v) && v != 0 ? v : null;
+        }
+        catch { return null; }
+    }
 
     private static bool TryParseU32(string? s, out uint value)
     {

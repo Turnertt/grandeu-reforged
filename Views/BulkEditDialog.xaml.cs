@@ -14,7 +14,17 @@ namespace Modinator.Views;
 public partial class BulkEditDialog : Window
 {
     private readonly List<int> _addresses;
+    // Identity of each address AS OF THE FORGE SCAN the user selected from.
+    // REQUIRED, and an address missing from it is treated as stale: the
+    // selection survives a Forge rescan while the cache is rebuilt, so an
+    // item sold between selecting and applying simply has no entry here —
+    // which is precisely the case that must be refused, not waved through.
+    private readonly IReadOnlyDictionary<int, ItemIdentity> _identities;
     private readonly int _structSize = Marshal.SizeOf(typeof(ItemNative));
+
+    // Items skipped because a different item (or reused memory) is at the
+    // cached address now. Reported separately from failures.
+    public int StaleCount { get; private set; }
 
     // Baseline values read from the first item (used for diff comparison).
     private int _baseHeroStats;
@@ -45,11 +55,15 @@ public partial class BulkEditDialog : Window
     public int AppliedCount { get; private set; }
     public int FailedCount { get; private set; }
 
-    public BulkEditDialog(List<int> addresses, string typeLabel)
+    // internal: ItemIdentity is assembly-internal (same as the other Models
+    // types the views take).
+    internal BulkEditDialog(List<int> addresses, string typeLabel,
+                            IReadOnlyDictionary<int, ItemIdentity> identities)
     {
         InitializeComponent();
 
         _addresses = addresses;
+        _identities = identities;
 
         Title = $"Bulk Edit \u2014 {addresses.Count} items";
         TxtHeader.Text = $"Bulk Edit \u2014 {addresses.Count} {typeLabel}";
@@ -63,8 +77,9 @@ public partial class BulkEditDialog : Window
         {
             _loadFailed = true;
             Base.RaiseMessage(
-                "Couldn't read the first selected item \u2014 it may have moved or " +
-                "unloaded since the scan. Rescan and try again.",
+                "None of the selected items could be verified \u2014 they may have moved, " +
+                "been sold, or unloaded since the scan. Rescan the Forge Viewer and " +
+                "re-select before editing.",
                 "Bulk Edit");
             Loaded += (s, e) => Close();
         }
@@ -76,19 +91,35 @@ public partial class BulkEditDialog : Window
     // bulk pass (numerics still applied \u2014 see WriteStringBestEffort).
     private int _stringWriteFailures;
 
+    // Does the address still hold the item the Forge scan cached there?
+    // No recorded identity => STALE (see _identities).
+    private bool StillSameItem(int address, in ItemNative live)
+        => _identities.TryGetValue(address, out var id) && id.Matches(live);
+
     private bool LoadBaseline()
     {
-        int address = _addresses[0];
-
-        byte[] raw;
-        ItemNative baseline;
-        try
+        // The baseline drives the diff for every write, so it must come from
+        // an item that is verifiably still the one selected. Scan forward for
+        // the first usable address rather than insisting on _addresses[0] —
+        // otherwise one stale item at the head of a 50-item selection would
+        // refuse to open the dialog at all.
+        ItemNative? found = null;
+        int address = 0;
+        foreach (int candidate in _addresses)
         {
-            raw = Base.Instance.ReadMemory(address, _structSize);
-            if (raw == null || raw.Length < _structSize) return false;
-            baseline = Base.Push<ItemNative>(raw);
+            try
+            {
+                byte[] raw = Base.Instance.ReadMemory(candidate, _structSize);
+                if (raw == null || raw.Length < _structSize) continue;
+                var native = Base.Push<ItemNative>(raw);
+                if (!StillSameItem(candidate, native)) continue;
+                found = native;
+                address = candidate;
+                break;
+            }
+            catch { }
         }
-        catch { return false; }
+        if (found is not ItemNative baseline) return false;
 
         // Hero stats: use first hero stat as the uniform value.
         _baseHeroStats = baseline.StatModifiers[0];
@@ -145,7 +176,9 @@ public partial class BulkEditDialog : Window
         SetHint(TxtReloadSpeed, _baseReloadSpeed.ToString());
         SetHint(TxtDrawScale, _baseDrawScale.ToString(CultureInfo.InvariantCulture));
         SetHint(TxtSwingSpeed, _baseSwingSpeed.ToString(CultureInfo.InvariantCulture));
-        SetHint(TxtDescription, _baseDescription ?? string.Empty);
+        // Hint only — the raw _baseDescription is what the diff and the write
+        // use, so stripping colour runs here is display-safe.
+        SetHint(TxtDescription, Watermark.StripColorTags(_baseDescription));
         SetHint(TxtForgerName, _baseForgerName ?? string.Empty);
         SetHint(TxtLevel, _baseLevel.ToString());
         SetHint(TxtMaxLevel, _baseMaxLevel.ToString());
@@ -341,6 +374,7 @@ public partial class BulkEditDialog : Window
 
         AppliedCount = 0;
         FailedCount = 0;
+        StaleCount = 0;
         _stringWriteFailures = 0;
 
         Mouse.OverrideCursor = Cursors.Wait;
@@ -348,6 +382,9 @@ public partial class BulkEditDialog : Window
         {
             foreach (int address in _addresses)
             {
+                // Identity gate first: a stale address is skipped outright —
+                // no write, no retry (retrying can't make it the right item).
+                if (CheckAddress(address) == AddrCheck.Stale) { StaleCount++; continue; }
                 // Retry once — a target can transiently fail mid-game-tick.
                 bool success = ApplyToItem(address, p) || ApplyToItem(address, p);
                 if (success) AppliedCount++;
@@ -356,9 +393,13 @@ public partial class BulkEditDialog : Window
         }
         finally { Mouse.OverrideCursor = null; }
 
-        if (FailedCount > 0 || _stringWriteFailures > 0)
+        if (FailedCount > 0 || StaleCount > 0 || _stringWriteFailures > 0)
         {
             string msg = $"Bulk edit complete: {AppliedCount} succeeded, {FailedCount} failed.";
+            if (StaleCount > 0)
+                msg += $"\n\n{StaleCount} item(s) skipped — they changed or moved in memory " +
+                       "since the Forge scan (sold, dropped, or reloaded). Rescan the Forge " +
+                       "and re-select to edit what is there now.";
             if (_stringWriteFailures > 0)
                 msg += $"\n\n{_stringWriteFailures} item(s) kept their old name/description " +
                        "(game memory allocation failed) — their numeric stats were still " +
@@ -367,6 +408,30 @@ public partial class BulkEditDialog : Window
         }
 
         DialogResult = true;
+    }
+
+    private enum AddrCheck
+    {
+        Ok,          // verified: still the item the scan cached
+        Stale,       // a DIFFERENT item (or none recorded) — never write
+        Unreadable,  // couldn't read; may be a transient blip
+    }
+
+    // Read the item at `address` and decide whether writing to it is safe.
+    // Unreadable is kept distinct from Stale on purpose: a transient read
+    // blip is what ApplyToItem's retry exists for, and ApplyToItem re-reads
+    // and fails closed if the address really is dead — whereas Stale means
+    // the memory is now something else and no retry can make it right.
+    private AddrCheck CheckAddress(int address)
+    {
+        try
+        {
+            byte[] raw = Base.Instance.ReadMemory(address, _structSize);
+            if (raw == null || raw.Length < _structSize) return AddrCheck.Unreadable;
+            return StillSameItem(address, Base.Push<ItemNative>(raw))
+                ? AddrCheck.Ok : AddrCheck.Stale;
+        }
+        catch { return AddrCheck.Unreadable; }
     }
 
     private bool ApplyToItem(int address, BulkPlan p)
@@ -433,7 +498,9 @@ public partial class BulkEditDialog : Window
             // contract as the MAX path) — the numeric writes below still
             // land instead of the whole item counting as failed.
             if (p.ChDescription)
-                item.Description = WriteStringBestEffort(item.Description, p.Description, address, "Description");
+                item.Description = WriteStringBestEffort(item.Description, Watermark.Apply(p.Description), address, "Description");
+            else
+                item.Description = ApplyWatermarkOnly(item.Description, address);
             if (p.ChForgerName)
                 item.ForgerName = WriteStringBestEffort(item.ForgerName, p.ForgerName, address, "ForgerName");
 
@@ -486,6 +553,7 @@ public partial class BulkEditDialog : Window
 
         AppliedCount = 0;
         FailedCount = 0;
+        StaleCount = 0;
         _stringWriteFailures = 0;
         var failures = new List<(int addr, string step, string err)>();
 
@@ -494,6 +562,7 @@ public partial class BulkEditDialog : Window
         {
             foreach (int address in _addresses)
             {
+                if (CheckAddress(address) == AddrCheck.Stale) { StaleCount++; continue; }
                 var (ok, step, err) = ApplyMaxToAddress(address, cfg);
                 if (!ok)
                 {
@@ -507,6 +576,9 @@ public partial class BulkEditDialog : Window
         finally { Mouse.OverrideCursor = null; }
 
         string summary = $"MAX complete: {AppliedCount} succeeded, {FailedCount} failed.";
+        if (StaleCount > 0)
+            summary += $"\n{StaleCount} item(s) skipped — they changed or moved in memory since " +
+                       "the Forge scan. Rescan the Forge and re-select to edit what is there now.";
         if (_stringWriteFailures > 0)
             summary += $"\n{_stringWriteFailures} item(s) kept their old name/description " +
                        "(allocation failed); numeric maxes still applied.";
@@ -563,7 +635,9 @@ public partial class BulkEditDialog : Window
         try
         {
             if (!string.IsNullOrEmpty(cfg.Description))
-                item.Description = WriteStringBestEffort(item.Description, cfg.Description, address, "Description");
+                item.Description = WriteStringBestEffort(item.Description, Watermark.Apply(cfg.Description), address, "Description");
+            else
+                item.Description = ApplyWatermarkOnly(item.Description, address);
             if (!string.IsNullOrEmpty(cfg.ForgerName))
                 item.ForgerName = WriteStringBestEffort(item.ForgerName, cfg.ForgerName, address, "ForgerName");
         }
@@ -585,6 +659,25 @@ public partial class BulkEditDialog : Window
     // writes for this item still succeed. Counted into
     // _stringWriteFailures so the summary can say so instead of silently
     // reporting full success.
+    // Watermark an item whose Description the user did NOT edit. Both bulk
+    // paths carry a single baseline string (p.Description / cfg.Description)
+    // that belongs to the first item only, so writing that to every item
+    // would clobber their individual descriptions — each item's own current
+    // text has to be re-read instead. A read failure just skips the mark:
+    // the watermark must never be the reason a bulk edit reports failure.
+    private NativeArray ApplyWatermarkOnly(NativeArray existing, int address)
+    {
+        if (!Watermark.Enabled) return existing;
+        try
+        {
+            string cur = Base.ReadUni<ItemNative>(address, "Description") ?? "";
+            string marked = Watermark.Apply(cur);
+            if (marked == cur) return existing;
+            return WriteStringBestEffort(existing, marked, address, "Description");
+        }
+        catch { return existing; }
+    }
+
     private NativeArray WriteStringBestEffort(NativeArray existing, string data, int address, string fieldName)
     {
         if (existing.MaximumLength >= data.Length + 1)

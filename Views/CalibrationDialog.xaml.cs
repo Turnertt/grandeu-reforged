@@ -143,10 +143,16 @@ public partial class CalibrationDialog : Window
             // The wizard claims "saved" — verify the pin actually landed on
             // disk so a blocked write (permissions/AV) surfaces here instead
             // of as a mystery on the next launch.
-            if (!System.IO.File.Exists(Tunables.FilePath))
+            // File.Exists is NOT proof the pin landed: an older file satisfies
+            // it even when this write failed (PinPlayerPawnSeed swallows write
+            // errors by design) or was skipped entirely by the 30 s retry
+            // backoff. Read the value back and compare.
+            uint? onDisk = Tunables.ReadPinnedSeedFromDisk();
+            if (onDisk != probe.Seed)
                 AddResult(false, "Address save",
-                    $"the derived address couldn't be written to {Tunables.FilePath} — " +
-                    "scans still work this session, but the next launch will re-learn. " +
+                    $"the derived address isn't in {Tunables.FilePath} " +
+                    (onDisk == null ? "(nothing usable there)" : $"(it still holds 0x{onDisk:X8})") +
+                    " — scans still work this session, but the next launch will re-learn. " +
                     "Check folder permissions / antivirus.");
 
             // Forge chain probe — runs automatically off the fresh pawn.
@@ -164,26 +170,47 @@ public partial class CalibrationDialog : Window
             // pinned; offset==0 means "couldn't positively locate it" —
             // usually an empty box, in which case ReadItemBox reports
             // reachability at the current offset without saving anything.
-            (int count, int offset) forge = await Task.Run(() =>
+            (int count, int offset, bool mgrVerified) forge = await Task.Run(() =>
             {
                 int pawn = _main.ResolvePlayerPawnAddress();
                 int heroMgr = GameChain.ResolveHeroManager(pawn);
-                if (heroMgr == 0) return (-1, 0);
+                if (heroMgr == 0) return (-1, 0, false);
+                // ResolveHeroManager returns the RAW hop when nothing verified,
+                // so non-zero is not success on its own — check the content
+                // gate before this wizard is allowed to claim anything.
+                bool verifiedMgr = GameChain.IsVerifiedHeroManager(heroMgr);
                 (int found, bool verified, int n) = GameChain.DiscoverItemBox(heroMgr);
                 if (verified)
                 {
                     Tunables.PinItemBoxOffset(found);
-                    return (n, found);
+                    return (n, found, verifiedMgr);
                 }
-                return (GameChain.ReadItemBox(heroMgr).Count, 0);
+                return (GameChain.ReadItemBox(heroMgr).Count, 0, verifiedMgr);
             });
 
             if (forge.count < 0)
+            {
                 AddResult(false, "Forge chain",
                     "Couldn't reach the item manager. Rescan from the Forge Viewer " +
                     "with your hero in-game; if it persists, the game may have " +
                     "changed in a way that needs a tool update.");
-            else if (forge.offset != 0)
+                return; // stay on step 1 — a failed check must not "complete"
+            }
+            // An empty read off an UNVERIFIED manager is the ambiguous case:
+            // it looks identical to a genuinely empty forge, but it is also
+            // exactly what locking onto HeroManagerTemplate (+0xCF8, empty
+            // arrays, same vtable) produces. Never report that as reachable.
+            if (forge.offset == 0 && forge.count == 0 && !forge.mgrVerified)
+            {
+                AddResult(false, "Forge chain",
+                    "Reached something that looks like the item manager but couldn't " +
+                    "verify it — no characters and no items were readable from it. " +
+                    "If you're in a menu or loading screen, get into the Tavern or a " +
+                    "mission and run CALIBRATE again. If it persists, the game may have " +
+                    "changed in a way that needs a tool update.");
+                return; // stay on step 1
+            }
+            if (forge.offset != 0)
                 AddResult(true, "Forge chain",
                     $"located at HeroManager +0x{forge.offset:X} — {forge.count} item{(forge.count == 1 ? "" : "s")} in the box; " +
                     "offset pinned (re-derives automatically after a patch)");

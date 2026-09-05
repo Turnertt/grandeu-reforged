@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     private const int HK_ID_AUTOKILL = 1;
     private const int HK_ID_AUTOG = 2;
     private const int HK_ID_ALWAYS_ON_TOP = 3;
+    private const int HK_ID_UNLIMITED_MANA = 4;
+    private const int HK_ID_MAX_TOWER_UNITS = 5;
 
     // Title bar quick toggles (built in code so they can be injected into the
     // per-window slot on ModernWindowStyle without tripping XAML's root-content rules).
@@ -125,6 +127,24 @@ public partial class MainWindow : Window
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        // First-launch disclaimer: not for online / Ranked play, use at your
+        // own risk. This runs FIRST, before the 50 ms timer and before global
+        // hotkeys are registered — a modal dialog still pumps the message
+        // loop, so a registered hotkey could otherwise flip Auto-Kill or the
+        // speed multiplier on (and start writing to the game) while the
+        // notice was still sitting unaccepted on screen.
+        if (Prefs.Current.DisclaimerAcceptedVersion < Prefs.CurrentDisclaimerVersion)
+        {
+            var dlg = new Views.DisclaimerDialog { Owner = this };
+            if (dlg.ShowDialog() != true)
+            {
+                Application.Current.Shutdown();
+                return;
+            }
+            Prefs.Current.DisclaimerAcceptedVersion = Prefs.CurrentDisclaimerVersion;
+            Prefs.Current.Save();
+        }
+
         // Default landing: Welcome screen
         ShowHome();
 
@@ -152,6 +172,11 @@ public partial class MainWindow : Window
 
         TxtGameSpeed.Text = _speedMultiplier.ToString("0.##",
             System.Globalization.CultureInfo.InvariantCulture);
+
+        // Startup snapshot of the DD1 save (de-duplicated against the newest
+        // backup, so this is a no-op when nothing changed). Off the UI thread
+        // — it touches the filesystem and the registry, never the game.
+        _ = System.Threading.Tasks.Task.Run(SaveBackup.OnStartup);
     }
 
     // Called on startup AND whenever the user rebinds a combo in SettingsView.
@@ -164,6 +189,10 @@ public partial class MainWindow : Window
             () => SetSimulateG(!Base.SimulateG));
         _hotkeyMgr.Register(HK_ID_ALWAYS_ON_TOP, Hotkeys.AlwaysOnTop,
             () => SetAlwaysOnTop(!Topmost));
+        _hotkeyMgr.Register(HK_ID_UNLIMITED_MANA, Hotkeys.UnlimitedMana,
+            () => SetUnlimitedMana(!UnlimitedManaEnabled));
+        _hotkeyMgr.Register(HK_ID_MAX_TOWER_UNITS, Hotkeys.MaxTowerUnits,
+            () => SetMaxTowerUnits(!MaxTowerUnitsEnabled));
     }
 
     public void SaveHotkeys()
@@ -543,6 +572,204 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Diagnostic report (read-only) ───────────────────────────────
+    //
+    // Release builds compile out Base.Log, so when a feature misbehaves on
+    // someone else's machine there is nothing to look at. This walks the
+    // whole chain once and renders every link as text the user can copy and
+    // send back. Read-only: no game writes, no pins — the same reads the
+    // scans already do, taken under the scan gate so it can't race the AK
+    // tick. Deliberately reports EVERY PRI-verified pawn, because the
+    // "which pawn is the local player" step is the one that silently
+    // degrades (mana + Forge + Hero all fail together when it picks wrong,
+    // while Auto-Kill and Max Tower Units keep working — they never touch
+    // the controller).
+    public string BuildDiagnosticReport()
+    {
+        var sb = new System.Text.StringBuilder(2048);
+        void L(string s) => sb.AppendLine(s);
+
+        L("Grandeu: Reforged — diagnostic report");
+        L(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        try
+        {
+            var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            L($"app        : v{v?.ToString(3) ?? "?"}  {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}" +
+              $"  on {Environment.OSVersion.Version}  {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}");
+        }
+        catch { }
+
+        try
+        {
+            var procs = System.Diagnostics.Process.GetProcessesByName("DunDefGame");
+            if (procs.Length == 0) L("game       : NOT RUNNING");
+            else
+            {
+                bool? is32 = GameChain.GameIs32Bit();
+                L($"game       : running  pid={procs[0].Id}  instances={procs.Length}  " +
+                  (is32 == true ? "32-bit" : is32 == false ? "64-BIT (UNSUPPORTED)" : "bitness unknown"));
+            }
+            foreach (var p in procs) { try { p.Dispose(); } catch { } }
+        }
+        catch (Exception ex) { L("game       : lookup failed — " + ex.Message); }
+
+        L($"attached   : scanner pid={Base.AttachedPid}  (0 = not attached)");
+        L($"log file   : {Base.LogPath}");
+        L($"             {(System.IO.File.Exists(Base.LogPath) ? "exists — DEBUG build, send this file too" : "not present — this is a RELEASE build (no logging)")}");
+
+        lock (_scanStateGate)
+        {
+            try
+            {
+                if (GetAKHandle() == IntPtr.Zero)
+                {
+                    L($"handle     : COULD NOT OPEN the game process (win32 error " +
+                      $"{System.Runtime.InteropServices.Marshal.GetLastWin32Error()}). " +
+                      "If this is 5 (access denied), run the tool as administrator.");
+                    L("(nothing below can be read without a handle)");
+                    return sb.ToString();
+                }
+                L($"handle     : open  (targeting pid {_akTargetPid})");
+
+                EnsureGameBuildStampChecked();
+                L($"build stamp: live=0x{_liveGameStamp:X8}  saved=0x{Tunables.GameTimeDateStamp:X8}" +
+                  (Tunables.GameTimeDateStamp != 0 && _liveGameStamp != 0
+                      ? (Tunables.GameTimeDateStamp == _liveGameStamp ? "  (match)" : "  (GAME UPDATED — will re-learn)")
+                      : ""));
+                L($"seed       : 0x{_pawnVtable:X8}  ({(_pawnVtable == 0 ? "not learned yet" : "in use")})");
+
+                static string Off(int cur, int def) => $"0x{cur:X}({(cur == def ? "default" : "learned")})";
+                L($"offsets    : box {Off(GameChain.ItemBoxOffset, Tunables.DefaultItemBoxOffset)}  " +
+                  $"heroes {Off(GameChain.LocalHeroesOffset, Tunables.DefaultLocalHeroesOffset)}  " +
+                  $"manager {Off(GameChain.HeroManagerOffset, Tunables.DefaultHeroManagerOffset)}");
+                // The learned-offset file verbatim: a pin carried over from a
+                // different game build, or one that landed on a look-alike,
+                // is invisible in the summary line above.
+                try
+                {
+                    L($"overrides  : {Tunables.FilePath}");
+                    L(System.IO.File.Exists(Tunables.FilePath)
+                        ? "             " + System.IO.File.ReadAllText(Tunables.FilePath)
+                              .Replace("\r", "").Replace("\n", "\n             ")
+                        : "             (no file — everything is at compiled defaults)");
+                }
+                catch (Exception ex) { L("             (unreadable: " + ex.Message + ")"); }
+
+                int wi = _cachedWorldInfo;
+                if (wi == 0 || !ValidateCachedWorldInfo()) wi = FindWorldInfoViaPawnScan();
+                if (wi == 0) { L("WorldInfo  : NOT FOUND (menu / loading screen, or the scan failed)"); return sb.ToString(); }
+                _cachedWorldInfo = wi;
+                L($"WorldInfo  : 0x{wi:X8}   gameplay level: {(IsInGameplayLevel() ? "yes" : "no (tavern/lobby/loading)")}");
+
+                // AWorldInfo.Game (AGameInfo*) exists ONLY on the server/host
+                // in UE3 — a client's copy is None. This is the cheapest
+                // host-vs-client tell we can read without a new offset, and
+                // it matters: a client also loses Pawn.Controller (below),
+                // which is the exact hop Mana/Forge/Hero depend on.
+                int gameInfo = ReadU32(wi + OFF_WI_GAME);
+                int griPtr = ReadU32(wi + OFF_WI_GRI);
+                L($"WI.Game    : 0x{gameInfo:X8}  ({(IsHeapPtr(gameInfo) ? "present — this machine is the HOST/solo" : "NULL — this machine is a CLIENT (not hosting)")})");
+                L($"WI.GRI     : 0x{griPtr:X8}");
+
+                // Walk the pawn list exactly as the scans do.
+                int head = ReadU32(wi + 0x041C);
+                var pawns = new List<(int addr, uint pri)>(32);
+                var seen = new HashSet<int>();
+                int cur = head;
+                while (IsHeapPtr(cur) && seen.Add(cur) && seen.Count <= AK_CHAIN_MAX)
+                {
+                    byte[]? pd = AKRead(cur, 0x32C);
+                    if (pd == null || pd.Length < 0x32C) break;
+                    pawns.Add((cur, (uint)ReadU32(cur + OFF_PAWN_PRI)));
+                    int np = BitConverter.ToInt32(pd, 0x0230);
+                    if (np == 0) break;
+                    cur = np;
+                }
+                L($"pawn chain : {pawns.Count} pawns (head 0x{head:X8})");
+
+                int chosen = SelectLocalPlayerPawn(pawns, out var pick);
+                L($"selected   : 0x{chosen:X8}   confidence={pick}" +
+                  (pick < PlayerPawnPick.LocalPlayer
+                      ? "   <-- PROBLEM: no pawn had a ULocalPlayer, so this is a GUESS"
+                      : ""));
+
+                // EVERY pawn, not just PRI-verified ones. On a client
+                // Pawn.Controller (+0x22C) is commonly null for all pawns
+                // including your own, which kills Mana/Forge/Hero while
+                // leaving Auto-Kill and Max Tower Units working — so the
+                // count of non-null controllers is the key number here.
+                int shown = 0, priCount = 0, ctlCount = 0, chainCount = 0;
+                L("pawns      : (pawn / PRI / controller+0x22C / ULocalPlayer / viewport / heromanager)");
+                foreach (var p in pawns)
+                {
+                    bool priOk = IsVerifiedPri(p.pri);
+                    if (priOk) priCount++;
+                    int ctl = ReadU32(p.addr + OFF_PAWN_CONTROLLER);
+                    if (IsHeapPtr(ctl)) ctlCount++;
+                    int lp = IsHeapPtr(ctl) ? ReadU32(ctl + GameChain.OFF_CONTROLLER_PLAYER) : 0;
+                    int vp = IsHeapPtr(lp) ? ReadU32(lp + GameChain.OFF_PLAYER_VIEWPORT) : 0;
+                    int hmgr = IsHeapPtr(vp) ? ReadU32(vp + GameChain.HeroManagerOffset) : 0;
+                    if (IsHeapPtr(hmgr)) chainCount++;
+                    if (shown < 16)
+                    {
+                        L($"             0x{p.addr:X8}  pri=0x{p.pri:X8}{(priOk ? "*" : " ")}  ctl=0x{ctl:X8}  " +
+                          $"lp=0x{lp:X8}  vp=0x{vp:X8}  hm=0x{hmgr:X8}" +
+                          (p.addr == chosen ? "  <-- selected" : ""));
+                        shown++;
+                    }
+                }
+                if (pawns.Count > shown) L($"             ...{pawns.Count - shown} more not listed");
+                L($"totals     : {priCount} PRI-verified (2+ means multiplayer), {ctlCount} with a Controller, " +
+                  $"{chainCount} reaching a HeroManager");
+                if (ctlCount == 0 && pawns.Count > 0)
+                    L("             ^^ NO pawn has a Controller. That is the classic CLIENT signature: " +
+                      "UE3 does not replicate Pawn.Controller, so Mana/Forge/Hero (which all start at " +
+                      "pawn+0x22C) cannot work this way while Auto-Kill and Max Tower Units still do.");
+
+                // Raw mana values for the selected pawn, whether or not the
+                // toggle is on — "mana doesn't work" is usually the sanity
+                // gate refusing an implausible MaxManaPower, and the only way
+                // to tell that from a dead pointer is to see both numbers.
+                int mctl = IsHeapPtr(chosen) ? ReadU32(chosen + OFF_PAWN_CONTROLLER) : 0;
+                if (IsHeapPtr(mctl))
+                    L($"mana       : controller=0x{mctl:X8}  cur(+0x{OFF_PC_MANAPOWER:X})={ReadU32(mctl + OFF_PC_MANAPOWER)}  " +
+                      $"max(+0x{OFF_PC_MAXMANAPOWER:X})={ReadU32(mctl + OFF_PC_MAXMANAPOWER)}  (gate wants max in 1..1000000)");
+                else
+                    L("mana       : no controller on the selected pawn");
+                L($"mana write : {(_unlimitedMana ? (_manaGateReason ?? "writing normally") : "toggle is off")}");
+
+                // Forge / Hero payload, read through the selected pawn.
+                int hmSel = IsHeapPtr(chosen) ? ReadU32(ReadU32(ReadU32(chosen + OFF_PAWN_CONTROLLER)
+                                + GameChain.OFF_CONTROLLER_PLAYER) + GameChain.OFF_PLAYER_VIEWPORT) : 0;
+                hmSel = IsHeapPtr(hmSel) ? ReadU32(hmSel + GameChain.HeroManagerOffset) : 0;
+                if (!IsHeapPtr(hmSel))
+                {
+                    L("HeroManager: NOT REACHABLE from the selected pawn — this is why Forge/Hero find nothing");
+                }
+                else
+                {
+                    L($"HeroManager: 0x{hmSel:X8}");
+                    L($"  item box  : +0x{GameChain.ItemBoxOffset:X} num={ReadU32(hmSel + GameChain.ItemBoxOffset + 4)}" +
+                      $"   next-field num={ReadU32(hmSel + GameChain.ItemBoxOffset + 0x10)} (the ItemBoxEntries fingerprint)");
+                    L($"  heroes    : +0x{GameChain.LocalHeroesOffset:X} local num={ReadU32(hmSel + GameChain.LocalHeroesOffset + 4)}" +
+                      $"   active num={ReadU32(hmSel + GameChain.ActiveHeroesOffset + 4)}");
+                    // The counts above are only "what we read at the pinned
+                    // offsets". THIS is what differs between two saves: the
+                    // real shape of every array in the window, classified by
+                    // the same gates discovery uses. An empty box, a roster
+                    // that fails the dense+sparse pair test, or a box sitting
+                    // at an offset we never learned all show up here.
+                    L("  window    : (every TArray-shaped field off the HeroManager)");
+                    sb.Append(GameChain.DescribeArrayWindow(hmSel));
+                    if (Base.AttachedPid == 0)
+                        L("    NOTE: scanner not attached — window read may be empty; open a scan tab once and retry");
+                }
+            }
+            catch (Exception ex) { L("report failed part-way: " + ex.GetType().Name + ": " + ex.Message); }
+        }
+        return sb.ToString();
+    }
+
     public void SetAlwaysOnTop(bool on)
     {
         Topmost = on;
@@ -630,10 +857,17 @@ public partial class MainWindow : Window
     // already performs, minus the loop start/stop.
     public void InvalidatePawnScanCache()
     {
-        _cachedWorldInfo = 0;
-        _cachedPlayerPawn = 0;
-        _akLastValidated = DateTime.MinValue;
-        ResetAutoKillHandle();
+        // Under the scan gate: this CLOSES the shared AK handle, and without
+        // the lock it could do so in the middle of a tick's reads (or a
+        // structural sweep) on the AK task — same ownership rule as
+        // ForceStructuralReseed, which also drops these fields.
+        lock (_scanStateGate)
+        {
+            _cachedWorldInfo = 0;
+            _cachedPlayerPawn = 0;
+            _akLastValidated = DateTime.MinValue;
+            ResetAutoKillHandle();
+        }
     }
 
     private void BtnGameSpeedApply_Click(object sender, RoutedEventArgs e)
@@ -751,6 +985,9 @@ public partial class MainWindow : Window
         string? desc = null;
         try { desc = Base.GetDescription(address, genus, isFloat); }
         catch { }
+        // Strip DD1 <color:r,g,b> runs for display only — null still means
+        // "unreadable" and must survive the check below.
+        if (desc != null) desc = Watermark.StripColorTags(desc);
 
         if (desc == null)
         {
@@ -865,7 +1102,22 @@ public partial class MainWindow : Window
 
     // ── Timer — renew descriptions, freeze values, simulate G ───────
 
+    private bool _inTimerTick;
+
     private void Timer_Tick(object? sender, EventArgs e)
+    {
+        // Re-entrancy guard. Anything inside a tick that pumps the message
+        // loop — a modal dialog, most obviously — lets this 50 ms timer fire
+        // again on top of the tick already in progress. With the guard, a
+        // future caller that shows a dialog from the tick degrades to one
+        // dialog instead of an unclosable stack of them.
+        if (_inTimerTick) return;
+        _inTimerTick = true;
+        try { Timer_TickCore(); }
+        finally { _inTimerTick = false; }
+    }
+
+    private void Timer_TickCore()
     {
         // Renew tracked item descriptions
         if (Base.Renew && (DateTime.Now - Base.RenewDate).TotalMilliseconds >= Base.RenewTime)
@@ -882,7 +1134,7 @@ public partial class MainWindow : Window
                     }
                     else
                     {
-                        item.Description = desc;
+                        item.Description = Watermark.StripColorTags(desc);
                     }
                 }
                 catch
@@ -937,9 +1189,36 @@ public partial class MainWindow : Window
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr handle, int message, int wParam, long lParam);
 
+    // Backoff + one-shot warning for the "game isn't running" case below.
+    private DateTime _simGRetryAfter = DateTime.MinValue;
+    private bool _simGWarned;
+
     private void SimulateGPress()
     {
-        if (!Base.OpenProcess()) return;
+        // NEVER the notifying Base.OpenProcess() here. This runs off the 50 ms
+        // UI timer, and the notifying overload raises a modal when the game is
+        // missing — a modal pumps the message loop, so the timer ticks again
+        // behind it and raises another, one per second, until the user can
+        // neither close the app nor switch Simulate G back off. Attach
+        // quietly, say so in the status bar once, and leave the toggle alone
+        // so it simply starts working when the game launches (same behaviour
+        // as Auto-Kill's "game not running" idle).
+        if (DateTime.Now < _simGRetryAfter) return;
+
+        if (!Base.OpenProcess(notify: false))
+        {
+            // Don't re-enumerate every process once a second while the game
+            // is closed — the failing path is the expensive one.
+            _simGRetryAfter = DateTime.Now.AddSeconds(2);
+            if (!_simGWarned)
+            {
+                _simGWarned = true;
+                StatusText.Text = "Simulate G: waiting — not attached to DunDefGame.exe.";
+            }
+            return;
+        }
+
+        _simGWarned = false;
         if (Base.MainWindow == IntPtr.Zero) return;
 
         PostMessage(Base.MainWindow, 256, 71, 2228225L);
@@ -1080,43 +1359,55 @@ public partial class MainWindow : Window
     // invoked once on a button click.
     public int ResolvePlayerPawnAddress()
     {
-        if (GetAKHandle() == IntPtr.Zero) return 0;
-        if (_cachedWorldInfo == 0 || !ValidateCachedWorldInfo())
-            _cachedWorldInfo = FindWorldInfoViaPawnScan();
-        if (_cachedWorldInfo == 0) return 0;
-
-        byte[]? plData = AKRead(_cachedWorldInfo + 0x041C, 4);
-        if (plData == null) return 0;
-        int cur = BitConverter.ToInt32(plData, 0);
-
-        var pawns = new List<(int addr, uint pri)>(16);
-        var visited = new HashSet<int>();
-        while (IsHeapPtr(cur) && visited.Add(cur) && visited.Count <= AK_CHAIN_MAX)
+        // Same gate the AK tick and ForceStructuralReseed use: this path
+        // mutates _cachedWorldInfo / _pawnVtable and can run a multi-second
+        // structural sweep, and it is called from the Forge/Hero scans and
+        // the CALIBRATE forge probe on non-AK threads while the AK task is
+        // mutating the same fields. Ticks arriving meanwhile TryEnter-skip
+        // (100 ms later they run again); a concurrent reseed serializes.
+        lock (_scanStateGate)
         {
-            byte[]? pd = AKRead(cur, 0x32C);
-            if (pd == null || pd.Length < 0x32C) break;
-            uint pri = 0;
-            byte[]? priB = AKRead(cur + OFF_PAWN_PRI, 4);
-            if (priB != null && priB.Length >= 4)
-                pri = BitConverter.ToUInt32(priB, 0);
-            pawns.Add((cur, pri));
-            int np = BitConverter.ToInt32(pd, 0x0230);
-            if (np == 0) break;
-            cur = np;
-        }
+            if (GetAKHandle() == IntPtr.Zero) return 0;
+            if (_cachedWorldInfo == 0 || !ValidateCachedWorldInfo())
+                _cachedWorldInfo = FindWorldInfoViaPawnScan();
+            if (_cachedWorldInfo == 0) return 0;
 
-        // Any successful resolve has located the local player pawn —
-        // selected by verified PRI + ULocalPlayer, not by list position
-        // (SelectLocalPlayerPawn; the tail is an NPC in the tavern). Save
-        // its vtable as the durable seed so a good value found by a plain
-        // Forge/Hero scan persists. Gated on a verified PRI (player only,
-        // never an enemy); PinPawnVtable no-ops when unchanged, so this is
-        // free on repeat scans. Honors the "never persist the structural
-        // first match" rule — we pin the verified player, not the scan's
-        // first hit.
-        int player = SelectLocalPlayerPawn(pawns);
-        TryPinPlayerSeed(player);
-        return player;
+            byte[]? plData = AKRead(_cachedWorldInfo + 0x041C, 4);
+            if (plData == null) return 0;
+            int cur = BitConverter.ToInt32(plData, 0);
+
+            var pawns = new List<(int addr, uint pri)>(16);
+            var visited = new HashSet<int>();
+            while (IsHeapPtr(cur) && visited.Add(cur) && visited.Count <= AK_CHAIN_MAX)
+            {
+                byte[]? pd = AKRead(cur, 0x32C);
+                if (pd == null || pd.Length < 0x32C) break;
+                uint pri = 0;
+                byte[]? priB = AKRead(cur + OFF_PAWN_PRI, 4);
+                if (priB != null && priB.Length >= 4)
+                    pri = BitConverter.ToUInt32(priB, 0);
+                pawns.Add((cur, pri));
+                int np = BitConverter.ToInt32(pd, 0x0230);
+                if (np == 0) break;
+                cur = np;
+            }
+
+            // Any successful resolve has located the local player pawn —
+            // selected by verified PRI + ULocalPlayer, not by list position
+            // (SelectLocalPlayerPawn; the tail is an NPC in the tavern). Save
+            // its vtable as the durable seed so a good value found by a plain
+            // Forge/Hero scan persists. Gated on a verified PRI (player only,
+            // never an enemy); PinPawnVtable no-ops when unchanged, so this is
+            // free on repeat scans. Honors the "never persist the structural
+            // first match" rule — we pin the verified player, not the scan's
+            // first hit.
+            int player = SelectLocalPlayerPawn(pawns, out var pick);
+            _playerPick = pick;
+            Base.Log($"Resolve: wi=0x{_cachedWorldInfo:X8} pawns={pawns.Count} " +
+                     $"picked=0x{player:X8} confidence={pick}");
+            TryPinPlayerSeed(player);
+            return player;
+        }
     }
 
     // Pin the player pawn's vtable as the durable seed, gated on a verified
@@ -1152,10 +1443,39 @@ public partial class MainWindow : Window
     // PRI-verified pawn (controller/Player link still settling), then the
     // tail (PRI not replicated yet, first tick after a map load — the
     // historical rule, still correct in solo missions).
-    private int SelectLocalPlayerPawn(List<(int addr, uint pri)> pawns)
+    // How confident the selection is. Ordered — higher is stronger. Anything
+    // below LocalPlayer is a GUESS (no ULocalPlayer was found on any pawn),
+    // which is why writes that go through the controller are gated on it.
+    internal enum PlayerPawnPick
     {
+        None = 0,
+        Tail = 1,            // no PRI anywhere — first tick after a map load
+        PriOnly = 2,         // a PRI-verified pawn, but NO ULocalPlayer found
+        LocalPlayer = 3,     // controller carries a ULocalPlayer
+        ViewportVerified = 4 // ...and that ULocalPlayer carries a ViewportClient
+    }
+
+    // Confidence of the most recent selection, for the diagnostic report and
+    // the controller-write gate.
+    private volatile PlayerPawnPick _playerPick = PlayerPawnPick.None;
+    internal PlayerPawnPick LastPlayerPick => _playerPick;
+
+    // Why the last Unlimited-Mana tick did NOT write (null = it wrote, or the
+    // toggle is off). Release builds have no log, so without this a gated
+    // mana write is indistinguishable from a broken one — surfaced in the
+    // diagnostic report.
+    private volatile string? _manaGateReason;
+    internal string? ManaGateReason => _manaGateReason;
+
+    private int SelectLocalPlayerPawn(List<(int addr, uint pri)> pawns)
+        => SelectLocalPlayerPawn(pawns, out _);
+
+    private int SelectLocalPlayerPawn(List<(int addr, uint pri)> pawns, out PlayerPawnPick how)
+    {
+        how = PlayerPawnPick.None;
         if (pawns.Count == 0) return 0;
-        int lastVerified = 0;
+
+        int lastVerified = 0, localPlayer = 0;
         foreach (var p in pawns)
         {
             if (!IsVerifiedPri(p.pri)) continue;
@@ -1163,9 +1483,28 @@ public partial class MainWindow : Window
             int ctl = ReadU32(p.addr + OFF_PAWN_CONTROLLER);
             if (!IsHeapPtr(ctl)) continue;
             int lp = ReadU32(ctl + GameChain.OFF_CONTROLLER_PLAYER);
-            if (IsHeapPtr(lp)) return p.addr;
+            if (!IsHeapPtr(lp)) continue;
+
+            // Strongest signal, and exactly what the Forge/Hero chain needs
+            // one hop later: the ULocalPlayer carries a ViewportClient. In a
+            // multiplayer game several pawns can clear the PRI bar and a
+            // remote player's controller can still be pointer-shaped, so
+            // prefer the one that actually reaches the viewport rather than
+            // returning the first ULocalPlayer-ish match and hoping.
+            int vp = ReadU32(lp + GameChain.OFF_PLAYER_VIEWPORT);
+            if (IsHeapPtr(vp)) { how = PlayerPawnPick.ViewportVerified; return p.addr; }
+
+            if (localPlayer == 0) localPlayer = p.addr; // keep as the runner-up
         }
-        return lastVerified != 0 ? lastVerified : pawns[pawns.Count - 1].addr;
+
+        // Ladder (unchanged in substance — only the viewport tier is new):
+        // ULocalPlayer-bearing → last PRI-verified → tail (PRI replication
+        // lag on the first post-load tick). The bottom two tiers are GUESSES
+        // and are reported as such.
+        if (localPlayer != 0) { how = PlayerPawnPick.LocalPlayer; return localPlayer; }
+        if (lastVerified != 0) { how = PlayerPawnPick.PriOnly; return lastVerified; }
+        how = PlayerPawnPick.Tail;
+        return pawns[pawns.Count - 1].addr;
     }
 
     // Mutual exclusion between the AK tick body and ForceStructuralReseed
@@ -1277,7 +1616,8 @@ public partial class MainWindow : Window
         if (chain.Count == 0) return;
         var pawnPris = new List<(int addr, uint pri)>(chain.Count);
         foreach (var p in chain) pawnPris.Add((p.addr, p.pri));
-        int playerPawn = SelectLocalPlayerPawn(pawnPris);
+        int playerPawn = SelectLocalPlayerPawn(pawnPris, out var pick);
+        _playerPick = pick;
         _cachedPlayerPawn = playerPawn;
 
         // Durable fast-scan seed: persist ONLY the local player's own
@@ -1429,8 +1769,24 @@ public partial class MainWindow : Window
         // tavern/menu/loading. Independent of Auto-Kill.
         if (_unlimitedMana && _cachedPlayerPawn != 0)
         {
-            int ctrl = ReadU32(_cachedPlayerPawn + OFF_PAWN_CONTROLLER);
-            if (IsHeapPtr(ctrl))
+            // Only write through a pawn we actually VERIFIED as the local
+            // player. Below LocalPlayer the selection is a guess (no
+            // ULocalPlayer was found on any pawn — e.g. an online game where
+            // the pick landed on a remote player, or a PRI-carrying pet/NPC),
+            // and its "+0x22C controller" is then some other object entirely.
+            // Same fail-closed principle as the mana/tower layout gates: a
+            // write we can't justify becomes a no-op with a stated reason,
+            // never a blind poke at an unknown field 10x/second.
+            int ctrl = _playerPick >= PlayerPawnPick.LocalPlayer
+                ? ReadU32(_cachedPlayerPawn + OFF_PAWN_CONTROLLER)
+                : 0;
+
+            if (_playerPick < PlayerPawnPick.LocalPlayer)
+                _manaGateReason = $"skipped — couldn't identify your character (pick={_playerPick}). " +
+                                  "In an online game this happens when the tool locks onto another player.";
+            else if (!IsHeapPtr(ctrl))
+                _manaGateReason = "skipped — your character's Controller (+0x22C) didn't resolve";
+            else
             {
                 int maxMana = ReadU32(ctrl + OFF_PC_MAXMANAPOWER);
                 // Sanity: real in-mission mana caps are small (≈2k), so 1M is
@@ -1440,7 +1796,15 @@ public partial class MainWindow : Window
                 // field (pointer/float/garbage) and the gate makes the write
                 // no-op instead of stomping an unknown field every tick.
                 if (maxMana > 0 && maxMana <= 1_000_000)
+                {
                     AKWrite(ctrl + OFF_PC_MANAPOWER, maxMana);
+                    _manaGateReason = null; // writing normally
+                }
+                else
+                {
+                    _manaGateReason = $"skipped — MaxManaPower at controller+0x{OFF_PC_MAXMANAPOWER:X} read " +
+                                      $"{maxMana}, outside the plausible range (controller layout may have shifted)";
+                }
             }
         }
 
@@ -1786,10 +2150,8 @@ public partial class MainWindow : Window
     private IntPtr GetAKHandle()
     {
         if (_akHandle != IntPtr.Zero) return _akHandle;
-        var procs = System.Diagnostics.Process.GetProcessesByName("DunDefGame");
-        if (procs.Length == 0) return IntPtr.Zero;
-        int pid = procs[0].Id;
-        foreach (var p in procs) { try { p.Dispose(); } catch { } }
+        int pid = ResolveGamePid();
+        if (pid == 0) return IntPtr.Zero;
         _akHandle = OpenProcess2(0x1F0FFF, false, pid); // PROCESS_ALL_ACCESS
         _akTargetPid = pid;
         return _akHandle;
@@ -1799,10 +2161,26 @@ public partial class MainWindow : Window
     private void CheckTargetPid()
     {
         if (_akHandle == IntPtr.Zero) return;
-        var procs = System.Diagnostics.Process.GetProcessesByName("DunDefGame");
-        int pid = procs.Length > 0 ? procs[0].Id : 0;
-        foreach (var p in procs) { try { p.Dispose(); } catch { } }
+        int pid = ResolveGamePid();
         if (pid != _akTargetPid) ResetAutoKillHandle();
+    }
+
+    // Which DunDefGame the AK/pawn-scan handle should target. Prefer the
+    // instance the Scanner is attached to (the one the user picked in the
+    // choose-process dialog when several are running) so the pawn chain
+    // resolved through THIS handle is read back through Base.Instance in
+    // the SAME process; fall back to "first process found" when nothing is
+    // attached yet (Auto-Kill toggled on before any scan). Both GetAKHandle
+    // and CheckTargetPid go through here so they can never disagree and
+    // flap the handle every 2 s.
+    private static int ResolveGamePid()
+    {
+        int pid = Base.AttachedPid;
+        if (pid != 0) return pid;
+        var procs = System.Diagnostics.Process.GetProcessesByName("DunDefGame");
+        pid = procs.Length > 0 ? procs[0].Id : 0;
+        foreach (var p in procs) { try { p.Dispose(); } catch { } }
+        return pid;
     }
 
     // ── Game-build (patch) detection ─────────────────────────────────

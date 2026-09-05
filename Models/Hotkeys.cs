@@ -52,6 +52,8 @@ public class HotkeyConfig
     public HotkeyBinding AutoKill { get; set; } = new(HotkeyMods.CONTROL | HotkeyMods.SHIFT, (uint)KeyInterop.VirtualKeyFromKey(Key.K));
     public HotkeyBinding AutoG { get; set; } = new(HotkeyMods.CONTROL | HotkeyMods.SHIFT, (uint)KeyInterop.VirtualKeyFromKey(Key.G));
     public HotkeyBinding AlwaysOnTop { get; set; } = new(HotkeyMods.CONTROL | HotkeyMods.SHIFT, (uint)KeyInterop.VirtualKeyFromKey(Key.T));
+    public HotkeyBinding UnlimitedMana { get; set; } = new(HotkeyMods.CONTROL | HotkeyMods.SHIFT, (uint)KeyInterop.VirtualKeyFromKey(Key.M));
+    public HotkeyBinding MaxTowerUnits { get; set; } = new(HotkeyMods.CONTROL | HotkeyMods.SHIFT, (uint)KeyInterop.VirtualKeyFromKey(Key.U));
 
     private static string Path =>
         System.IO.Path.Combine(

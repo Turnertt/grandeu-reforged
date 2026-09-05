@@ -13,6 +13,23 @@ public partial class ItemEditView : UserControl
     private int Address;
     private string ItemDisplayName;
     private ItemNative _lastNative;
+    // Identity of the item as of the last Refresh. Every write re-reads the
+    // address and refuses if a different item (or freed/reused memory) is
+    // there now — see ItemIdentity. REFRESH re-captures, so a user who has
+    // seen the new contents can edit them knowingly.
+    private ItemIdentity _openedIdentity;
+    private bool _hasIdentity;
+
+    // Re-read the item and confirm it is still the one this screen loaded.
+    // Returns false (and explains in the status pill) when it is not.
+    private bool VerifyStillSameItem(out ItemNative live)
+    {
+        int size = Marshal.SizeOf(typeof(ItemNative));
+        live = Base.Push<ItemNative>(Base.Instance.ReadMemory(Address, size));
+        if (!_hasIdentity || _openedIdentity.Matches(live)) return true;
+        StatusText.Text = "Not written — " + ItemIdentity.ChangedMessage;
+        return false;
+    }
 
     public ItemEditView(int address, string name)
     {
@@ -51,12 +68,15 @@ public partial class ItemEditView : UserControl
             byte[] data = Base.Instance.ReadMemory(Address, size);
             ItemNative native = Base.Push<ItemNative>(data);
             _lastNative = native;
+            _openedIdentity = ItemIdentity.Of(native);
+            _hasIdentity = true;
             ItemUser user = Base.ItemToUser(native);
 
             // Read string fields
             string itemName = Base.ReadUni<ItemNative>(Address, "EquipmentName");
             string description = Base.ReadUni<ItemNative>(Address, "Description");
             string forgerName = Base.ReadUni<ItemNative>(Address, "ForgerName");
+            _storedForgerName = forgerName ?? "";
 
             // Numeric / string fields: show current value as grey hint, leave
             // textbox empty. On save, empty = keep as-is, so the user can type
@@ -123,8 +143,15 @@ public partial class ItemEditView : UserControl
 
             // Identity
             SetHint(TxtItemName, itemName ?? "");
-            SetHint(TxtDescription, description ?? "");
-            SetHint(TxtForgerName, forgerName ?? "");
+            // Hint only — colour runs stripped so the watermark doesn't show
+            // as tag soup. Leaving the box blank still writes the raw text
+            // (BtnUpdate_Click re-reads it), so nothing is lost.
+            SetHint(TxtDescription, Watermark.StripColorTags(description));
+            // Stripped for the same reason as Description: a coloured forger
+            // name would otherwise show as raw tags. Leaving the box blank
+            // still preserves the stored text verbatim.
+            SetHint(TxtForgerName, ColorMarkup.Strip(forgerName));
+            UpdateForgerWarning();
             CboEquipmentType.SelectedItem = user.EquipmentType;
             SetHint(TxtEquipmentTemplate, user.EquipmentTemplate ?? "");
 
@@ -176,6 +203,58 @@ public partial class ItemEditView : UserControl
     // longer than the existing buffer. WriteUniInPlace silently bails when
     // the buffer is too small, so without this the UI appears to succeed
     // but memory never changes.
+    // ── Colour editor + forger-name warning ─────────────────────────
+
+    // The item's stored forger name, so the warning can reflect "this item is
+    // already unsellable" and not just "you are typing one right now".
+    private string _storedForgerName = "";
+
+    private void BtnColorDescription_Click(object sender, RoutedEventArgs e)
+        => OpenColorEditor(TxtDescription, "Description", "Description", isForgerName: false);
+
+    private void BtnColorForger_Click(object sender, RoutedEventArgs e)
+        => OpenColorEditor(TxtForgerName, "ForgerName", "Forger Name", isForgerName: true);
+
+    private void OpenColorEditor(TextBox box, string field, string title, bool isForgerName)
+    {
+        string current = box.Text ?? "";
+        if (current.Length == 0)
+        {
+            // An empty box means "keep what's stored" (see StrOr in the update
+            // path), so the editor has to start from the item's real text —
+            // tags and all — rather than from blank.
+            try { current = Base.ReadUni<ItemNative>(Address, field) ?? ""; }
+            catch { current = ""; }
+        }
+
+        var dlg = new ColorTextDialog(current, title, isForgerName)
+        {
+            Owner = Window.GetWindow(this),
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        // Stage into the textbox rather than writing to memory here: UPDATE
+        // stays the single write path, so nothing lands on the item behind
+        // the user's back and CANCEL on the editor really cancels.
+        box.Text = dlg.ResultMarkup;
+        StatusText.Text = "Colors staged — press UPDATE to write them to the item.";
+    }
+
+    private void TxtForgerName_TextChanged(object sender, TextChangedEventArgs e)
+        => UpdateForgerWarning();
+
+    private void UpdateForgerWarning()
+    {
+        // Can fire from InitializeComponent before the label exists.
+        if (LblForgerWarn == null) return;
+        string typed = TxtForgerName.Text ?? "";
+        // Empty box keeps the stored name, so that is what decides it.
+        bool willHaveForger = typed.Length > 0
+            ? !string.IsNullOrWhiteSpace(ColorMarkup.Strip(typed))
+            : !string.IsNullOrWhiteSpace(ColorMarkup.Strip(_storedForgerName));
+        LblForgerWarn.Visibility = willHaveForger ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private NativeArray WriteStringWithFallback(NativeArray existing, string data, string fieldName)
     {
         if (existing.MaximumLength >= data.Length + 1)
@@ -205,9 +284,11 @@ public partial class ItemEditView : UserControl
         string curItemName, curDescription, curForgerName;
         try
         {
-            int size = Marshal.SizeOf(typeof(ItemNative));
-            byte[] data = Base.Instance.ReadMemory(Address, size);
-            _lastNative = Base.Push<ItemNative>(data);
+            // Identity gate BEFORE any write — the string writes below
+            // (WriteStringWithFallback) hit game memory before the final
+            // struct write, so this has to come first.
+            if (!VerifyStillSameItem(out ItemNative liveNow)) return;
+            _lastNative = liveNow;
             current = Base.ItemToUser(_lastNative);
             curItemName = Base.ReadUni<ItemNative>(Address, "EquipmentName") ?? "";
             curDescription = Base.ReadUni<ItemNative>(Address, "Description") ?? "";
@@ -340,7 +421,10 @@ public partial class ItemEditView : UserControl
             // WriteUni which allocates a new buffer. Without the fallback,
             // typing a name longer than the original silently no-ops.
             native.EquipmentName = WriteStringWithFallback(_lastNative.EquipmentName, user.ItemName ?? "", "EquipmentName");
-            native.Description   = WriteStringWithFallback(_lastNative.Description,   user.Description ?? "", "Description");
+            // Watermark.Apply appends "[Grandeu Reforged]" once, and
+            // returns the text unchanged if it's already there — so an item
+            // only ever grows its Description buffer on the first edit.
+            native.Description   = WriteStringWithFallback(_lastNative.Description,   Watermark.Apply(user.Description), "Description");
             native.ForgerName    = WriteStringWithFallback(_lastNative.ForgerName,    user.ForgerName ?? "",  "ForgerName");
 
             byte[] bytes = Base.Push(native);
@@ -365,6 +449,7 @@ public partial class ItemEditView : UserControl
         if (result != MessageBoxResult.Yes) return;
         try
         {
+            if (!VerifyStillSameItem(out _)) return;
             int size = Marshal.SizeOf(typeof(ItemNative));
             byte[] zeros = new byte[size];
             Base.Instance.WriteMemory(Address, zeros);
@@ -479,9 +564,10 @@ public partial class ItemEditView : UserControl
             var cfg = MaxItemConfig.Load();
 
             // Read current item state so we know which fields are non-zero.
-            int size = Marshal.SizeOf(typeof(ItemNative));
-            byte[] data = Base.Instance.ReadMemory(Address, size);
-            _lastNative = Base.Push<ItemNative>(data);
+            // MAX only fills the form (UPDATE does the write), but populating
+            // it from a DIFFERENT item than the one on screen would mislead.
+            if (!VerifyStillSameItem(out ItemNative liveNow)) return;
+            _lastNative = liveNow;
             ItemUser cur = Base.ItemToUser(_lastNative);
 
             // Always-apply: hero/tower stats + strings.

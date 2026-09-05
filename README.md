@@ -20,6 +20,8 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 - **Game Speed Control** — accelerate the game to blast through levels.
 - **Hero Editor** — customize hero stats and appearance, including color.
 - **Item Editor** — full control over item stats, affixes, and properties, including a read-only weapon-class indicator.
+- **Save backups & restore** — your DD1 save (`DunDefHeroes.dun`) is backed up automatically when the tool starts and before the first edit of every session, so any session can be undone. Restore any backup from **Settings → Save Backups** (with the game closed).
+- **Safe writes** — every edit checks that the item is still the one you selected before writing, so a stale Forge card (item sold or dropped since the scan) is refused instead of overwriting whatever the game put there.
 - **Zero-touch game-update recovery** — the tool learns the game's memory addresses from the live game, saves them, and re-learns them automatically after every DD1 patch. No tool update needed on patch day. A guided **CALIBRATE** wizard (Settings → Diagnostics) walks you through it if anything ever looks off.
 - **Modern UI** — clean dark theme, sidebar navigation, tooltips everywhere, keyboard-friendly (Enter scans, Escape closes dialogs), touch- and small-screen-friendly scrollbars.
 
@@ -76,7 +78,8 @@ Output: `bin\Release\net8.0-windows\win-arm64\publish\GrandeuReforged.exe`. End-
 
 1. Launch *Dungeon Defenders 1* first (the **32-bit** Steam build — the 64-bit build is not supported, and the tool will tell you if it detects one).
 2. Run `GrandeuReforged.exe`. Administrator privileges may be required so it can open a handle to the game process.
-3. Pick a tool from the left sidebar.
+3. Read and accept the first-launch notice. **This tool is not supported or recommended online or in Ranked mode** — Ranked stats are validated server-side and using an editor there can get heroes wiped or an account banned. Edits can also break the game or your save; you use the tool at your own risk.
+4. Pick a tool from the left sidebar.
 
 ## Troubleshooting
 

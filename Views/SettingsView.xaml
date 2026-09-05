@@ -16,190 +16,19 @@
                            VerticalAlignment="Center" />
             </StackPanel>
 
-            <!-- ─── SCANNING ─── -->
-            <TextBlock Text="S C A N N I N G"
-                       Foreground="{StaticResource TextMutedBrush}"
-                       FontSize="10.5" FontWeight="Bold"
-                       Margin="0,0,0,10" />
-            <Border Background="{StaticResource SurfaceBrush}"
-                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                    CornerRadius="10" Padding="0" Margin="0,0,0,22">
-                <StackPanel>
-                    <Grid Margin="20,16" Background="Transparent">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Full Scanning"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       FontSize="13" FontWeight="SemiBold" />
-                            <TextBlock Text="More thorough but slower search. Try this if a search can't find your value."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleButton x:Name="SwFullScanning" Grid.Column="1"
-                                      Style="{StaticResource ToggleSwitch}"
-                                      VerticalAlignment="Center"
-                                      Checked="SwFullScanning_Toggled"
-                                      Unchecked="SwFullScanning_Toggled" />
-                    </Grid>
-                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
-                    <Grid Margin="20,16" Background="Transparent">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Pause On Scan"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       FontSize="13" FontWeight="SemiBold" />
-                            <TextBlock Text="Freeze the game while a search runs, for more reliable results."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleButton x:Name="SwPauseOnScan" Grid.Column="1"
-                                      Style="{StaticResource ToggleSwitch}"
-                                      VerticalAlignment="Center"
-                                      Checked="SwPauseOnScan_Toggled"
-                                      Unchecked="SwPauseOnScan_Toggled" />
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <!-- ─── WINDOW ─── -->
-            <TextBlock Text="W I N D O W"
-                       Foreground="{StaticResource TextMutedBrush}"
-                       FontSize="10.5" FontWeight="Bold"
-                       Margin="0,0,0,10" />
-            <Border Background="{StaticResource SurfaceBrush}"
-                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                    CornerRadius="10" Padding="20,16" Margin="0,0,0,22">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock Text="Always On Top"
-                                   Foreground="{StaticResource TextPrimaryBrush}"
-                                   FontSize="13" FontWeight="SemiBold" />
-                        <TextBlock Text="Keep this window on top of the game."
-                                   Foreground="{StaticResource TextSecondaryBrush}"
-                                   FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <ToggleButton x:Name="SwAlwaysOnTop" Grid.Column="1"
-                                  Style="{StaticResource ToggleSwitch}"
-                                  VerticalAlignment="Center"
-                                  Checked="SwAlwaysOnTop_Toggled"
-                                  Unchecked="SwAlwaysOnTop_Toggled" />
-                </Grid>
-            </Border>
-
-            <!-- ─── GAMEPLAY ─── -->
-            <TextBlock Text="G A M E P L A Y"
-                       Foreground="{StaticResource TextMutedBrush}"
-                       FontSize="10.5" FontWeight="Bold"
-                       Margin="0,0,0,10" />
-            <Border Background="{StaticResource SurfaceBrush}"
-                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                    CornerRadius="10" Padding="0" Margin="0,0,0,22">
-                <StackPanel>
-                    <Grid Margin="20,16" Background="Transparent">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Automate &quot;G&quot;"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       FontSize="13" FontWeight="SemiBold" />
-                            <TextBlock Text="Press G in the game for you, once per second."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleButton x:Name="SwSimulateG" Grid.Column="1"
-                                      Style="{StaticResource ToggleSwitch}"
-                                      VerticalAlignment="Center"
-                                      Checked="SwSimulateG_Toggled"
-                                      Unchecked="SwSimulateG_Toggled" />
-                    </Grid>
-                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
-                    <Grid Margin="20,16" Background="Transparent">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Auto Kill Enemies"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       FontSize="13" FontWeight="SemiBold" />
-                            <TextBlock Text="Automatically kill enemies and enemy towers. Note: enemies killed this way won't drop loot or mana."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleButton x:Name="SwAutoKill" Grid.Column="1"
-                                      Style="{StaticResource ToggleSwitch}"
-                                      VerticalAlignment="Center"
-                                      Checked="SwAutoKill_Toggled"
-                                      Unchecked="SwAutoKill_Toggled" />
-                    </Grid>
-                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
-                    <Grid Margin="20,16" Background="Transparent">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Unlimited Mana"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       FontSize="13" FontWeight="SemiBold" />
-                            <TextBlock Text="Keep your mana full while you're in a mission."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleButton x:Name="SwUnlimitedMana" Grid.Column="1"
-                                      Style="{StaticResource ToggleSwitch}"
-                                      VerticalAlignment="Center"
-                                      Checked="SwUnlimitedMana_Toggled"
-                                      Unchecked="SwUnlimitedMana_Toggled" />
-                    </Grid>
-                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
-                    <Grid Margin="20,16" Background="Transparent">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Max Tower Units"
-                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                       FontSize="13" FontWeight="SemiBold" />
-                            <TextBlock Text="Raise the map's defense-unit limit so you can build far more towers."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ToggleButton x:Name="SwMaxTowerUnits" Grid.Column="1"
-                                      Style="{StaticResource ToggleSwitch}"
-                                      VerticalAlignment="Center"
-                                      Checked="SwMaxTowerUnits_Toggled"
-                                      Unchecked="SwMaxTowerUnits_Toggled" />
-                    </Grid>
-                </StackPanel>
-            </Border>
-
             <!-- ─── HOTKEYS ─── -->
             <TextBlock Text="H O T K E Y S"
                        Foreground="{StaticResource TextMutedBrush}"
                        FontSize="10.5" FontWeight="Bold"
                        Margin="0,0,0,10" />
-            <TextBlock Text="Shortcuts that work while you're playing. Click a button, then press the new key combo — it must include Ctrl, Shift, or Alt. Esc cancels."
+            <TextBlock Text="Every toggle from the title bar, usable while you're playing. Click a button, then press the new combo — it must include Ctrl, Shift or Alt. Esc cancels."
                        Foreground="{StaticResource TextSecondaryBrush}"
                        FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" />
             <Border Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                     CornerRadius="10" Padding="0" Margin="0,0,0,22">
                 <StackPanel>
-                    <Grid Margin="20,16" Background="Transparent">
+                    <Grid Margin="20,14" Background="Transparent">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -208,16 +37,16 @@
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button x:Name="BtnHkAutoKill" Grid.Column="1"
-                                MinWidth="140" Padding="14,6" Height="30"
+                                MinWidth="150" Padding="14,6" Height="30"
                                 VerticalAlignment="Center"
-                                ToolTip="Click, then press the key combo you want (e.g. Ctrl+K). Esc cancels."
+                                ToolTip="Click, then press the key combo you want. Esc cancels."
                                 Click="HkButton_Click"
                                 PreviewKeyDown="HkButton_PreviewKeyDown"
                                 LostFocus="HkButton_LostFocus"
                                 Tag="AutoKill" />
                     </Grid>
                     <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
-                    <Grid Margin="20,16" Background="Transparent">
+                    <Grid Margin="20,14" Background="Transparent">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -226,16 +55,52 @@
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button x:Name="BtnHkAutoG" Grid.Column="1"
-                                MinWidth="140" Padding="14,6" Height="30"
+                                MinWidth="150" Padding="14,6" Height="30"
                                 VerticalAlignment="Center"
-                                ToolTip="Click, then press the key combo you want (e.g. Ctrl+G). Esc cancels."
+                                ToolTip="Click, then press the key combo you want. Esc cancels."
                                 Click="HkButton_Click"
                                 PreviewKeyDown="HkButton_PreviewKeyDown"
                                 LostFocus="HkButton_LostFocus"
                                 Tag="AutoG" />
                     </Grid>
                     <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
-                    <Grid Margin="20,16" Background="Transparent">
+                    <Grid Margin="20,14" Background="Transparent">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Unlimited Mana"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button x:Name="BtnHkUnlimitedMana" Grid.Column="1"
+                                MinWidth="150" Padding="14,6" Height="30"
+                                VerticalAlignment="Center"
+                                ToolTip="Click, then press the key combo you want. Esc cancels."
+                                Click="HkButton_Click"
+                                PreviewKeyDown="HkButton_PreviewKeyDown"
+                                LostFocus="HkButton_LostFocus"
+                                Tag="UnlimitedMana" />
+                    </Grid>
+                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
+                    <Grid Margin="20,14" Background="Transparent">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Max Tower Units"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button x:Name="BtnHkMaxTowerUnits" Grid.Column="1"
+                                MinWidth="150" Padding="14,6" Height="30"
+                                VerticalAlignment="Center"
+                                ToolTip="Click, then press the key combo you want. Esc cancels."
+                                Click="HkButton_Click"
+                                PreviewKeyDown="HkButton_PreviewKeyDown"
+                                LostFocus="HkButton_LostFocus"
+                                Tag="MaxTowerUnits" />
+                    </Grid>
+                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
+                    <Grid Margin="20,14" Background="Transparent">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -244,7 +109,7 @@
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <Button x:Name="BtnHkAlwaysOnTop" Grid.Column="1"
-                                MinWidth="140" Padding="14,6" Height="30"
+                                MinWidth="150" Padding="14,6" Height="30"
                                 VerticalAlignment="Center"
                                 ToolTip="Click, then press the key combo you want. Esc cancels."
                                 Click="HkButton_Click"
@@ -255,157 +120,191 @@
                 </StackPanel>
             </Border>
 
-            <!-- ─── GAME ADDRESSES ─── -->
-            <TextBlock Text="G A M E   A D D R E S S E S"
+            <!-- ─── ADVANCED ─── -->
+            <!-- Four grouped cards, each with its own short description and
+                 only the buttons that belong to it. An earlier pass merged
+                 everything into one card and produced eight context-free
+                 buttons in a row, which was worse than the three sections it
+                 replaced. Status values are kept to a few words; the detail
+                 lives in COPY REPORT. -->
+            <TextBlock Text="A D V A N C E D"
                        Foreground="{StaticResource TextMutedBrush}"
                        FontSize="10.5" FontWeight="Bold"
                        Margin="0,0,0,10" />
-            <TextBlock Foreground="{StaticResource TextSecondaryBrush}"
-                       FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10">
-                The tool finds the game's memory addresses on its own, saves them to a small
-                file, and re-learns them automatically after every game update — you normally
-                never need to touch this. The buttons below are escape hatches for hand-editing
-                that file; the only values worth changing by hand are the two safety limits
-                (MaxPlausibleHp and MaxTowerUnits). The file's current contents are shown under
-                Diagnostics below.
-            </TextBlock>
-            <Border Background="{StaticResource SurfaceBrush}"
-                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                    CornerRadius="10" Padding="20,16" Margin="0,0,0,22">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="160" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <Button Grid.Row="0" Grid.Column="0" Content="RELOAD"
-                            Padding="14,6" Height="30" MinWidth="140"
-                            HorizontalAlignment="Left" Margin="0,0,0,10"
-                            ToolTip="Re-read the saved addresses file after editing it by hand."
-                            Click="BtnOverrideReload_Click" />
-                    <TextBlock Grid.Row="0" Grid.Column="1"
-                               Text="Re-read the file and apply it now. Only needed after editing the file by hand."
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               FontSize="11" TextWrapping="Wrap"
-                               VerticalAlignment="Center" Margin="0,0,0,10" />
-
-                    <Button Grid.Row="1" Grid.Column="0" Content="WRITE TEMPLATE"
-                            Padding="14,6" Height="30" MinWidth="140"
-                            HorizontalAlignment="Left" Margin="0,0,0,10"
-                            ToolTip="Save the currently active values to the file as a starting point for hand edits."
-                            Click="BtnOverrideTemplate_Click" />
-                    <TextBlock Grid.Row="1" Grid.Column="1"
-                               Text="Write the values currently in use into the file — a correctly-formatted starting point, so you never have to author the JSON from scratch."
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               FontSize="11" TextWrapping="Wrap"
-                               VerticalAlignment="Center" Margin="0,0,0,10" />
-
-                    <Button Grid.Row="2" Grid.Column="0" Content="OPEN FOLDER"
-                            Padding="14,6" Height="30" MinWidth="140"
-                            HorizontalAlignment="Left"
-                            ToolTip="Open the folder containing the saved addresses file."
-                            Click="BtnOverrideOpenFolder_Click" />
-                    <TextBlock Grid.Row="2" Grid.Column="1"
-                               Text="Show the file in Explorer."
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               FontSize="11" TextWrapping="Wrap"
-                               VerticalAlignment="Center" />
-                </Grid>
-            </Border>
-
-            <!-- ─── DIAGNOSTICS ─── -->
-            <TextBlock Text="D I A G N O S T I C S"
-                       Foreground="{StaticResource TextMutedBrush}"
-                       FontSize="10.5" FontWeight="Bold"
-                       Margin="0,0,0,10" />
-            <TextBlock Text="What the tool currently knows — check here first when something isn't working."
+            <TextBlock Text="The tool manages all of this on its own. You only need this page when something goes wrong."
                        Foreground="{StaticResource TextSecondaryBrush}"
                        FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" />
+
+            <!-- Connection -->
             <Border Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                    CornerRadius="10" Padding="20,16" Margin="0,0,0,22">
+                    CornerRadius="10" Padding="20,16" Margin="0,0,0,12">
                 <StackPanel>
-                    <Grid>
+                    <TextBlock Text="Connection"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Text="Whether the tool can see the game, and whether it has worked out where things live inside it. Run the fix if a search finds nothing."
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Game"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" Margin="0,0,0,5" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtStatusGame"
+                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="0,0,0,5" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Addresses"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtStatusAddresses"
+                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                    <WrapPanel Margin="0,14,0,0">
+                        <Button Content="FIX MY SETUP" Padding="14,6" Height="30" Margin="0,0,10,0"
+                                Style="{StaticResource AccentButton}"
+                                ToolTip="Step-by-step check that re-learns the game's addresses and verifies everything works."
+                                Click="BtnCalibrate_Click" />
+                        <Button Content="RE-CHECK" Padding="14,6" Height="30"
+                                ToolTip="Update everything shown on this page."
+                                Click="BtnDiagRefresh_Click" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Save backups -->
+            <Border Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="10" Padding="20,16" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Save backups"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Text="Your save is copied before the first edit of each session, so a session's changes can always be undone. The newest 10 automatic copies are kept; ones you make yourself stay until you delete them. Restoring needs the game closed."
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="App version"
-                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
-                                   Margin="0,0,0,6" />
-                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtDiagVersion"
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Kept"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" Margin="0,0,0,5" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtStatusBackups"
                                    Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" Margin="0,0,0,6" />
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Game process"
-                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
-                                   Margin="0,0,0,6" />
-                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtDiagGame"
-                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" Margin="0,0,0,6" />
-
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Learned address"
-                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
-                                   Margin="0,0,0,6"
-                                   ToolTip="The game memory address the tool learned from the live game. Re-learned automatically after a game update." />
-                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TxtDiagSeed"
-                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" Margin="0,0,0,6" />
-
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Game version"
-                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
-                                   Margin="0,0,0,6"
-                                   ToolTip="Identifies which game build the saved address belongs to. After a game update these stop matching and the tool re-learns automatically." />
-                        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="TxtDiagStamp"
-                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,6" />
-
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Game layout"
-                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
-                                   Margin="0,0,0,6"
-                                   ToolTip="Where the tool currently finds the forge box, the hero lists and the item manager inside the game. 'learned' means a game update moved it and the tool relocated it automatically." />
-                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtDiagOffsets"
-                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,6" />
-
-                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Saved values"
-                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5"
-                                   Margin="0,0,0,6"
-                                   ToolTip="What the saved addresses file currently provides (see Game Addresses above)." />
-                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtOverrideStatus"
-                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,6" />
-
-                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Saved file"
+                                   TextWrapping="Wrap" Margin="0,0,0,5" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="This session"
                                    Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" />
-                        <TextBlock Grid.Row="6" Grid.Column="1" x:Name="TxtOverridePath"
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtStatusSession"
                                    Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
-                                   FontFamily="Consolas" TextWrapping="Wrap" />
+                                   TextWrapping="Wrap" />
                     </Grid>
-                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                        <Button Content="REFRESH" Padding="14,6" Height="30"
-                                ToolTip="Update the diagnostic info below."
-                                Click="BtnDiagRefresh_Click" />
-                        <Button Content="CALIBRATE" Padding="14,6" Height="30"
-                                Margin="10,0,0,0"
-                                ToolTip="Step-by-step check that re-learns the game's addresses and verifies everything works. Run it if scans find nothing."
-                                Click="BtnCalibrate_Click" />
-                    </StackPanel>
+                    <WrapPanel Margin="0,14,0,0">
+                        <Button Content="BACK UP NOW" Padding="14,6" Height="30" Margin="0,0,10,6"
+                                ToolTip="Copy the current save to a new backup right now."
+                                Click="BtnBackupNow_Click" />
+                        <Button Content="RESTORE…" Padding="14,6" Height="30" Margin="0,0,10,6"
+                                ToolTip="Pick an earlier backup and copy it back over the game's save."
+                                Click="BtnBackupRestore_Click" />
+                        <Button Content="OPEN FOLDER" Padding="14,6" Height="30" Margin="0,0,10,6"
+                                ToolTip="Show the backups folder in Explorer."
+                                Click="BtnBackupFolder_Click" />
+                        <Button Content="CHANGE SAVE FOLDER…" Padding="14,6" Height="30" Margin="0,0,10,6"
+                                ToolTip="Point the tool at a different save folder (must contain DunDefHeroes.dun)."
+                                Click="BtnChangeSaveFolder_Click" />
+                        <Button x:Name="BtnResetSaveFolder" Content="USE AUTO-DETECT" Padding="14,6" Height="30" Margin="0,0,10,6"
+                                Visibility="Collapsed"
+                                ToolTip="Forget the manual folder and detect the save from Steam again."
+                                Click="BtnResetSaveFolder_Click" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Reporting a problem — the log toggle and its status live here
+                 together. They were previously in two separate places, which
+                 told the user logging was on twice. -->
+            <Border Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="10" Padding="20,16" Margin="0,0,0,12">
+                <StackPanel>
+                    <DockPanel>
+                        <ToggleButton x:Name="SwErrorLog" DockPanel.Dock="Right"
+                                      Style="{StaticResource ToggleSwitch}"
+                                      VerticalAlignment="Center" Margin="16,0,0,0"
+                                      Checked="SwErrorLog_Toggled"
+                                      Unchecked="SwErrorLog_Toggled" />
+                        <TextBlock Text="Reporting a problem"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <TextBlock Text="The switch keeps a log of what the tool did this session — one file, replaced each time you start, never sent anywhere on its own. Send that file and a copied report together when something breaks."
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Log"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" />
+                        <TextBlock Grid.Column="1" x:Name="TxtStatusLog"
+                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                    <WrapPanel Margin="0,14,0,0">
+                        <Button Content="OPEN LOG" Padding="14,6" Height="30" Margin="0,0,10,0"
+                                ToolTip="Show this session's log file in Explorer so you can attach it."
+                                Click="BtnOpenLog_Click" />
+                        <Button Content="COPY REPORT" Padding="14,6" Height="30"
+                                ToolTip="Copy a full read-only diagnostic to the clipboard — paste it when asking for help."
+                                Click="BtnCopyReport_Click" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Saved addresses -->
+            <Border Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="10" Padding="20,16" Margin="0,0,0,22">
+                <StackPanel>
+                    <TextBlock Text="Saved addresses"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Text="The tool writes what it learns about the game to a small file and re-learns it after every game update. Editing it by hand is an escape hatch, not a step you should need."
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="File"
+                                   Foreground="{StaticResource TextMutedBrush}" FontSize="11.5" />
+                        <TextBlock Grid.Column="1" x:Name="TxtStatusAddrFile"
+                                   Foreground="{StaticResource TextPrimaryBrush}" FontSize="11.5"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                    <WrapPanel Margin="0,14,0,0">
+                        <Button Content="OPEN FOLDER" Padding="14,6" Height="30" Margin="0,0,10,0"
+                                ToolTip="Show the file in Explorer."
+                                Click="BtnOverrideOpenFolder_Click" />
+                        <Button Content="WRITE TEMPLATE" Padding="14,6" Height="30" Margin="0,0,10,0"
+                                ToolTip="Write the values currently in use into the file, as a correctly-formatted starting point."
+                                Click="BtnOverrideTemplate_Click" />
+                        <Button Content="RELOAD" Padding="14,6" Height="30"
+                                ToolTip="Re-read the file after editing it by hand."
+                                Click="BtnOverrideReload_Click" />
+                    </WrapPanel>
                 </StackPanel>
             </Border>
 
@@ -423,19 +322,104 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock Text="More Options"
+                        <TextBlock Text="Disclaimer"
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    FontSize="13" FontWeight="SemiBold" />
-                        <TextBlock Text="Additional advanced settings."
+                        <TextBlock Text="Re-read the notice shown on first launch: not for online or Ranked play, use at your own risk."
                                    Foreground="{StaticResource TextSecondaryBrush}"
                                    FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="OPEN" Padding="14,6" Height="30"
+                    <Button Grid.Column="1" Content="VIEW" Padding="14,6" Height="30"
                             VerticalAlignment="Center"
-                            ToolTip="Open additional options (timers and other advanced tweaks)."
-                            Click="BtnMoreOptions_Click" />
+                            ToolTip="Show the first-launch disclaimer again."
+                            Click="BtnViewDisclaimer_Click" />
                 </Grid>
             </Border>
+
+            <!-- ─── LEGACY ─── -->
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="L E G A C Y"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="10.5" FontWeight="Bold"
+                           VerticalAlignment="Center" />
+                <Button x:Name="BtnLegacyToggle" Grid.Column="1"
+                        Content="SHOW" Style="{StaticResource GhostButton}"
+                        Padding="12,4" Height="26" FontSize="10"
+                        ToolTip="Older options kept for compatibility. You almost certainly don't need these."
+                        Click="BtnLegacyToggle_Click" />
+            </Grid>
+            <StackPanel x:Name="LegacyPanel" Visibility="Collapsed">
+                <TextBlock Text="Older options, kept so nothing that used to work stops working. The searches tune themselves now, so these are almost never needed."
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <Border Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        CornerRadius="10" Padding="0" Margin="0,0,0,22">
+                    <StackPanel>
+                        <Grid Margin="20,14" Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="Full Scanning"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Text="More thorough but slower search. Try this if a search can't find your value."
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleButton x:Name="SwFullScanning" Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          VerticalAlignment="Center" Margin="16,0,0,0"
+                                          Checked="SwFullScanning_Toggled"
+                                          Unchecked="SwFullScanning_Toggled" />
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
+                        <Grid Margin="20,14" Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="Pause On Scan"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Text="Freeze the game while a search runs, for more reliable results."
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleButton x:Name="SwPauseOnScan" Grid.Column="1"
+                                          Style="{StaticResource ToggleSwitch}"
+                                          VerticalAlignment="Center" Margin="16,0,0,0"
+                                          Checked="SwPauseOnScan_Toggled"
+                                          Unchecked="SwPauseOnScan_Toggled" />
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
+                        <Grid Margin="20,14" Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="More Options"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Text="Timer intervals and other old tweaks."
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="OPEN" Padding="14,6" Height="30"
+                                    VerticalAlignment="Center" Margin="16,0,0,0"
+                                    Click="BtnMoreOptions_Click" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
 
         </StackPanel>
     </ScrollViewer>
