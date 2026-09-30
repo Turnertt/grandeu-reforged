@@ -19,7 +19,9 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 - **Forge Viewer** — browse your forge inventory and pick items to modify in seconds. Filter by **Source** (All / Forge / Hero) with real folder names, type, quality (including Ultimate 93 / + / ++), and sort.
 - **Hero Viewer** — every hero's stats, level and equipped items in one place. Double-click a hero or an item to jump straight into its editor.
 - **Max Stat** — one-click max out any item's stats. **Class-aware**: only applies the stats valid for that item and weapon family. Works with Bulk Edit on any mix of item types.
-- **Item Dupe** — copy an item's stats onto another item, using the game's own value set for the lowest crash risk.
+- **Item Dupe** — copy an item onto another of your items. The source can be one of your own items, a saved template, or gear worn by another player or lying on the floor. The target keeps its own identity. Targets closest to the source are listed first as **Best match** and **Recommended**; any item can be chosen. The copy keeps the target's old look until you drop it and pick it back up.
+- **Templates** — save any item to a reusable library and browse it as Forge-style cards. Add items from a Forge Viewer card, the item editor or Item Dupe; edit a template's stats, colors and text offline; send one to Item Dupe with **Use in Dupe**.
+- **Forge-style pickers** — choosing a source or target opens the same card view as the Forge Viewer, with search, filters and sorting, and reads the game directly. The source picker has **Forge**, **Templates** and **Players & Floor** tabs.
 - **Bulk Edit** — modify many items at once; only the fields you change are written.
 - **Auto Kill** — flip a switch to instantly clear enemies from the map. Multiplayer-safe hero protection covers every hero class, including DLC heroes, Summoner pets, and Series EV turrets.
 - **Unlimited Mana / Max Tower Units** — in-level title-bar toggles.
@@ -32,7 +34,7 @@ A memory editor for *Dungeon Defenders 1* (`DunDefGame.exe`) — a WPF rewrite o
 - **Save backups & restore** — your DD1 save (`DunDefHeroes.dun`) is backed up automatically when the tool starts and before the first edit of every session, so any session can be undone. Restore any backup from **Settings → Advanced** (with the game closed).
 - **Safe writes** — every edit checks that the item is still the one you selected before writing, so a stale Forge card (item sold or dropped since the scan) is refused instead of overwriting whatever the game put there.
 - **Zero-touch game-update recovery** — the tool learns the game's memory addresses from the live game, saves them, and re-learns them automatically after every DD1 patch. No tool update needed on patch day. A guided **FIX MY SETUP** wizard (Settings → Advanced) walks you through it if anything ever looks off.
-- **Modern UI** — clean dark theme, sidebar navigation, tooltips everywhere, keyboard-friendly (Enter scans, Escape closes dialogs), touch- and small-screen-friendly scrollbars.
+- **Modern UI** — clean dark theme, sidebar navigation, one consistent top bar on every screen, non-blocking notifications, tooltips everywhere, keyboard-friendly (Enter scans, Escape closes dialogs), touch- and small-screen-friendly scrollbars.
 
 ## Build requirements
 

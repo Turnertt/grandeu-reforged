@@ -22,12 +22,12 @@
                            FontSize="11"
                            VerticalAlignment="Center" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button x:Name="BtnExit" Content="EXIT" IsCancel="True" Padding="16,7" Height="32"
+                    <Button x:Name="BtnExit" Content="EXIT" IsCancel="True" Padding="14,7" Height="32"
                             ToolTip="Close the tool without accepting."
                             Click="BtnExit_Click" />
                     <Button x:Name="BtnAccept" Content="I UNDERSTAND"
                             Style="{StaticResource AccentButton}"
-                            Padding="16,7" Height="32" Margin="8,0,0,0"
+                            Padding="14,7" Height="32" Margin="8,0,0,0"
                             Click="BtnAccept_Click"
                             IsDefault="True" />
                 </StackPanel>

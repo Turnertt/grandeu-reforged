@@ -81,6 +81,16 @@
                             </StackPanel>
                         </Button>
 
+                        <Button x:Name="BtnTemplates"
+                                Style="{StaticResource SidebarButton}"
+                                Click="NavButton_Click" Tag="Templates">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           VerticalAlignment="Center" Margin="0,0,10,0" Opacity="0.7" />
+                                <TextBlock Text="Templates" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
                         <!-- ── Advanced (raw memory-search tools — kept as a
                              fallback, collapsed by default) ── -->
                         <Button x:Name="BtnAdvancedToggle"

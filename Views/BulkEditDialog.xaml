@@ -18,17 +18,20 @@
                 BorderThickness="0,1,0,0">
             <Grid>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                    <Button x:Name="BtnMax" Content="MAX" Padding="16,7" Height="32" Click="BtnMax_Click"
+                    <Button x:Name="BtnMax" Content="MAX" Padding="14,7" Height="32" Click="BtnMax_Click"
                             ToolTip="Apply configured max stats to every selected item. Each item is evaluated individually." />
                     <Button x:Name="BtnMaxConfig" Content="&#xE713;"
                             FontFamily="Segoe MDL2 Assets" FontSize="12"
                             Padding="8,7" Height="32" Margin="2,0,0,0"
                             Click="BtnMaxConfig_Click"
                             ToolTip="Configure max stats (shared with Item editor)" />
+                    <Button x:Name="BtnRemoveMarks" Content="REMOVE WATERMARKS" Padding="14,7" Height="32" Margin="8,0,0,0"
+                            Visibility="Collapsed" Click="BtnRemoveMarks_Click"
+                            ToolTip="Take the [Grandeu Reforged] mark out of every selected item's description. Nothing else is changed." />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="CANCEL" IsCancel="True" Padding="16,7" Height="32" Click="BtnCancel_Click" />
-                    <Button Content="APPLY" IsDefault="True" Style="{StaticResource AccentButton}" Padding="16,7" Height="32" Margin="8,0,0,0" Click="BtnApply_Click" />
+                    <Button Content="CANCEL" IsCancel="True" Padding="14,7" Height="32" Click="BtnCancel_Click" />
+                    <Button Content="APPLY" IsDefault="True" Style="{StaticResource AccentButton}" Padding="14,7" Height="32" Margin="8,0,0,0" Click="BtnApply_Click" />
                 </StackPanel>
             </Grid>
         </Border>

@@ -110,6 +110,12 @@
                             <AdornerDecorator Grid.Row="1">
                                 <ContentPresenter ClipToBounds="True" />
                             </AdornerDecorator>
+
+                            <!-- Toast notices (Views/Toast.cs) stack here, over
+                                 the content, in the bottom-right corner. -->
+                            <StackPanel x:Name="PART_ToastHost" Grid.Row="1"
+                                        HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                        Margin="0,0,18,18" />
                         </Grid>
                     </Border>
 

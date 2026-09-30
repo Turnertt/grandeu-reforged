@@ -279,15 +279,13 @@ internal sealed class Base
 				{
 					result = ReadUni<ItemNative>(address, "Description");
 					Log($"GetDescription: Description='{result}'");
-					if (string.IsNullOrEmpty(result))
+					if (string.IsNullOrWhiteSpace(result))
 					{
-						result = ReadUni<ItemNative>(address, "EquipmentName");
-						Log($"GetDescription: EquipmentName='{result}'");
-					}
-					if (string.IsNullOrEmpty(result))
-					{
-						result = ReadUni<ItemNative>(address, "BaseEquipmentName");
-						Log($"GetDescription: BaseEquipmentName='{result}'");
+						// No flavor text: fall back to the item's display name
+						// (custom → rolled base name → archetype), the same
+						// resolver the Forge cards use.
+						result = Modinator.ItemNames.DisplayName(unchecked(address - 0x38));
+						Log($"GetDescription: DisplayName='{result}'");
 					}
 				}
 				catch (Exception ex)
@@ -742,8 +740,9 @@ internal sealed class Base
 		return linearColor;
 	}
 
-	// Heroes use the standard (R, G, B, A) in-memory layout rather than the
-	// items' (A, R, G, B). Separate helpers so items and heroes don't collide.
+	// Heroes and items both use the FLinearColor (R, G, B, A) layout (the
+	// items' "(A, R, G, B)" was a misaligned-struct artifact, fixed
+	// 2026-09-27). Separate helpers kept so the two types don't collide.
 	public static HeroColorNative HeroColorToNative(LinearColor s)
 	{
 		return new HeroColorNative

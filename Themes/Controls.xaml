@@ -2,6 +2,16 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:beh="clr-namespace:Modinator.Behaviors">
 
+    <!-- Keep Button.Content as its text label (including dynamic labels).
+         Tag supplies the familiar Segoe action glyph without replacing styles. -->
+    <DataTemplate x:Key="IconButtonContent">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}"
+                       FontFamily="Segoe MDL2 Assets" FontSize="13" Margin="0,0,7,0" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+        </StackPanel>
+    </DataTemplate>
+
     <!-- ================================================================
          BUTTON STYLES
          ================================================================ -->
@@ -1128,6 +1138,44 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="track" Property="BorderBrush"
                                     Value="{StaticResource TextMutedBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================
+         TAB BUTTON — horizontal tab strip (RadioButton; Tag = Segoe glyph).
+         Used by the Item Dupe pickers and the template editor.
+         ================================================================ -->
+    <Style x:Key="TabButton" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Margin" Value="0,0,4,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Grid>
+                        <Border x:Name="Back" Background="Transparent" CornerRadius="6,6,0,0" Padding="16,9,16,10">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                           VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ContentPresenter VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                        <Border x:Name="Underline" Height="2" VerticalAlignment="Bottom"
+                                Background="{StaticResource AccentBrush}" Visibility="Collapsed" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Back" Property="Background" Value="{StaticResource SurfaceLightBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Underline" Property="Visibility" Value="Visible" />
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

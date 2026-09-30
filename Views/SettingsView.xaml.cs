@@ -30,6 +30,7 @@ public partial class SettingsView : UserControl
         SwFullScanning.IsChecked = Base.FullScan;
         SwPauseOnScan.IsChecked = Base.PauseScan;
         SwErrorLog.IsChecked = Prefs.Current.ErrorLogEnabled;
+        SwWatermark.IsChecked = Prefs.Current.WatermarkEditedItems;
         if (Window.GetWindow(this) is MainWindow main)
             RefreshHotkeyLabels(main);
         RefreshStatus();
@@ -370,6 +371,20 @@ public partial class SettingsView : UserControl
         bool show = LegacyPanel.Visibility != Visibility.Visible;
         LegacyPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         BtnLegacyToggle.Content = show ? "HIDE" : "SHOW";
+        // This row is not shown by default and hides again with the section.
+        bool secret = show && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Shift) != 0;
+        SecretWatermarkRow.Visibility = secret ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SwWatermark_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressHandlers) return;
+        Prefs.Current.WatermarkEditedItems = SwWatermark.IsChecked == true;
+        Prefs.Current.Save();
+        Toast.Show(Prefs.Current.WatermarkEditedItems
+            ? "Edited and copied items are marked again."
+            : "New edits are no longer marked. Existing marks can be removed in the item editor (MORE) or Bulk Edit.",
+            ToastKind.Info, "Watermark " + (Prefs.Current.WatermarkEditedItems ? "on" : "off"));
     }
 
     private void SwFullScanning_Toggled(object sender, RoutedEventArgs e)

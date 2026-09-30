@@ -16,8 +16,8 @@ internal static class QualityDisplay
     // Power-order rank (Cursed lowest → Ultimate++ highest) for sorting and
     // "X & up" filters. NOT the stored byte: the low tiers' enum values are
     // reversed vs power order (Godly stores byte 0 but outranks Legendary).
-    // Single home — previously two parallel switches (ForgeViewerView +
-    // CloneSourcePickerDialog) had to be grown in lockstep per new tier.
+    // Single home — previously two parallel switches (the Forge Viewer and
+    // the old dupe picker) had to be grown in lockstep per new tier.
     public static int Rank(Quality2 q) => q switch
     {
         Quality2.UltimatePlusPlus => 19, Quality2.UltimatePlus => 18, Quality2.Ultimate93 => 17,

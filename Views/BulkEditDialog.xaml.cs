@@ -61,6 +61,8 @@ public partial class BulkEditDialog : Window
                             IReadOnlyDictionary<int, ItemIdentity> identities)
     {
         InitializeComponent();
+        // Removal is only offered while the watermark is switched off.
+        BtnRemoveMarks.Visibility = Watermark.Enabled ? Visibility.Collapsed : Visibility.Visible;
 
         _addresses = addresses;
         _identities = identities;
@@ -149,13 +151,16 @@ public partial class BulkEditDialog : Window
         // Color overrides — round-trip through LinearColor so we get ints that
         // round-trip cleanly on compare. HDR values (|value| > 255) survive on
         // the game side because we keep the float LinearColor for writes.
-        var bUser = Base.ItemToUser(baseline);
-        _baseColor1R = bUser.Color1Override?.R ?? 0;
-        _baseColor1G = bUser.Color1Override?.G ?? 0;
-        _baseColor1B = bUser.Color1Override?.B ?? 0;
-        _baseColor2R = bUser.Color2Override?.R ?? 0;
-        _baseColor2G = bUser.Color2Override?.G ?? 0;
-        _baseColor2B = bUser.Color2Override?.B ?? 0;
+        // An item with no override shows its default color (the selected
+        // color set entry) instead of black; see ItemColors.Shown.
+        var shown1 = ItemColors.Shown(baseline, primary: true);
+        var shown2 = ItemColors.Shown(baseline, primary: false);
+        _baseColor1R = shown1.R;
+        _baseColor1G = shown1.G;
+        _baseColor1B = shown1.B;
+        _baseColor2R = shown2.R;
+        _baseColor2G = shown2.G;
+        _baseColor2B = shown2.B;
 
         // Show baseline values as grey placeholder text. Empty-on-Apply means
         // "no change" — matches the Item/Hero edit UX. Color R/G/B boxes
@@ -482,9 +487,11 @@ public partial class BulkEditDialog : Window
             // Color overrides — build a LinearColor (float-backed) from the
             // ints and convert to native. Negative values pass straight through
             // because LinearColor.R setter is value/255f (not clamped).
-            // A = 255: the in-memory layout is (A, R, G, B) and an override
-            // written with A = 0 rendered BLACK in game. 255 is the "override
-            // active" value the original tool always wrote.
+            // A = 255 (1.0f): full alpha. An override written with A = 0
+            // rendered BLACK in game. 255 is the "override active" value the
+            // original tool always wrote — and since the 2026-09-27 ItemNative
+            // realignment it actually lands in the FLinearColor alpha.
+            var beforeColors = item;
             if (p.ChColor1)
             {
                 var c = new LinearColor { R = p.C1R, G = p.C1G, B = p.C1B, A = 255 };
@@ -495,6 +502,9 @@ public partial class BulkEditDialog : Window
                 var c = new LinearColor { R = p.C2R, G = p.C2G, B = p.C2B, A = 255 };
                 item.SecondaryColorOverride = Base.LinearColorToNative(c);
             }
+            // One color set on an item with no overrides: the other keeps
+            // its own default (per item) instead of turning black in game.
+            ItemColors.KeepOtherDefault(ref item, beforeColors, p.ChColor1, p.ChColor2);
 
             // Strings: in-place first, fresh allocation as fallback, and a
             // failed allocation keeps the existing buffer (same best-effort
@@ -540,6 +550,52 @@ public partial class BulkEditDialog : Window
         var dlg = new MaxItemConfigDialog(MaxItemConfig.Load());
         dlg.Owner = this;
         dlg.ShowDialog();
+    }
+
+    // Only reachable while the watermark is switched off (the button is
+    // collapsed otherwise). Per item: identity gate, then the description
+    // without its mark written into the item's OWN buffer — the text only
+    // gets shorter, so it always fits and nothing is allocated.
+    private void BtnRemoveMarks_Click(object sender, RoutedEventArgs e)
+    {
+        if (_loadFailed || Watermark.Enabled) return;
+        var confirm = MessageBox.Show(
+            $"Remove the watermark from the descriptions of {_addresses.Count} items? Nothing else on them is changed.",
+            "Remove watermarks", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        AppliedCount = 0;
+        FailedCount = 0;
+        StaleCount = 0;
+        int unmarked = 0;
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
+        {
+            foreach (int address in _addresses)
+            {
+                if (CheckAddress(address) == AddrCheck.Stale) { StaleCount++; continue; }
+                try
+                {
+                    string current = Base.ReadUni<ItemNative>(address, "Description") ?? "";
+                    if (!Watermark.IsMarked(current)) { unmarked++; continue; }
+                    string cleaned = Watermark.Remove(current);
+                    ItemNative item = Base.Push<ItemNative>(Base.Instance.ReadMemory(address, _structSize));
+                    if (!GameChain.IsGamePtr(item.Description.Address) || item.Description.MaximumLength < cleaned.Length + 1)
+                    {
+                        FailedCount++;
+                        continue;
+                    }
+                    item.Description = Base.WriteUniInPlace(item.Description, cleaned);
+                    Base.Instance.WriteMemory(address, Base.Push(item));
+                    AppliedCount++;
+                }
+                catch { FailedCount++; }
+            }
+        }
+        finally { Mouse.OverrideCursor = null; }
+
+        Base.LogEvent($"Bulk remove watermark: {AppliedCount} removed, {unmarked} had none, {FailedCount} failed, {StaleCount} stale");
+        DialogResult = true;
     }
 
     private void BtnMax_Click(object sender, RoutedEventArgs e)

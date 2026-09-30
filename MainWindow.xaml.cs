@@ -258,9 +258,9 @@ public partial class MainWindow : Window
                             byte[] data = Base.Instance.ReadMemory(addr, structSize);
                             var native = Base.Push<ItemNative>(data);
                             var user = Base.ItemToUser(native);
-                            ri.Name = Base.ReadUni<ItemNative>(addr, "EquipmentName");
-                            if (string.IsNullOrEmpty(ri.Name))
-                                ri.Name = Base.ReadUni<ItemNative>(addr, "BaseEquipmentName");
+                            // Same name the Forge cards show (custom → rolled
+                            // base name → archetype), not the raw archetype string.
+                            ri.Name = DupeMemory.ItemNameOrEmpty(addr);
                             ri.Quality = QualityDisplay.Name(user.Quality2);
                             // Weapon class gate (EWeaponType) lives outside the
                             // marshaled ItemNative — a 1-byte read at
@@ -351,6 +351,7 @@ public partial class MainWindow : Window
             "ForgeViewer" => BtnForgeViewer,
             "HeroViewer" => BtnHeroViewer,
             "ItemDupe" => BtnItemDupe,
+            "Templates" => BtnTemplates,
             "Settings" => BtnSettings,
             _ => null,
         };
@@ -381,11 +382,19 @@ public partial class MainWindow : Window
             "ForgeViewer" => _forgeViewerView ??= new Views.ForgeViewerView(),
             "HeroViewer" => _heroViewerView ??= new Views.HeroViewerView(),
             "ItemDupe" => _itemDupeView ??= new Views.ItemDupeView(),
+            "Templates" => _templatesView ??= new Views.TemplatesView(),
             "Settings" => new Views.SettingsView(), // fresh so it re-syncs state each time
             _ => null,
         };
 
         UpdatePanelVisibility();
+    }
+
+    // Templates tab → Item Dupe with that template already set as the source.
+    internal void UseTemplateInDupe(ItemTemplate template)
+    {
+        NavigateToView("ItemDupe");
+        _itemDupeView?.UseTemplate(template);
     }
 
     private void ShowHome()
@@ -468,6 +477,7 @@ public partial class MainWindow : Window
     private Views.ForgeViewerView? _forgeViewerView;
     private Views.HeroViewerView? _heroViewerView;
     private Views.ItemDupeView? _itemDupeView;
+    private Views.TemplatesView? _templatesView;
     private object? _lastContentBeforeEditor;
 
     // ── Show editor ─────────────────────────────────────────────────
@@ -615,7 +625,7 @@ public partial class MainWindow : Window
 
         L($"attached   : scanner pid={Base.AttachedPid}  (0 = not attached)");
         L($"log file   : {Base.LogPath}");
-        L($"             {(System.IO.File.Exists(Base.LogPath) ? "exists — DEBUG build, send this file too" : "not present — this is a RELEASE build (no logging)")}");
+        L($"             {(System.IO.File.Exists(Base.LogPath) ? "exists — send this file too" : "not present (error log switched off, or nothing logged yet)")}");
 
         lock (_scanStateGate)
         {
@@ -655,11 +665,36 @@ public partial class MainWindow : Window
                 }
                 catch (Exception ex) { L("             (unreadable: " + ex.Message + ")"); }
 
+                // The object-list route (Forge / Hero's primary path since
+                // 2026-09-27) needs no character, so it is reported BEFORE the
+                // WorldInfo sweep: "Forge works, nothing else does" and
+                // "nothing works" now read differently here.
+                int hmList = 0;
+                if (Base.AttachedPid == 0)
+                    L("object list: (scanner not attached — open the Forge or Hero viewer once and retry)");
+                else
+                {
+                    hmList = GameChain.ResolveHeroManagerByObjectList();
+                    L($"object list: {GameReflection.ObjectListStatus}");
+                    if (hmList != 0)
+                    {
+                        L($"             reflection {GameReflection.Status}; box +0x{GameReflection.FieldOffset(hmList, "ItemBoxEquipments"):X} " +
+                          $"num={ReadU32(hmList + GameChain.ItemBoxOffset + 4)}  heroes +0x{GameReflection.FieldOffset(hmList, "LocalLoadedHeroes"):X} " +
+                          $"num={ReadU32(hmList + GameChain.LocalHeroesOffset + 4)}");
+                    }
+                }
+
                 int wi = _cachedWorldInfo;
                 if (wi == 0 || !ValidateCachedWorldInfo()) wi = FindWorldInfoViaPawnScan();
-                if (wi == 0) { L("WorldInfo  : NOT FOUND (menu / loading screen, or the scan failed)"); return sb.ToString(); }
+                if (wi == 0) { L("WorldInfo  : NOT FOUND (menu / loading screen, or the scan failed) — Auto-Kill / Mana / Towers need this; Forge and Hero do not"); return sb.ToString(); }
                 _cachedWorldInfo = wi;
-                L($"WorldInfo  : 0x{wi:X8}   gameplay level: {(IsInGameplayLevel() ? "yes" : "no (tavern/lobby/loading)")}");
+                L($"WorldInfo  : 0x{wi:X8}   gameplay level: {(IsInGameplayLevel() ? "yes" : "no (tavern/lobby/loading)")}   lobby level: {(IsInLobbyLevel() ? "yes" : "no")}");
+                {
+                    int griF = ReadU32(wi + OFF_WI_GRI);
+                    uint fl = IsHeapPtr(griF) ? ReadLevelFlags(griF) : 0;
+                    L($"level flags: GRI+0x{_lvlFlagsOff:X}=0x{fl:X8}  IsLobbyLevel mask 0x{_lvlMaskLobby:X} -> {((fl & _lvlMaskLobby) != 0 ? "set" : "clear")}  " +
+                      $"IsGameplayLevel mask 0x{_lvlMaskGame:X} -> {((fl & _lvlMaskGame) != 0 ? "set" : "clear")}  ({_lvlFlagsSource})");
+                }
 
                 // AWorldInfo.Game (AGameInfo*) exists ONLY on the server/host
                 // in UE3 — a client's copy is None. This is the cheapest
@@ -668,6 +703,9 @@ public partial class MainWindow : Window
                 // which is the exact hop Mana/Forge/Hero depend on.
                 int gameInfo = ReadU32(wi + OFF_WI_GAME);
                 int griPtr = ReadU32(wi + OFF_WI_GRI);
+                byte[]? nmB = AKRead(wi + OFF_WI_NETMODE, 1);
+                int nm = nmB != null && nmB.Length == 1 ? nmB[0] : -1;
+                L($"net mode   : {nm} ({nm switch { 0 => "solo", 1 => "dedicated server", 2 => "HOSTING a multiplayer game", 3 => "CLIENT — joined someone else's game", _ => "unreadable" }})");
                 L($"WI.Game    : 0x{gameInfo:X8}  ({(IsHeapPtr(gameInfo) ? "present — this machine is the HOST/solo" : "NULL — this machine is a CLIENT (not hosting)")})");
                 L($"WI.GRI     : 0x{griPtr:X8}");
 
@@ -748,7 +786,20 @@ public partial class MainWindow : Window
                 }
                 else
                 {
-                    L($"HeroManager: 0x{hmSel:X8}");
+                    // The game's own reflection data: object identity by name
+                    // and the offsets the game itself declares. When these
+                    // disagree with the pinned offsets below, the pins are
+                    // wrong — no inference needed.
+                    int selCtl = ReadU32(chosen + OFF_PAWN_CONTROLLER);
+                    int selLp = IsHeapPtr(selCtl) ? ReadU32(selCtl + GameChain.OFF_CONTROLLER_PLAYER) : 0;
+                    GameReflection.EnsureTrusted(chosen, selCtl, selLp);
+                    int selVp = IsHeapPtr(selLp) ? ReadU32(selLp + GameChain.OFF_PLAYER_VIEWPORT) : 0;
+                    L($"reflection : {GameReflection.Status}   TheHeroManager=0x{GameReflection.FieldOffset(selVp, "TheHeroManager"):X}  " +
+                      $"LocalLoadedHeroes=0x{GameReflection.FieldOffset(hmSel, "LocalLoadedHeroes"):X}  " +
+                      $"ActiveHeroes=0x{GameReflection.FieldOffset(hmSel, "ActiveHeroes"):X}  " +
+                      $"ItemBoxEquipments=0x{GameReflection.FieldOffset(hmSel, "ItemBoxEquipments"):X}  (-1 = unavailable)");
+                    L($"HeroManager: 0x{hmSel:X8}  '{GameReflection.ObjectPath(hmSel)}'  live={GameReflection.IsLiveHeroManager(hmSel)?.ToString() ?? "unknown"}" +
+                      (hmList != 0 ? (hmList == hmSel ? "  (same object the object list found)" : $"  <-- DIFFERS from the object list's 0x{hmList:X8}") : ""));
                     L($"  item box  : +0x{GameChain.ItemBoxOffset:X} num={ReadU32(hmSel + GameChain.ItemBoxOffset + 4)}" +
                       $"   next-field num={ReadU32(hmSel + GameChain.ItemBoxOffset + 0x10)} (the ItemBoxEntries fingerprint)");
                     L($"  heroes    : +0x{GameChain.LocalHeroesOffset:X} local num={ReadU32(hmSel + GameChain.LocalHeroesOffset + 4)}" +
@@ -1410,6 +1461,25 @@ public partial class MainWindow : Window
         }
     }
 
+    // Dupe reads share the cache gate with AK. Call ONLY on a worker thread:
+    // template reference resolution can take time, and AK skips these ticks.
+    // Live refreshes never initiate a structural sweep; only an explicit scan does.
+    internal T ReadForDupe<T>(Func<int, T> read, bool discoverWorld = false)
+    {
+        lock (_scanStateGate)
+        {
+            int world = 0;
+            if (Base.AttachedPid != 0 && _akTargetPid != Base.AttachedPid)
+                InvalidatePawnScanCache();
+            if (GetAKHandle() != IntPtr.Zero)
+            {
+                if (_cachedWorldInfo != 0 && ValidateCachedWorldInfo()) world = _cachedWorldInfo;
+                else if (discoverWorld) world = _cachedWorldInfo = FindWorldInfoViaPawnScan();
+            }
+            return read(world);
+        }
+    }
+
     // Pin the player pawn's vtable as the durable seed, gated on a verified
     // PRI. Returns the pinned vtable (0 if not pinned). Single home for the
     // pin rule used by ResolvePlayerPawnAddress / AutoKillTick / calibration.
@@ -1642,13 +1712,27 @@ public partial class MainWindow : Window
         // the tavern — they can flip it back on when they enter a real
         // mission. Dispatched because SetAutoKillEnabled touches the UI
         // toggle on the UI thread.
+        //
+        // Since 2026-09-27 the gate splits in two. Auto-Kill (and the
+        // enemy-tower sweep) still require a GAMEPLAY level. The passive
+        // writes below — Unlimited Mana, Max Tower Units, game speed — only
+        // require a LOADED level: gameplay OR lobby (the Tavern has mana,
+        // a DU budget and TimeDilation of its own). Before this, one early
+        // return here made all three inert in the Tavern, which read as
+        // "Auto-Kill, Mana and Towers are broken" on a remote machine that
+        // tested there. Loading screens (no GRI level flag) still write
+        // nothing.
         bool inGameplayLevel = IsInGameplayLevel();
+        bool levelLoaded = inGameplayLevel || IsInLobbyLevel();
         if (!inGameplayLevel)
         {
             if (_autoKillEnabled)
                 Dispatcher.BeginInvoke(new Action(() => SetAutoKillEnabled(false)));
-            SetAkStatus("Auto Kill: disabled (lobby/loading)");
-            return;
+            if (!levelLoaded)
+            {
+                SetAkStatus("Auto Kill: disabled (lobby/loading)");
+                return;
+            }
         }
 
         // Learning-only use of PRI: a verified PRI means the pawn is
@@ -1678,7 +1762,10 @@ public partial class MainWindow : Window
         int killed = 0;
         int towersKilled = 0;
         int protectedHeroes = 0;
-        if (_autoKillEnabled && !learnOnly)
+        // inGameplayLevel is re-checked here: SetAutoKillEnabled(false) above
+        // is dispatched, so _autoKillEnabled can still read true for a tick
+        // or two after entering the Tavern — kills must never run there.
+        if (_autoKillEnabled && !learnOnly && inGameplayLevel)
         {
             // The positional tail-skip is the HISTORICAL rule (solo mission:
             // player spawned first ⇒ player is the tail). It is debug-proven
@@ -1836,6 +1923,16 @@ public partial class MainWindow : Window
 
         // Compact status line. Each segment only appears when it has
         // something to say.
+        if (!inGameplayLevel)
+        {
+            // Lobby level: only the passive writes ran this tick.
+            var on = new List<string>(3);
+            if (_unlimitedMana) on.Add(_manaGateReason == null ? "mana" : "mana (gated)");
+            if (_maxTowerUnits) on.Add("towers");
+            if (speed != 1.0f) on.Add($"{speed:0.##}x");
+            SetAkStatus("Auto Kill: off (lobby)" + (on.Count > 0 ? " · " + string.Join(" · ", on) : ""));
+            return;
+        }
         if (learnOnly)
         {
             SetAkStatus($"Auto Kill: learning ({_heroClasses.Count} hero cls)");
@@ -1952,14 +2049,37 @@ public partial class MainWindow : Window
     // True when GRI reports a gameplay level is loaded (not lobby, not a
     // loading/transition state). Used to gate every write in AutoKillTick
     // so the loop can be left on across map changes without glitching.
+    // A mission: the GRI's IsGameplayLevel bit set AND IsLobbyLevel clear
+    // (the Tavern sets both). Bit masks resolved by name — see
+    // EnsureLevelFlagsResolved.
     private bool IsInGameplayLevel()
     {
         if (_cachedWorldInfo == 0) return false;
         int gri = ReadU32(_cachedWorldInfo + OFF_WI_GRI);
         if (!IsHeapPtr(gri)) return false;
-        uint flags = unchecked((uint)ReadU32(gri + OFF_GRI_FLAGS_02C4));
-        if ((flags & BIT_IS_LOBBY_LEVEL) != 0) return false;
-        return (flags & BIT_IS_GAMEPLAY) != 0;
+        uint flags = ReadLevelFlags(gri);
+        if ((flags & _lvlMaskLobby) != 0) return false;
+        return (flags & _lvlMaskGame) != 0;
+    }
+
+    // The Tavern: the GRI's IsLobbyLevel bit (by name), or — should the
+    // flags be unreadable — the live WorldInfo belonging to a "LobbyLevel*"
+    // map by object path. Passive writes (mana, tower units, speed) are
+    // allowed here; kills are not. Fail-closed: nothing readable → false →
+    // nothing written outside a gameplay level (the historic behaviour).
+    private bool IsInLobbyLevel()
+    {
+        if (_cachedWorldInfo == 0) return false;
+        int gri = ReadU32(_cachedWorldInfo + OFF_WI_GRI);
+        if (!IsHeapPtr(gri)) return false;
+        if ((ReadLevelFlags(gri) & _lvlMaskLobby) != 0) return true;
+        try
+        {
+            if (Base.AttachedPid != 0 && Base.AttachedPid == _akTargetPid)
+                return GameReflection.ObjectPath(_cachedWorldInfo).StartsWith("LobbyLevel", StringComparison.Ordinal);
+        }
+        catch { }
+        return false;
     }
 
     // A real APlayerReplicationInfo is a UObject: its first 4 bytes are a
@@ -1981,6 +2101,18 @@ public partial class MainWindow : Window
         if (vt == null || vt.Length < 4) return false;
         uint vtable = BitConverter.ToUInt32(vt, 0);
         return vtable >= 0x00400000u && vtable < 0x02000000u;
+    }
+
+    // A live UObject: heap pointer whose first dword (vtable) sits in the
+    // game's code section and whose Class (+0x34) is a heap pointer. Probe
+    // reads — used inside the structural sweep.
+    private bool IsUObject(int p)
+    {
+        if (!IsHeapPtr(p)) return false;
+        byte[]? h = AKReadProbe(p, 0x38);
+        if (h == null || h.Length < 0x38) return false;
+        uint vt = BitConverter.ToUInt32(h, 0);
+        return vt >= 0x00400000u && vt < 0x02000000u && IsHeapPtr(BitConverter.ToInt32(h, 0x34));
     }
 
     // UObject base offset — Class pointer at +0x34 per the DD_ModMenu SDK
@@ -2060,11 +2192,65 @@ public partial class MainWindow : Window
     // check so writes don't fire during map transitions (historically
     // glitched level loads when auto-kill was left on).
     private const int OFF_WI_GRI = 0x03D0;
-    // GRI flag word at +0x02C4 (second dword of bitfields). Bit 12 =
-    // IsLobbyLevel, bit 13 = IsGameplayLevel.
+    // AWorldInfo.NetMode (byte ENetMode) at +0x03D4 — read from the game's
+    // own reflection data 2026-09-26 (UProperty.Offset). 0 standalone,
+    // 1 dedicated server, 2 listen server (hosting), 3 client. Diagnostic
+    // only.
+    private const int OFF_WI_NETMODE = 0x03D4;
+    // GRI flag word at +0x02C4 (second dword of bitfields). The bit
+    // positions are read BY NAME from the game's UBoolProperty BitMask
+    // (EnsureLevelFlagsResolved); these are the compiled fallbacks,
+    // live-verified 2026-09-27 on the current build: IsLobbyLevel =
+    // 0x00040000 (bit 18), IsGameplayLevel = 0x00080000 (bit 19). The
+    // previous literals (bit 12 / bit 13, from the older SDK dump) read as
+    // ZERO on this build everywhere — so IsInGameplayLevel() was false in
+    // every mission, Auto-Kill switched itself off on its first tick and
+    // the loop returned before the mana / tower writes: "Auto-Kill, Mana
+    // and Towers don't work" on every machine running the current game.
+    // Note the Tavern sets BOTH bits (0xA00D0000): it IS a gameplay level
+    // that is ALSO a lobby level, so "gameplay" alone never excluded it.
     private const int  OFF_GRI_FLAGS_02C4   = 0x02C4;
-    private const uint BIT_IS_LOBBY_LEVEL   = 0x00001000; // bit 12
-    private const uint BIT_IS_GAMEPLAY      = 0x00002000; // bit 13
+    private const uint BIT_IS_LOBBY_LEVEL   = 0x00040000; // bit 18 (was 0x1000 pre-2026-09-27)
+    private const uint BIT_IS_GAMEPLAY      = 0x00080000; // bit 19 (was 0x2000 pre-2026-09-27)
+
+    // Resolved-by-name level flags for the attached game (0 pid = not yet).
+    private int  _lvlFlagsPid;
+    private int  _lvlFlagsOff  = OFF_GRI_FLAGS_02C4;
+    private uint _lvlMaskLobby = BIT_IS_LOBBY_LEVEL;
+    private uint _lvlMaskGame  = BIT_IS_GAMEPLAY;
+    private string _lvlFlagsSource = "compiled defaults";
+
+    // Once per attached game: ask the game where IsLobbyLevel /
+    // IsGameplayLevel live (offset + bit mask) via GameReflection. Needs the
+    // Scanner on the same pid as the AK handle (the object-list world route
+    // attaches it). Both flags must resolve to the SAME dword or the
+    // compiled fallbacks stay. Fail-soft: unreadable → retried next call.
+    private void EnsureLevelFlagsResolved(int gri)
+    {
+        if (_lvlFlagsPid == _akTargetPid || !IsHeapPtr(gri)) return;
+        try
+        {
+            if (Base.AttachedPid == 0 || Base.AttachedPid != _akTargetPid) return;
+            var lobby = GameReflection.BoolField(gri, "IsLobbyLevel");
+            var game  = GameReflection.BoolField(gri, "IsGameplayLevel");
+            if (lobby.offset <= 0 || game.offset <= 0) return; // reflection not trusted / torn — later
+            _lvlFlagsPid = _akTargetPid;
+            if (lobby.offset == game.offset)
+            {
+                _lvlFlagsOff = lobby.offset; _lvlMaskLobby = lobby.mask; _lvlMaskGame = game.mask;
+                _lvlFlagsSource = "by name";
+            }
+            else _lvlFlagsSource = $"compiled defaults (by-name flags disagree: lobby +0x{lobby.offset:X} game +0x{game.offset:X})";
+            Base.LogEvent($"LevelFlags: {_lvlFlagsSource} — +0x{_lvlFlagsOff:X} lobby=0x{_lvlMaskLobby:X} gameplay=0x{_lvlMaskGame:X}");
+        }
+        catch { }
+    }
+
+    private uint ReadLevelFlags(int gri)
+    {
+        EnsureLevelFlagsResolved(gri);
+        return unchecked((uint)ReadU32(gri + _lvlFlagsOff));
+    }
 
     // Accumulated across ticks within one session. Cleared whenever Auto-Kill
     // is toggled off → on (so a stale class from a crashed session doesn't
@@ -2296,6 +2482,17 @@ public partial class MainWindow : Window
         // so we skip a full fast sweep that cannot hit.
         EnsureGameBuildStampChecked();
 
+        // Object-list route first (2026-09-27): the live AWorldInfo by
+        // class name from the game's own object table, ~0.3 s once per map,
+        // instead of a 4 GB region sweep that skips regions ≥ 50 MB and
+        // needs a pawn shape to match. Validated with the SAME gates the
+        // sweep applies (TimeDilation, Game-or-GRI, a walkable PawnList),
+        // so nothing downstream sees a world the sweep would have rejected.
+        // The seed is still learned from the verified player pawn in the
+        // tick (TryPinPlayerSeed). Both sweeps remain as the fallback.
+        int wiObj = FindWorldInfoViaObjectList();
+        if (wiObj != 0) return wiObj;
+
         // Fast path: try the cached vtable. Hits on every non-patched run.
         if (_pawnVtable != 0)
         {
@@ -2313,6 +2510,64 @@ public partial class MainWindow : Window
         int wi2 = ScanForWorldInfo(0);
         if (wi2 != 0) DumpWorldInfoDiagnostic(wi2);
         return wi2;
+    }
+
+    // The live WorldInfo through the game's object list (GameReflection —
+    // reads via the Scanner, so it needs the Scanner attached to the SAME
+    // process the AK handle targets; a toggle flipped before any scan
+    // attaches it here with notify:false, which never shows a dialog —
+    // the repeating-caller rule). Each candidate AWorldInfo is validated
+    // exactly as ScanForWorldInfo validates the backref world, and the one
+    // with the most walkable pawns wins (the Kismet sublevel copies have
+    // none). A miss backs off for 2 s: during a loading screen no world is
+    // live, and re-walking 250k objects every 100 ms tick would be waste.
+    private DateTime _objWorldRetryAfterUtc = DateTime.MinValue;
+
+    private int FindWorldInfoViaObjectList()
+    {
+        if (DateTime.UtcNow < _objWorldRetryAfterUtc) return 0;
+        try
+        {
+            if (Base.AttachedPid == 0 && !Base.OpenProcess(notify: false))
+            {
+                _objWorldRetryAfterUtc = DateTime.UtcNow.AddSeconds(2);
+                return 0;
+            }
+            if (Base.AttachedPid != _akTargetPid) return 0; // never mix two game instances
+
+            int best = 0, bestPawns = 0;
+            for (int pass = 0; pass < 2 && best == 0; pass++)
+            {
+                foreach (int wi in GameReflection.FindWorldInfos(rewalk: pass == 1))
+                {
+                    // A cached entry from the previous map may still READ
+                    // plausibly from pooled memory; require the object list
+                    // to still point at it (ObjectInternalInteger round trip).
+                    if (GameReflection.IsLiveObject(wi) == false) continue;
+                    byte[]? wiB = AKReadProbe(wi, 0x430);
+                    if (wiB == null || wiB.Length < 0x430) continue;
+                    float td = BitConverter.ToSingle(wiB, OFF_WI_TIMEDILATION);
+                    bool gameOk = IsHeapPtr(BitConverter.ToInt32(wiB, OFF_WI_GAME)) ||
+                                  IsUObject(BitConverter.ToInt32(wiB, OFF_WI_GRI));
+                    if (!(td > 0.04f && td < 15.5f) || !gameOk) continue;
+                    int pawns = WalkPawnList(wiB)?.Count ?? 0;
+                    if (pawns > bestPawns) { best = wi; bestPawns = pawns; }
+                }
+            }
+            if (best == 0)
+            {
+                _objWorldRetryAfterUtc = DateTime.UtcNow.AddSeconds(2);
+                Base.Log("ObjWorld: no live WorldInfo in the object list (" + GameReflection.ObjectListStatus + ")");
+                return 0;
+            }
+            Base.LogEvent($"ObjWorld: WorldInfo 0x{best:X8} via object list ({bestPawns} pawns) '{GameReflection.ObjectPath(best)}'");
+            return best;
+        }
+        catch
+        {
+            _objWorldRetryAfterUtc = DateTime.UtcNow.AddSeconds(2);
+            return 0;
+        }
     }
 
     // One-shot diagnostic that fires when the structural scan rediscovers
@@ -2577,7 +2832,7 @@ public partial class MainWindow : Window
                             if (!wiPawnCache.TryGetValue(wi, out HashSet<int>? pawnSet))
                             {
                                 // First candidate for this WI: validate it once
-                                // (plausible TimeDilation + heap Game pointer),
+                                // (plausible TimeDilation + a real Game or GRI),
                                 // walk its PawnList once, cache the verdict
                                 // (null = validated bad / unwalkable). The old
                                 // shape re-read+revalidated the 0x430 block for
@@ -2596,8 +2851,21 @@ public partial class MainWindow : Window
                                 if (wiB != null && wiB.Length >= 0x430)
                                 {
                                     float td = BitConverter.ToSingle(wiB, 0x374);
-                                    bool gameOk = IsHeapPtr(BitConverter.ToInt32(wiB, 0x3FC));
-                                    if (td > 0.04f && td < 15.5f && gameOk) // Game ptr
+                                    // Game OR GRI (2026-09-26). WorldInfo.Game
+                                    // exists only where the game runs (solo /
+                                    // host) — on a machine that JOINED someone
+                                    // it is None, and requiring it rejected the
+                                    // real world on every client: nothing past
+                                    // the scan could ever work there (seen as:
+                                    // "WorldInfo NOT FOUND" on the joining
+                                    // client's PC). GRI is replicated to every
+                                    // machine. Live noise test: of 66,448
+                                    // candidate worlds exactly one passes with
+                                    // either rule — the PawnList-reachability
+                                    // check below does the real rejecting.
+                                    bool gameOk = IsHeapPtr(BitConverter.ToInt32(wiB, 0x3FC)) ||
+                                                  IsUObject(BitConverter.ToInt32(wiB, OFF_WI_GRI));
+                                    if (td > 0.04f && td < 15.5f && gameOk)
                                     {
                                         _dbgWiOk++;
                                         walked = WalkPawnList(wiB);

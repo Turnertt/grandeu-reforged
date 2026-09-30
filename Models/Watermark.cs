@@ -51,8 +51,9 @@ internal static class Watermark
 
     private static readonly string Mark = BuildMark();
 
-    // Escape hatch: prefs.json "WatermarkEditedItems": false. Deliberately no
-    // UI — this is not meant to read as a headline feature.
+    // prefs.json "WatermarkEditedItems"; the Settings row for it is not
+    // shown by default. While off: nothing new is marked, and an existing
+    // mark can be taken off (Remove) because no edit path will put it back.
     public static bool Enabled => Prefs.Current.WatermarkEditedItems;
 
     // Strip DD1 colour runs from a string for display / comparison. The bytes
@@ -79,6 +80,72 @@ internal static class Watermark
         string tail = current.Length == 0 ? Mark : Separator + Mark;
         if (current.Length + tail.Length > MaxTotalChars) return current;
         return current + tail;
+    }
+
+    // The description with every form of the mark taken out: the colored
+    // or plain name, its brackets, an old "Made with " lead-in, and the one
+    // line break that separated it from the item's own text. Works on the
+    // text the user SEES (color runs parsed, then re-emitted), so a mark
+    // colored letter by letter is found like a plain one; the rest of the
+    // description keeps its colors. Unmarked input comes back untouched.
+    // Never returns "" — DD1 crashes on a blank FString, so an item whose
+    // whole description was the mark gets a single space.
+    public static string Remove(string? description)
+    {
+        string current = description ?? string.Empty;
+        if (!IsMarked(current)) return current;
+
+        var runs = ColorMarkup.Parse(current);
+        var plain = new StringBuilder();
+        foreach (var run in runs) plain.Append(run.Text);
+        string text = plain.ToString();
+
+        var cut = new bool[text.Length];
+        const string LeadIn = "Made with ";
+        int from = 0;
+        while (from < text.Length)
+        {
+            int at = text.IndexOf(Signature, from, StringComparison.OrdinalIgnoreCase);
+            if (at < 0) break;
+            int start = at, end = at + Signature.Length;
+            if (start >= LeadIn.Length &&
+                string.Compare(text, start - LeadIn.Length, LeadIn, 0, LeadIn.Length, StringComparison.OrdinalIgnoreCase) == 0)
+                start -= LeadIn.Length;
+            if (start > 0 && text[start - 1] == '[' && end < text.Length && text[end] == ']') { start--; end++; }
+            // One separator goes with it: the break before a trailing mark,
+            // else the break after a leading one.
+            if (start > 0 && text[start - 1] == '\n') start--;
+            else if (end < text.Length && text[end] == '\n') end++;
+            for (int i = start; i < end; i++) cut[i] = true;
+            from = at + Signature.Length;
+        }
+
+        var kept = new List<ColorRun>();
+        int pos = 0;
+        foreach (var run in runs)
+        {
+            var sb = new StringBuilder(run.Text.Length);
+            foreach (char c in run.Text)
+            {
+                if (!cut[pos]) sb.Append(c);
+                pos++;
+            }
+            if (sb.Length == 0) continue;
+            kept.Add(run.HasColor ? new ColorRun(sb.ToString(), run.R, run.G, run.B) : new ColorRun(sb.ToString()));
+        }
+        string result = ColorMarkup.Serialize(kept).Trim('\n', '\r');
+        return string.IsNullOrWhiteSpace(ColorMarkup.Strip(result)) ? " " : result;
+    }
+
+    // The same mark without the per-letter colors: 18 characters instead of
+    // ~390. For a buffer the full mark can't fit into (Item Dupe writes into
+    // the target's own, exact-fit description buffer). IsMarked recognises it.
+    public static string ApplyCompact(string? description)
+    {
+        string current = description ?? string.Empty;
+        if (!Enabled || IsMarked(current)) return current;
+        string mark = "[" + Signature + "]";
+        return current.Length == 0 ? mark : current + Separator + mark;
     }
 
     // A per-letter hue sweep across "Grandeu Reforged", in brackets. Spaces

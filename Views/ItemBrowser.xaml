@@ -1,0 +1,218 @@
+<UserControl x:Class="Modinator.Views.ItemBrowser"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- The Forge Viewer's layout as a reusable list: command bar (badge,
+         status, host-supplied actions), search, filters, card grid, pager.
+         Hosted by the Templates tab and the Item Dupe pickers. -->
+    <Grid Background="{StaticResource BackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
+            <StackPanel>
+
+                <!-- Row 1: badge + status, host actions on the right -->
+                <DockPanel LastChildFill="False">
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Border Background="{StaticResource AccentSubtleBrush}"
+                                BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                                CornerRadius="4" Padding="8,4"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="BadgeIcon" Text="&#xE71C;" FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11" Foreground="{StaticResource AccentBrush}"
+                                           Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="BadgeLabel" Text="ITEMS"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           FontSize="10.5" FontWeight="Bold"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource SurfaceLightBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="5"
+                                Padding="10,5"
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE946;"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="11"
+                                           Foreground="{StaticResource TextMutedBrush}"
+                                           Margin="0,0,7,0"
+                                           VerticalAlignment="Center" />
+                                <TextBlock x:Name="LblStatus"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="11.5"
+                                           VerticalAlignment="Center"
+                                           MaxWidth="360"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel x:Name="ActionsHost"
+                                DockPanel.Dock="Right"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="16,0,0,0" />
+                </DockPanel>
+
+                <!-- Row 2: search -->
+                <Grid Margin="0,12,0,0">
+                    <TextBox x:Name="TxtSearch"
+                             TextChanged="TxtSearch_TextChanged"
+                             Padding="10,7"
+                             FontSize="12" />
+                    <TextBlock x:Name="SearchHint"
+                               Text="Search items by name, description, or level..."
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="11.5" Opacity="0.6"
+                               VerticalAlignment="Center"
+                               Margin="12,0,0,0"
+                               IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Text, ElementName=TxtSearch}" Value="">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+
+                <!-- Row 3: filters. Source and Folder only show when the list
+                     actually has more than one of them. -->
+                <WrapPanel Margin="0,12,0,0">
+                    <StackPanel x:Name="SourcePanel" Margin="0,0,14,0" Visibility="Collapsed">
+                        <TextBlock Text="S O U R C E"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
+                        <ComboBox x:Name="CboSource"
+                                  Width="150"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,14,0">
+                        <TextBlock Text="T Y P E"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
+                        <ComboBox x:Name="CboType"
+                                  Width="150"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,14,0">
+                        <TextBlock Text="S O R T"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
+                        <ComboBox x:Name="CboSort"
+                                  Width="150"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="FolderPanel" Margin="0,0,14,0" Visibility="Collapsed">
+                        <TextBlock Text="F O L D E R"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="9" FontWeight="Bold"
+                                   Margin="1,0,0,4" />
+                        <ComboBox x:Name="CboFolder"
+                                  Width="180"
+                                  SelectionChanged="Filter_Changed" />
+                    </StackPanel>
+                </WrapPanel>
+
+                <TextBlock x:Name="HintLine"
+                           Margin="0,10,0,0"
+                           Text="Click to select  ·  double-click to choose"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           FontSize="10" Opacity="0.65" />
+
+            </StackPanel>
+        </Border>
+
+        <ProgressBar x:Name="ScanBar" Grid.Row="1" Height="3" Minimum="0" Maximum="1"
+                     Visibility="Collapsed" BorderThickness="0"
+                     Background="{StaticResource BackgroundBrush}"
+                     Foreground="{StaticResource AccentBrush}" />
+
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <ScrollViewer x:Name="CardScroller"
+                              VerticalScrollBarVisibility="Auto"
+                              Padding="12">
+                    <WrapPanel x:Name="CardPanel"
+                               Margin="6" />
+                </ScrollViewer>
+
+                <StackPanel x:Name="EmptyState"
+                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                            IsHitTestVisible="False">
+                    <TextBlock x:Name="EmptyIcon" Text="&#xE71C;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="44"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               Opacity="0.45"
+                               HorizontalAlignment="Center" />
+                    <TextBlock x:Name="EmptyText"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="12.5" Opacity="0.8"
+                               Margin="24,12,24,0" MaxWidth="520"
+                               TextWrapping="Wrap"
+                               HorizontalAlignment="Center" TextAlignment="Center" />
+                </StackPanel>
+            </Grid>
+
+            <Border x:Name="PaginationBar" Grid.Row="1"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,1,0,0"
+                    Padding="12,7"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button x:Name="BtnPrev"
+                            Padding="10,5" Height="28"
+                            ToolTip="Previous page"
+                            Click="BtnPrev_Click">
+                        <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                    </Button>
+                    <TextBlock x:Name="LblPage"
+                               Text="Page 1 / 1"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="11" FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="12,0"
+                               MinWidth="70"
+                               TextAlignment="Center" />
+                    <Button x:Name="BtnNext"
+                            Padding="10,5" Height="28"
+                            ToolTip="Next page"
+                            Click="BtnNext_Click">
+                        <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

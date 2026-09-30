@@ -417,6 +417,29 @@
                                     VerticalAlignment="Center" Margin="16,0,0,0"
                                     Click="BtnMoreOptions_Click" />
                         </Grid>
+                        <!-- Not shown by default (see BtnLegacyToggle_Click). -->
+                        <StackPanel x:Name="SecretWatermarkRow" Visibility="Collapsed">
+                            <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" />
+                            <Grid Margin="20,14" Background="Transparent">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="Watermark Edited Items"
+                                               Foreground="{StaticResource TextPrimaryBrush}"
+                                               FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock Text="Adds [Grandeu Reforged] to the description of every item this tool edits or copies. While off, nothing new is marked, and an existing mark can be taken off: item editor → MORE → Remove watermark, or REMOVE WATERMARKS in Bulk Edit."
+                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleButton x:Name="SwWatermark" Grid.Column="1"
+                                              Style="{StaticResource ToggleSwitch}"
+                                              VerticalAlignment="Center" Margin="16,0,0,0"
+                                              Checked="SwWatermark_Toggled"
+                                              Unchecked="SwWatermark_Toggled" />
+                            </Grid>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </StackPanel>

@@ -332,11 +332,10 @@ public partial class HeroViewerView : UserControl
             int size = Marshal.SizeOf(typeof(ItemNative));
             var native = Base.Push<ItemNative>(Base.Instance.ReadMemory(addr, size));
             u = Base.ItemToUser(native);
-            name = Base.ReadUni<ItemNative>(addr, "EquipmentName") ?? "";
-            if (string.IsNullOrWhiteSpace(name))
-                name = Base.ReadUni<ItemNative>(addr, "BaseEquipmentName") ?? "";
-            name = StripColorTags(name);
-            if (string.IsNullOrWhiteSpace(name))
+            // Same name the Forge cards show (custom → rolled base name →
+            // archetype), not the archetype placeholder ("Boots Base").
+            name = DupeMemory.ItemNameOrEmpty(addr);
+            if (name.Length == 0)
                 name = QualityDisplay.Name(u.Quality2) + " " + TypeLabel(u.EquipmentType);
         }
         catch { return null; }
@@ -605,6 +604,11 @@ public partial class HeroViewerView : UserControl
     // Window.GetWindow (UI-thread only).
     private int ResolveHeroManager(MainWindow main)
     {
+        // Object-list route first (no character needed) — same shape as the
+        // Forge Viewer; the pawn chain is the fallback.
+        _lastResolvedPawn = 0;
+        int hm = GameChain.ResolveHeroManagerByObjectList();
+        if (hm != 0) return hm;
         _lastResolvedPawn = main.ResolvePlayerPawnAddress();
         return GameChain.ResolveHeroManager(_lastResolvedPawn);
     }

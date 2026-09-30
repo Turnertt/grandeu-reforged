@@ -5,61 +5,52 @@
     <DockPanel>
         <Border DockPanel.Dock="Top" Height="2"
                 Background="{StaticResource EditAccentBrush}" />
-        <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
-                Padding="16,10" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+        <!-- Top bar: badge + status on the left, actions on the right (one pattern on every screen). -->
+        <Border DockPanel.Dock="Top"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
             <Grid>
-                <StackPanel Orientation="Horizontal"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center">
-                    <Button x:Name="BtnBack" Content="&#x2190;  BACK"
-                            Style="{StaticResource GhostButton}"
-                            Padding="14,7" Height="32" Click="BtnBack_Click" />
-                    <Button x:Name="BtnRefresh" Content="REFRESH" Padding="16,7" Height="32" Margin="8,0,0,0"
-                            ToolTip="Re-read the value from the game."
-                            Click="BtnRefresh_Click" />
-                    <Button x:Name="BtnUpdate" Content="UPDATE" Style="{StaticResource AccentButton}"
-                            Padding="16,7" Height="32" Margin="8,0,0,0"
-                            ToolTip="Write the new value to the game. (Enter works too.)"
-                            Click="BtnUpdate_Click" />
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BtnBack" Content="BACK" Tag="&#xE72B;" ContentTemplate="{StaticResource IconButtonContent}" Style="{StaticResource GhostButton}"
+                            Padding="14,7" Height="32" ToolTip="Go back to the previous screen." Click="BtnBack_Click" />
+                    <Border Background="{StaticResource EditAccentSubtleBrush}" BorderBrush="{StaticResource EditAccentBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="8,4" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                       Foreground="{StaticResource EditAccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="EDIT · MISC" Foreground="{StaticResource EditAccentBrush}"
+                                       FontSize="10.5" FontWeight="Bold" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
-                            VerticalAlignment="Center">
-                    <Border Background="{StaticResource EditAccentSubtleBrush}"
-                            BorderBrush="{StaticResource EditAccentBrush}" BorderThickness="1"
-                            CornerRadius="4" Padding="8,4"
-                            VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets"
-                                       FontSize="11" Foreground="{StaticResource EditAccentBrush}"
-                                       Margin="0,0,6,0" VerticalAlignment="Center" />
-                            <TextBlock Text="EDIT · MISC"
-                                       Foreground="{StaticResource EditAccentBrush}"
-                                       FontSize="10.5" FontWeight="Bold"
-                                       VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Border>
-                    <Border Background="{StaticResource SurfaceLightBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="5"
-                            Padding="10,5"
-                            Margin="10,0,0,0"
-                            VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE946;"
-                                       FontFamily="Segoe MDL2 Assets"
-                                       FontSize="11"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       Margin="0,0,7,0"
-                                       VerticalAlignment="Center" />
-                            <TextBlock x:Name="StatusText"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11.5"
-                                       VerticalAlignment="Center"
-                                       MaxWidth="320"
-                                       TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                    </Border>
+                <Border Grid.Column="1" Background="{StaticResource SurfaceLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        CornerRadius="5" Padding="10,5" Margin="10,0,0,0"
+                        HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                   Foreground="{StaticResource TextMutedBrush}" Margin="0,0,7,0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" x:Name="StatusText"
+                                   Foreground="{StaticResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                    </Grid>
+                </Border>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Button x:Name="BtnUpdate" Content="UPDATE" Tag="&#xE74E;" ContentTemplate="{StaticResource IconButtonContent}" Style="{StaticResource AccentButton}"
+                            Padding="14,7" Height="32" ToolTip="Write the new value to the game. (Enter works too.)" Click="BtnUpdate_Click" />
+                    <Button x:Name="BtnRefresh" Content="REFRESH" Tag="&#xE72C;" ContentTemplate="{StaticResource IconButtonContent}"
+                            Padding="14,7" Height="32" Margin="8,0,0,0" ToolTip="Re-read the value from the game." Click="BtnRefresh_Click" />
                 </StackPanel>
             </Grid>
         </Border>

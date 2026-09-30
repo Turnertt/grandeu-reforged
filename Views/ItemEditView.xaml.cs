@@ -22,6 +22,8 @@ public partial class ItemEditView : UserControl
     // seen the new contents can edit them knowingly.
     private ItemIdentity _openedIdentity;
     private bool _hasIdentity;
+    private DupeSession _templateSourceSession;
+    private CancellationTokenSource? _templateCapture;
 
     // Re-read the item and confirm it is still the one this screen loaded.
     // Returns false (and explains in the status pill) when it is not.
@@ -37,10 +39,25 @@ public partial class ItemEditView : UserControl
     public ItemEditView(int address, string name)
     {
         InitializeComponent();
+        // Less-used actions live under MORE: saving to the template library,
+        // and DELETE (kept away from UPDATE on purpose).
+        BtnMore.Content = DropMenu.ButtonContent("MORE");
+        var more = new DropMenu(BtnMore);
+        more.Add("\uE8F1", "Add to templates", () => BtnAddTemplate_Click(this, new RoutedEventArgs()));
+        var unmark = more.Add("\uE75C", "Remove watermark", RemoveWatermark);
+        more.Add("\uE74D", "Delete item", () => BtnDelete_Click(this, new RoutedEventArgs()), danger: true);
+        // Only offered while the watermark is switched off (hidden setting);
+        // with it on, UPDATE would just put the mark back.
+        more.Opening += () => unmark.Visibility = Watermark.Enabled ? Visibility.Collapsed : Visibility.Visible;
         Address = address;
-        ItemDisplayName = string.IsNullOrWhiteSpace(name) ? "Item" : name;
+        // The name the Forge cards show for this item; the caller's text (a
+        // tracked-list description, a colored card name) is only the fallback.
+        string resolved = DupeMemory.ItemNameOrEmpty(address);
+        if (resolved.Length == 0) resolved = Watermark.StripColorTags(name);
+        ItemDisplayName = string.IsNullOrWhiteSpace(resolved) ? "Item" : resolved;
         StatusText.Text = Base.Truncate(ItemDisplayName);
         Loaded += OnLoaded;
+        Unloaded += (_, _) => _templateCapture?.Cancel();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -73,6 +90,7 @@ public partial class ItemEditView : UserControl
             _lastNative = native;
             _openedIdentity = ItemIdentity.Of(native);
             _hasIdentity = true;
+            _templateSourceSession = DupeSession.Current;
             ItemUser user = Base.ItemToUser(native);
 
             // Read string fields
@@ -130,21 +148,20 @@ public partial class ItemEditView : UserControl
             CboQuality3.SelectedItem = user.Quality3;
             SetHint(TxtQualityFlag, user.QualityFlag.ToString());
 
-            // Colors — stay populated so live previews work.
-            if (user.Color1Override != null)
-            {
-                TxtColor1R.Text = user.Color1Override.R.ToString();
-                TxtColor1G.Text = user.Color1Override.G.ToString();
-                TxtColor1B.Text = user.Color1Override.B.ToString();
-                _seedC1 = (user.Color1Override.R, user.Color1Override.G, user.Color1Override.B);
-            }
-            if (user.Color2Override != null)
-            {
-                TxtColor2R.Text = user.Color2Override.R.ToString();
-                TxtColor2G.Text = user.Color2Override.G.ToString();
-                TxtColor2B.Text = user.Color2Override.B.ToString();
-                _seedC2 = (user.Color2Override.R, user.Color2Override.G, user.Color2Override.B);
-            }
+            // Colors — stay populated so live previews work. An item with
+            // no override shows its default (the selected color set entry)
+            // instead of black; see ItemColors.Shown. UPDATE only writes a
+            // color whose boxes differ from this seed.
+            var shown1 = ItemColors.Shown(native, primary: true);
+            TxtColor1R.Text = shown1.R.ToString();
+            TxtColor1G.Text = shown1.G.ToString();
+            TxtColor1B.Text = shown1.B.ToString();
+            _seedC1 = (shown1.R, shown1.G, shown1.B);
+            var shown2 = ItemColors.Shown(native, primary: false);
+            TxtColor2R.Text = shown2.R.ToString();
+            TxtColor2G.Text = shown2.G.ToString();
+            TxtColor2B.Text = shown2.B.ToString();
+            _seedC2 = (shown2.R, shown2.G, shown2.B);
 
             // Identity
             SetHint(TxtItemName, itemName ?? "");
@@ -216,6 +233,26 @@ public partial class ItemEditView : UserControl
     // already unsellable" and not just "you are typing one right now".
     private string _storedForgerName = "";
 
+    // Stages the description without its watermark into the box, like the
+    // color editor does: UPDATE stays the single write path (identity
+    // check, backup), and Refresh / Back still cancels it.
+    private void RemoveWatermark()
+    {
+        string current = ColorMarkup.NormalizeNewlines(TxtDescription.Text);
+        if (current.Length == 0)
+        {
+            try { current = Base.ReadUni<ItemNative>(Address, "Description") ?? ""; }
+            catch { current = ""; }
+        }
+        if (!Watermark.IsMarked(current))
+        {
+            StatusText.Text = "This item's description has no watermark.";
+            return;
+        }
+        TxtDescription.Text = Watermark.Remove(current).Replace("\n", "\\n");
+        StatusText.Text = "Watermark removed — press UPDATE to write it to the item.";
+    }
+
     private void BtnColorDescription_Click(object sender, RoutedEventArgs e)
         => OpenColorEditor(TxtDescription, "Description", "Description", isForgerName: false);
 
@@ -276,6 +313,49 @@ public partial class ItemEditView : UserControl
     {
         Refresh();
     }
+
+    private async void BtnAddTemplate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_templateCapture != null || Window.GetWindow(this) is not MainWindow main) return;
+        if (!_hasIdentity)
+        {
+            StatusText.Text = "Refresh the item before saving a template.";
+            return;
+        }
+        if (!Base.OpenProcess()) return;
+        var identity = _openedIdentity;
+        var session = _templateSourceSession;
+        int address = Address;
+        using var capture = new CancellationTokenSource();
+        _templateCapture = capture;
+        SetTemplateCaptureBusy(true);
+        StatusText.Text = "Reading item for the template library…";
+        try
+        {
+            var entry = await Task.Run(() => main.ReadForDupe(_ =>
+                ItemTemplateCapture.Capture(address, identity, session, capture.Token)));
+            capture.Token.ThrowIfCancellationRequested();
+            var editor = new ItemTemplateEditDialog(entry, isNew: true) { Owner = main };
+            bool saved = editor.ShowDialog() == true;
+            StatusText.Text = saved ? "Template saved: " + editor.Saved!.Name : "Template not saved.";
+        }
+        catch (OperationCanceledException) { StatusText.Text = "Template capture cancelled."; }
+        catch (Exception ex) { StatusText.Text = "Template not saved: " + ex.Message; }
+        finally
+        {
+            _templateCapture = null;
+            SetTemplateCaptureBusy(false);
+        }
+    }
+
+    private void SetTemplateCaptureBusy(bool busy)
+    {
+        BtnMore.IsEnabled = BtnBack.IsEnabled = BtnRefresh.IsEnabled = BtnMax.IsEnabled =
+            BtnMaxConfig.IsEnabled = BtnUpdate.IsEnabled = ItemEditorForm.IsEnabled = !busy;
+        BtnCancelTemplate.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BtnCancelTemplate_Click(object sender, RoutedEventArgs e) => _templateCapture?.Cancel();
 
     private void BtnBack_Click(object sender, RoutedEventArgs e)
     {
@@ -365,10 +445,11 @@ public partial class ItemEditView : UserControl
         // effects, so parse as Int rather than Byte.
         // Colour overrides are written ONLY when the boxes differ from what
         // Refresh seeded. They used to be rebuilt from the boxes on every
-        // UPDATE with alpha 0 — the layout is (A, R, G, B) — which turned an
-        // item black the moment anything else on it was edited. When they
-        // are written, A = 255 marks the override active, as the original
-        // tool did.
+        // UPDATE with alpha 0, which turned an item black the moment anything
+        // else on it was edited. When they are written, A = 255 (1.0f) is the
+        // real FLinearColor alpha now that ItemNative is aligned (2026-09-27);
+        // before that the "A" slot landed on the previous field's last dword
+        // and the true alpha was never written.
         LinearColor c1 = new LinearColor();
         c1.R = v.Int(TxtColor1R, "Color 1 R");
         c1.G = v.Int(TxtColor1G, "Color 1 G");
@@ -421,7 +502,6 @@ public partial class ItemEditView : UserControl
             native.R0 = _lastNative.R0;
             native.R1 = _lastNative.R1;
             native.R2 = _lastNative.R2;
-            native.R4 = _lastNative.R4;
             native.Flags = _lastNative.Flags;
             native.AdditionalAllowedUpgradeResistancePoints = _lastNative.AdditionalAllowedUpgradeResistancePoints;
             native.RequirementLevelOverride = _lastNative.RequirementLevelOverride;
@@ -432,6 +512,9 @@ public partial class ItemEditView : UserControl
             // Untouched colour boxes keep the item's own override bytes verbatim.
             if (!color1Edited) native.PrimaryColorOverride   = _lastNative.PrimaryColorOverride;
             if (!color2Edited) native.SecondaryColorOverride = _lastNative.SecondaryColorOverride;
+            // Editing one color of an item with no overrides would turn the
+            // other black in game; give it its default as an override.
+            ItemColors.KeepOtherDefault(ref native, _lastNative, color1Edited, color2Edited);
             native.ShopMinimumSellWorth = _lastNative.ShopMinimumSellWorth;
             native.MaxRandomElementalDamageMultiplier = _lastNative.MaxRandomElementalDamageMultiplier;
             native.FolderID = _lastNative.FolderID;

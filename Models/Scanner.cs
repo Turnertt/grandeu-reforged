@@ -85,6 +85,9 @@ internal class Scanner
 
 	public IntPtr Handle { get; set; }
 
+	// Changes on every successful attach, even if Windows reuses a PID/handle.
+	public long AttachmentGeneration { get; private set; }
+
 	public PAGE[] Pages => _Pages.ToArray();
 
 	public int[] Results
@@ -123,6 +126,7 @@ internal class Scanner
 		}
 		else
 		{
+			AttachmentGeneration++;
 			_Data = new byte[0];
 		}
 	}

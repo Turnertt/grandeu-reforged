@@ -8,15 +8,17 @@ using System.Windows.Media.Imaging;
 namespace Modinator.Views;
 
 // Dedicated item-dupe tab. Two sides: SOURCE (copied from) and TARGET
-// (overwritten). Both pickers
-// reuse the authoritative Forge enumeration via CloneSourcePickerDialog
-// (ForgeViewerView.LastSnapshot).
+// (overwritten). Both are chosen in ItemPickerDialog, which looks like the
+// Forge Viewer and reads the game itself: the target from your own items,
+// the source from your items, the template library, or other players' gear
+// and floor drops.
 //
 // Transfer policy = the engine's own FEquipmentNetInfo value-set only
-// (see project_dd1_offsets memory): start from the sacrificial (preserve
+// (DD1_INTERNALS.md §4): start from the sacrificial (preserve
 // EVERYTHING — identity, the 6 NativeArray buffers, Flags/Mystery/pad),
 // copy ONLY value/archetype fields from source, write the 3 user strings
-// in-place into the sacrificial's existing buffers. Never raw-copy the
+// into target-owned buffers (in-place, or the existing allocation fallback).
+// Never raw-copy the
 // whole ItemNative; never copy a per-instance NativeArray pointer. This
 // is the lowest-crash external dupe and supersedes the old removed
 // ItemEditView clone button.
@@ -25,14 +27,18 @@ public partial class ItemDupeView : UserControl
     private int? _sacrificialAddr;
     private int? _sourceAddr;
     // Identity of each picked item CAPTURED AT PICK TIME, from live memory.
-    // Deliberately not looked up in ForgeViewerView.LastSnapshot at write
-    // time: that snapshot is replaced by any Forge rescan and emptied by the
-    // Forge RESET button, and the old code treated "address not in the
-    // snapshot" as a PASS — so the exact case the gate exists for (the item
-    // was sold, so it vanished from the new scan) sailed straight through
-    // into a write against freed, possibly reused memory.
+    // Deliberately not looked up in any scan list at write time: a list is
+    // replaced by the next rescan, and "address not in the list" must never
+    // count as a PASS — that is the exact case the gate exists for (the item
+    // was sold, so it vanished from the new scan), and it would sail straight
+    // through into a write against freed, possibly reused memory.
     private ItemIdentity? _sacrificialId;
     private ItemIdentity? _sourceId;
+    private DupeSession _sourceSession, _targetSession;
+    private ItemTemplate? _templateSource;
+    private MultiplayerItem? _remoteSource;
+    private CancellationTokenSource? _operation;
+    private bool _busy;
 
     // Read the item now and remember what it is. Returns false if it can't
     // be read — a selection we can't identify is one we must never write to.
@@ -41,8 +47,7 @@ public partial class ItemDupeView : UserControl
         id = default;
         try
         {
-            int size = Marshal.SizeOf(typeof(ItemNative));
-            var native = Base.Push<ItemNative>(Base.Instance.ReadMemory(addr, size));
+            var native = DupeMemory.ReadItem(addr);
             id = ItemIdentity.Of(native);
             return true;
         }
@@ -52,35 +57,24 @@ public partial class ItemDupeView : UserControl
     public ItemDupeView()
     {
         InitializeComponent();
-    }
-
-    private static bool EnsureScanned()
-    {
-        if (ForgeViewerView.LastSnapshot.Count > 0) return true;
-        Base.RaiseMessage(
-            "Open the Forge Viewer and scan first. The dupe pickers are built from the forge/hero item list.",
-            "Item Dupe");
-        return false;
+        Unloaded += (_, _) => _operation?.Cancel();
     }
 
     private void BtnPickSacrificial_Click(object sender, RoutedEventArgs e)
     {
-        if (!EnsureScanned()) return;
-        var picker = new CloneSourcePickerDialog(
-            excludeAddress: _sourceAddr ?? 0,
-            titleOverride: "Pick TARGET item (this item will be overwritten)",
-            promptOverride: "This item will become a copy of the source.",
-            okButtonOverride: "USE AS TARGET")
-        { Owner = Window.GetWindow(this) };
+        if (_busy || !Base.OpenProcess() || Window.GetWindow(this) is not MainWindow main) return;
+        var picker = new ItemPickerDialog(main, ItemPickerDialog.Mode.Target, excludeAddress: _sourceAddr ?? 0,
+            source: CurrentSourceShape());
         if (picker.ShowDialog() == true && picker.PickedAddress is int a)
         {
             if (!TryCaptureIdentity(a, out var id))
             {
-                Base.RaiseMessage("Couldn't read that item — rescan the Forge Viewer and pick again.", "Item Dupe");
+                Base.RaiseMessage("Couldn't read that item — open the picker and choose it again.", "Item Dupe");
                 return;
             }
             _sacrificialAddr = a;
             _sacrificialId = id;
+            _targetSession = DupeSession.Current;
             ShowItem(true, a);
             RefreshDupeEnabled();
         }
@@ -88,22 +82,23 @@ public partial class ItemDupeView : UserControl
 
     private void BtnPickSource_Click(object sender, RoutedEventArgs e)
     {
-        if (!EnsureScanned()) return;
-        var picker = new CloneSourcePickerDialog(
-            excludeAddress: _sacrificialAddr ?? 0,
-            titleOverride: "Pick SOURCE item (the item to duplicate)",
-            promptOverride: "The target item will become a copy of this one.",
-            okButtonOverride: "USE AS SOURCE")
-        { Owner = Window.GetWindow(this) };
-        if (picker.ShowDialog() == true && picker.PickedAddress is int a)
+        if (_busy || !Base.OpenProcess() || Window.GetWindow(this) is not MainWindow main) return;
+        var picker = new ItemPickerDialog(main, ItemPickerDialog.Mode.Source, excludeAddress: _sacrificialAddr ?? 0);
+        if (picker.ShowDialog() != true) return;
+        if (picker.PickedTemplate is ItemTemplate template) { UseTemplate(template); return; }
+        if (picker.PickedRemote is MultiplayerItem remote) { UseRemote(remote); return; }
+        if (picker.PickedAddress is int a)
         {
             if (!TryCaptureIdentity(a, out var id))
             {
-                Base.RaiseMessage("Couldn't read that item — rescan the Forge Viewer and pick again.", "Item Dupe");
+                Base.RaiseMessage("Couldn't read that item — open the picker and choose it again.", "Item Dupe");
                 return;
             }
             _sourceAddr = a;
             _sourceId = id;
+            _sourceSession = DupeSession.Current;
+            _templateSource = null;
+            _remoteSource = null;
             ShowItem(false, a);
             RefreshDupeEnabled();
         }
@@ -111,13 +106,22 @@ public partial class ItemDupeView : UserControl
 
     private void RefreshDupeEnabled()
     {
-        bool ready = _sacrificialAddr is int s && _sourceAddr is int src && s != src;
-        BtnDupe.IsEnabled = ready;
-        TxtStatus.Text = _sourceAddr == null || _sacrificialAddr == null
+        bool ready = _sacrificialAddr is int s && (_templateSource != null || (_sourceAddr is int src && s != src));
+        string? mismatch = ready && _sacrificialAddr is int sac && CurrentSourceClassPath() is string scp ? ClassMismatch(sac, scp) : null;
+        BtnDupe.IsEnabled = !_busy && ready;
+        // "Add to templates" lives in each card and only shows for a live
+        // item (a template source is already in the library).
+        BtnSaveTemplate.Visibility = _sourceAddr != null ? Visibility.Visible : Visibility.Collapsed;
+        BtnSaveTargetTemplate.Visibility = _sacrificialAddr != null ? Visibility.Visible : Visibility.Collapsed;
+        BtnSaveTemplate.IsEnabled = BtnSaveTargetTemplate.IsEnabled = !_busy;
+        BtnPickSource.IsEnabled = BtnPickSacrificial.IsEnabled = BtnReset.IsEnabled = !_busy;
+        BtnCancelOperation.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
+        if (_busy) return;
+        TxtStatus.Text = (_sourceAddr == null && _templateSource == null) || _sacrificialAddr == null
             ? "Pick a source and a target item."
             : (_sacrificialAddr == _sourceAddr
                 ? "Source and target must be different items."
-                : "Ready. OVERWRITE TARGET will replace the target item.");
+                : "Ready. OVERWRITE TARGET will replace the target item." + (mismatch != null ? " " + mismatch : ""));
     }
 
     private void BtnReset_Click(object sender, RoutedEventArgs e)
@@ -126,6 +130,8 @@ public partial class ItemDupeView : UserControl
         _sourceAddr = null;
         _sacrificialId = null;
         _sourceId = null;
+        _templateSource = null;
+        _remoteSource = null;
         ClearCard(true);
         ClearCard(false);
         RefreshDupeEnabled();
@@ -339,141 +345,93 @@ public partial class ItemDupeView : UserControl
     // internal: HeroViewerView reuses it for hero/equipment names.
     internal static string StripColorTags(string s) => Watermark.StripColorTags(s);
 
-    // Display name with the same spirit as ForgeViewerView.SafeReadName:
-    // custom name → the Forge snapshot's already-resolved name (the
-    // pickers are built from it, so it's present for every pickable
-    // item) → base name → placeholder. Fixes blank-named items showing
-    // "(unnamed)" when the Forge list shows a proper name for them.
+    // Same resolver as the Forge cards and the pickers (custom name →
+    // rolled base name → archetype), so an item is called the same thing
+    // here as in the list it was picked from.
     private static string ResolveDisplayName(int addr)
     {
-        try
-        {
-            string name = Base.ReadUni<ItemNative>(addr, "EquipmentName") ?? "";
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                foreach (var s in ForgeViewerView.LastSnapshot)
-                    if (s.Address == addr) { name = s.Name; break; }
-            }
-            if (string.IsNullOrWhiteSpace(name))
-                name = Base.ReadUni<ItemNative>(addr, "BaseEquipmentName") ?? "";
-            name = StripColorTags(name);
-            return string.IsNullOrWhiteSpace(name) ? "(unnamed item)" : name;
-        }
+        try { return DupeMemory.ItemName(addr); }
         catch { return "(unreadable item)"; }
     }
 
-    private void BtnDupe_Click(object sender, RoutedEventArgs e)
+    // Strings are written ONLY into the target's own buffers (2026-09-27).
+    // Every item string buffer is exact-fit (live: length == capacity on all
+    // of them), so the old "allocate a fresh buffer inside DD1" fallback ran
+    // on nearly every copy — a VirtualAllocEx page the game's allocator never
+    // issued, which the game later frees when the item is moved, equipped,
+    // renamed, sold or unloaded. Now: fits → in place; doesn't fit → shorten
+    // (prose) or blank to a single space (names, which the game regenerates
+    // from the copied name index + archetype tables). Each compromise is
+    // reported through `notes`. A blank FString crashes DD1: never write "".
+    internal static NativeArray WriteFit(NativeArray existing, string data, string field, List<string> notes, bool allowTruncate)
     {
-        if (_sacrificialAddr is not int sacAddr || _sourceAddr is not int srcAddr || sacAddr == srcAddr)
-            return;
-
-        var ok = MessageBox.Show(
-            $"Overwrite \"{ResolveDisplayName(sacAddr)}\" with a copy of \"{ResolveDisplayName(srcAddr)}\"?\n\n" +
-            "This permanently replaces the target item.",
-            "Confirm Dupe", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (ok != MessageBoxResult.Yes) return;
-
-        try
+        if (string.IsNullOrEmpty(data)) data = " ";
+        int cap = existing.MaximumLength;
+        if (!GameChain.IsGamePtr(existing.Address) || cap < 2 || cap > 1048576)
         {
-            int size = Marshal.SizeOf(typeof(ItemNative));
-            ItemNative source = Base.Push<ItemNative>(Base.Instance.ReadMemory(srcAddr, size));
-            ItemNative target = Base.Push<ItemNative>(Base.Instance.ReadMemory(sacAddr, size));
-
-            // Identity gate, fail-CLOSED: both addresses must still hold the
-            // items that were read when they were picked. A sold/dropped
-            // target is freed, pooled memory — writing an item over whatever
-            // reused it is the one thing this tab must never do, so a missing
-            // identity is a refusal, never a pass.
-            if (_sacrificialId is not ItemIdentity sacId || _sourceId is not ItemIdentity srcId ||
-                !sacId.Matches(target) || !srcId.Matches(source))
-            {
-                TxtStatus.Text = "Not duped — " + ItemIdentity.ChangedMessage;
-                Base.RaiseMessage(
-                    "The source or target item changed or moved in memory since the Forge scan " +
-                    "(sold, dropped, or reloaded). Rescan the Forge Viewer and pick again.",
-                    "Item Dupe");
-                return;
-            }
-
-            // Start from the sacrificial so EVERYTHING is preserved by
-            // default: identity (EquipmentID1/2, FolderID, UserID,
-            // DroppedLocation), engine UObject state (Flags, Mystery,
-            // _InstancePad, R0/R1/R2/R4), and all 6 NativeArray buffer
-            // pointers. Then copy ONLY the FEquipmentNetInfo value-set
-            // from source.
-            ItemNative merged = target;
-
-            merged.EquipmentTemplate                    = source.EquipmentTemplate;
-            merged.StatModifiers                        = source.StatModifiers;
-            merged.DamageReductions                     = source.DamageReductions;
-            merged.WeaponDamageBonus                    = source.WeaponDamageBonus;
-            merged.WeaponNumberOfProjectilesBonus       = source.WeaponNumberOfProjectilesBonus;
-            merged.WeaponSpeedOfProjectilesBonus        = source.WeaponSpeedOfProjectilesBonus;
-            merged.WeaponAdditionalDamage               = source.WeaponAdditionalDamage;
-            merged.WeaponDrawScaleMultiplier            = source.WeaponDrawScaleMultiplier;
-            merged.MaxRandomElementalDamageMultiplier   = source.MaxRandomElementalDamageMultiplier;
-            merged.WeaponSwingSpeedMultiplier           = source.WeaponSwingSpeedMultiplier;
-            merged.WeaponReloadSpeedBonus               = source.WeaponReloadSpeedBonus;
-            merged.WeaponKnockbackBonus                 = source.WeaponKnockbackBonus;
-            merged.WeaponAltDamageBonus                 = source.WeaponAltDamageBonus;
-            merged.WeaponBlockingBonus                  = source.WeaponBlockingBonus;
-            merged.WeaponClipAmmoBonus                  = source.WeaponClipAmmoBonus;
-            merged.AdditionalAllowedUpgradeResistancePoints = source.AdditionalAllowedUpgradeResistancePoints;
-            merged.RequirementLevelOverride             = source.RequirementLevelOverride;
-            merged.WeaponChargeSpeedBonus               = source.WeaponChargeSpeedBonus;
-            merged.WeaponShotsPerSecondBonus            = source.WeaponShotsPerSecondBonus;
-            merged.NameIndex_Base                       = source.NameIndex_Base;
-            merged.NameIndex_QualityDescriptor          = source.NameIndex_QualityDescriptor;
-            merged.NameIndex_DamageReduction            = source.NameIndex_DamageReduction;
-            merged.PrimaryColorSet                      = source.PrimaryColorSet;
-            merged.SecondaryColorSet                    = source.SecondaryColorSet;
-            merged.ManualLR                             = source.ManualLR;
-            merged.EquipmentType                        = source.EquipmentType;
-            merged.PrimaryColorOverride                 = source.PrimaryColorOverride;
-            merged.SecondaryColorOverride               = source.SecondaryColorOverride;
-            merged.MaximumSellWorth                     = source.MaximumSellWorth;
-            merged.MinimumSellWorth                     = source.MinimumSellWorth;
-            merged.ShopMinimumSellWorth                 = source.ShopMinimumSellWorth;
-            merged.MaxEquipmentLevel                    = source.MaxEquipmentLevel;
-            merged.Level                                = source.Level;
-            merged.StoredMana                           = source.StoredMana;
-            merged.MyRatingPercent                      = source.MyRatingPercent;
-            merged.MyRating                             = source.MyRating;
-
-            // The 3 user strings: write the SOURCE text into the
-            // TARGET's existing buffer (in-place, or fresh-alloc
-            // inside DD1 if it doesn't fit). Never copy source's pointer.
-            // Blank name crashes the game (documented) → use a single
-            // space. BaseEquipmentName is left as the sacrificial's — its
-            // displayed base name resolves from the copied EquipmentTemplate.
-            string srcName = Base.ReadUni<ItemNative>(srcAddr, "EquipmentName") ?? "";
-            string srcDesc = Base.ReadUni<ItemNative>(srcAddr, "Description") ?? "";
-            string srcForg = Base.ReadUni<ItemNative>(srcAddr, "ForgerName") ?? "";
-            if (string.IsNullOrEmpty(srcName)) srcName = " ";
-
-            merged.EquipmentName = WriteStr(target.EquipmentName, srcName, sacAddr, "EquipmentName");
-            merged.Description   = WriteStr(target.Description,   Watermark.Apply(srcDesc), sacAddr, "Description");
-            merged.ForgerName    = WriteStr(target.ForgerName,    srcForg, sacAddr, "ForgerName");
-
-            Base.Instance.WriteMemory(sacAddr, Base.Push(merged));
-
-            ShowItem(true, sacAddr);
-            TxtStatus.Text = "Duped. Target overwritten from 0x" + srcAddr.ToString("X8") +
-                             ". Re-scan the Forge Viewer to refresh lists.";
+            notes.Add($"{field} kept (target has no text buffer)");
+            return existing;
         }
-        catch (Exception ex)
+        if (data.Length + 1 <= cap) return Base.WriteUniInPlace(existing, data);
+        if (allowTruncate && cap - 1 >= 8)
         {
-            TxtStatus.Text = "Dupe failed: " + ex.Message;
+            notes.Add($"{field} shortened to {cap - 1} characters to fit");
+            return Base.WriteUniInPlace(existing, data[..(cap - 1)]);
         }
+        notes.Add($"{field} left blank (the target's buffer is too small for it)");
+        return Base.WriteUniInPlace(existing, " ");
     }
 
-    // Mirrors the (kept) ItemEditView string-write policy: overwrite in
-    // place when the sacrificial's buffer is big enough, else fresh-alloc
-    // a new buffer inside DD1 and point the field at it.
-    private static NativeArray WriteStr(NativeArray existing, string data, int itemAddr, string field)
+    // A target of the source archetype's class is the safe case: a copy only
+    // changes what the object CLAIMS to be; the engine never changes an
+    // object's class, and Familiar_* / EventHostCrown / Rune subclasses have
+    // fields beyond ItemNative that a plain HeroEquipment target does not.
+    // A different class is allowed (2026-09-30) but warned about: the picker
+    // lists same-class targets first as Recommended, and the overwrite
+    // confirmation says the copy might be unstable. null = same class (or
+    // unreadable).
+    internal static string? ClassMismatch(int sacrificialAddr, string sourceClassPath)
     {
-        if (existing.MaximumLength >= data.Length + 1)
-            return Base.WriteUniInPlace(existing, data);
-        return Base.WriteUni(itemAddr, field, data);
+        try
+        {
+            string target = DupeMemory.ClassPath(unchecked(sacrificialAddr - 0x38));
+            if (target == "?" || sourceClassPath == "?" || target == sourceClassPath) return null;
+            return $"The target is a different kind of item than the source ({DupeMemory.ClassLeaf(target)} vs " +
+                   $"{DupeMemory.ClassLeaf(sourceClassPath)}), so the copy might be unstable.";
+        }
+        catch { return null; }
+    }
+
+    // Class, base item, equipment type and weapon type of the current
+    // source, for ranking targets in the picker. null = no source yet.
+    private DupeSourceShape? CurrentSourceShape()
+    {
+        try
+        {
+            if (_templateSource is ItemTemplate t)
+            {
+                string reference = t.References[0];
+                int space = reference.IndexOf(' ');
+                int type = (int)t.Values.Preview().EquipmentType;
+                return new DupeSourceShape(DupeMemory.TemplateClassPath(reference), space > 0 ? reference[(space + 1)..] : "", type, null);
+            }
+            if (_sourceAddr is int src)
+            {
+                int archetype = GameChain.RdInt(src);
+                int obj = unchecked(src - 0x38);
+                return new DupeSourceShape(DupeMemory.ClassPath(archetype), GameReflection.ObjectPath(archetype),
+                    Base.Instance.ReadMemory(obj + 0xDA, 1)[0],
+                    Base.Instance.ReadMemory(obj + DupeMemory.WeaponTypeObjectOffset, 1)[0]);
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private string? CurrentSourceClassPath()
+    {
+        if (_templateSource is ItemTemplate t) return DupeMemory.TemplateClassPath(t.References[0]);
+        if (_sourceAddr is int src) { try { return DupeMemory.ArchetypeClassPath(src); } catch { return null; } }
+        return null;
     }
 }

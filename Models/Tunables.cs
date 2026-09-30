@@ -60,7 +60,9 @@ internal static class Tunables
     // has moved on a DD1 patch (0x39C → 0x3A8, 2026-06), so it is treated
     // like the vtable seed: compiled last-known-good default, discovered +
     // pinned from live memory on a patch. Keep in sync with
-    // GameChain.OFF_HM_ITEMBOX.
+    // GameChain.OFF_HM_ITEMBOX. Deliberately NOT bumped to the current
+    // build's 0x3A8 (DECISIONS.md): discovery must find the live value from
+    // any default, and a stale default is what keeps that path exercised.
     public const int  DefaultItemBoxOffset  = 0x39C;
     // The two other game-class links on the same chain, promoted to
     // discovered + pinned defaults for the same reason (same insertion

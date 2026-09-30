@@ -1,7 +1,8 @@
 using System.Runtime.InteropServices;
 
-// Heroes store colors in the standard (R, G, B, A) order, unlike items which
-// use (A, R, G, B). Kept as a separate struct so the two layouts don't collide.
+// Heroes store colors in the standard FLinearColor (R, G, B, A) order — as do
+// items since the 2026-09-27 ItemNative realignment (the old item "(A, R, G,
+// B)" was a misaligned-struct artifact). Kept separate so the types don't collide.
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct HeroColorNative
 {

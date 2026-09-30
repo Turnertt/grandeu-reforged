@@ -1,0 +1,65 @@
+<Window x:Class="Modinator.Views.ItemPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:Modinator.Views"
+        Title="Pick item"
+        Width="1060" Height="760"
+        MinWidth="720" MinHeight="520"
+        Icon="/GrandeuReforged;component/Assets/app-icon.ico"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Style="{StaticResource ModernWindowStyle}">
+
+    <DockPanel Background="{StaticResource BackgroundBrush}">
+        <Border DockPanel.Dock="Top" Height="2" Background="{StaticResource AccentBrush}" />
+
+        <Border DockPanel.Dock="Bottom"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="16,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="LblPrompt"
+                           Foreground="{StaticResource TextMutedBrush}"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="CANCEL" Tag="&#xE711;" ContentTemplate="{StaticResource IconButtonContent}"
+                            IsCancel="True" Padding="14,7" Height="32" />
+                    <Button x:Name="BtnOk" Content="USE AS SOURCE" Style="{StaticResource AccentButton}"
+                            Tag="&#xE72A;" ContentTemplate="{StaticResource IconButtonContent}"
+                            Padding="14,7" Height="32" Margin="8,0,0,0" IsEnabled="False" Click="BtnOk_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border x:Name="TabStrip" DockPanel.Dock="Top"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,8,12,0">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="TabForge" Style="{StaticResource TabButton}" GroupName="PickerTabs"
+                             Content="Forge" Tag="&#xE71C;" IsChecked="True" Checked="Tab_Checked"
+                             ToolTip="Your item box and the gear on your heroes." />
+                <RadioButton x:Name="TabTemplates" Style="{StaticResource TabButton}" GroupName="PickerTabs"
+                             Content="Templates" Tag="&#xE8F1;" Checked="Tab_Checked"
+                             ToolTip="Items saved to your template library." />
+                <RadioButton x:Name="TabSession" Style="{StaticResource TabButton}" GroupName="PickerTabs"
+                             Content="Players &amp; Floor" Tag="&#xE716;" Checked="Tab_Checked"
+                             ToolTip="Gear worn by everyone in this game, and items lying on the floor." />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <views:ItemBrowser x:Name="ForgeBrowser" />
+            <views:ItemBrowser x:Name="TemplateBrowser" Visibility="Collapsed" />
+            <views:ItemBrowser x:Name="SessionBrowser" Visibility="Collapsed" />
+        </Grid>
+    </DockPanel>
+</Window>

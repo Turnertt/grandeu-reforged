@@ -48,8 +48,19 @@ public partial class App : Application
         // the app nor switch the toggle back off. Callers on a repeating path
         // should additionally pass notify:false to Base.OpenProcess and
         // report in the UI; this guard is the backstop for every other case.
+        //
+        // Notices are toasts now (Views/Toast.cs): non-blocking, deduplicated
+        // and capped, so a repeating failure cannot pile up. Only text too
+        // long for a toast (the diagnostic report) still opens a box, and
+        // that path keeps the one-at-a-time guard.
         Base.OnMessage += (message, title) =>
         {
+            message ??= "";
+            if (message.Length <= 600 && message.Count(c => c == '\n') <= 10)
+            {
+                Views.Toast.Show(message, KindOf(message, title), title);
+                return;
+            }
             if (System.Threading.Interlocked.Exchange(ref _messageBoxOpen, 1) != 0) return;
             try { MessageBox.Show(message, title, MessageBoxButton.OK); }
             finally { System.Threading.Interlocked.Exchange(ref _messageBoxOpen, 0); }
@@ -72,6 +83,20 @@ public partial class App : Application
         };
 
         base.OnStartup(e);
+    }
+
+    // Base.RaiseMessage carries only text and a title (Models stays free of
+    // UI types), so the toast's color is read off the wording.
+    private static Views.ToastKind KindOf(string message, string? title)
+    {
+        const StringComparison Ignore = StringComparison.OrdinalIgnoreCase;
+        string t = title ?? "";
+        if (t.Contains("error", Ignore) || t.Contains("invalid", Ignore)) return Views.ToastKind.Error;
+        string[] failures = ["Couldn't", "Could not", "Failed", "Unable", "None of", "That item could not", "Nothing to", "Did you set"];
+        if (failures.Any(f => message.StartsWith(f, Ignore))) return Views.ToastKind.Error;
+        string[] successes = ["Exported", "Backup saved", "Bulk edit complete", "Written to"];
+        if (successes.Any(s => message.StartsWith(s, Ignore))) return Views.ToastKind.Success;
+        return Views.ToastKind.Info;
     }
 
     // 1 while a Base.OnMessage dialog is on screen. int + Interlocked rather

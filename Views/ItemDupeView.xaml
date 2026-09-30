@@ -31,88 +31,71 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="2" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Background="{StaticResource AccentBrush}" />
 
+        <!-- Top bar: badge + status on the left, actions on the right (one pattern on every screen). -->
         <Border Grid.Row="1"
                 Background="{StaticResource SurfaceBrush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="16,10">
-            <DockPanel LastChildFill="True">
-                <StackPanel DockPanel.Dock="Right"
-                            Orientation="Horizontal"
-                            VerticalAlignment="Center"
-                            Margin="16,0,0,0">
-                    <Button x:Name="BtnReset"
-                            Content="RESET"
-                            Padding="16,7"
-                            Height="32"
-                            ToolTip="Clear both item picks"
-                            Click="BtnReset_Click" />
-                    <Button x:Name="BtnDupe"
-                            Style="{StaticResource DangerButton}"
-                            Content="OVERWRITE TARGET"
-                            Padding="18,7"
-                            Height="32"
-                            MinWidth="170"
-                            Margin="8,0,0,0"
-                            IsEnabled="False"
-                            ToolTip="Copy the source item's stats onto the target. The target's own stats are permanently replaced."
-                            Click="BtnDupe_Click" />
-                </StackPanel>
-
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Background="{StaticResource AccentSubtleBrush}"
-                            BorderBrush="{StaticResource AccentBrush}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Padding="8,4"
-                            VerticalAlignment="Center">
+                    <Border Background="{StaticResource AccentSubtleBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="8,4" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8C8;"
-                                       FontFamily="Segoe MDL2 Assets"
-                                       FontSize="11"
-                                       Foreground="{StaticResource AccentBrush}"
-                                       Margin="0,0,6,0"
-                                       VerticalAlignment="Center" />
-                            <TextBlock Text="ITEM DUPE"
-                                       Foreground="{StaticResource AccentBrush}"
-                                       FontSize="10.5"
-                                       FontWeight="Bold"
-                                       VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Border>
-
-                    <Border Background="{StaticResource SurfaceLightBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="5"
-                            Padding="10,5"
-                            Margin="10,0,0,0"
-                            VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE946;"
-                                       FontFamily="Segoe MDL2 Assets"
-                                       FontSize="11"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       Margin="0,0,7,0"
-                                       VerticalAlignment="Center" />
-                            <TextBlock x:Name="TxtStatus"
-                                       Text="Pick a source and a target item."
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       FontSize="11.5"
-                                       VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                       Foreground="{StaticResource AccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="ITEM DUPE" Foreground="{StaticResource AccentBrush}"
+                                       FontSize="10.5" FontWeight="Bold" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
-            </DockPanel>
+                <Border Grid.Column="1" Background="{StaticResource SurfaceLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        CornerRadius="5" Padding="10,5" Margin="10,0,0,0"
+                        HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                   Foreground="{StaticResource TextMutedBrush}" Margin="0,0,7,0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" x:Name="TxtStatus" Text="Pick a source and a target item."
+                                   Foreground="{StaticResource TextSecondaryBrush}" FontSize="11.5" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                    </Grid>
+                </Border>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <Button x:Name="BtnDupe" Content="OVERWRITE TARGET" Tag="&#xE8C8;" ContentTemplate="{StaticResource IconButtonContent}" Style="{StaticResource DangerButton}"
+                            Padding="14,7" Height="32" IsEnabled="False" ToolTip="Replace the target item with a copy of the source. Asks before writing." Click="BtnDupe_Click" />
+                    <Button x:Name="BtnReset" Content="RESET" Tag="&#xE7A7;" ContentTemplate="{StaticResource IconButtonContent}"
+                            Padding="14,7" Height="32" Margin="8,0,0,0" ToolTip="Clear the picked source and target." Click="BtnReset_Click" />
+                    <Button x:Name="BtnCancelOperation" Content="CANCEL" Tag="&#xE711;" ContentTemplate="{StaticResource IconButtonContent}"
+                            Padding="14,7" Height="32" Margin="8,0,0,0" Visibility="Collapsed" ToolTip="Stop the current read. Nothing is written once cancelled." Click="BtnCancelOperation_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Border Grid.Row="2" Padding="18,10" Background="{StaticResource BackgroundBrush}">
+            <StackPanel>
+                <TextBlock x:Name="TxtCopyHelp" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"
+                           Text="Copy stats, item type, supported appearance and text. The target keeps its own identity. PICK SOURCE offers your own items, saved templates, and other players&apos; gear or floor items; all of them follow the same Dupe rules."/>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,6,0,0"
+                           Text="Appearance: the copy keeps the sacrificial item's old skin/look until you drop it. Drop it and pick it back up to refresh the skin/texture."/>
+            </StackPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="2"
+        <ScrollViewer Grid.Row="3"
                       VerticalScrollBarVisibility="Auto"
                       Padding="24">
             <Grid MaxWidth="1120"
@@ -200,9 +183,10 @@
                                             HorizontalAlignment="Right"
                                             VerticalAlignment="Center"
                                             Content="PICK SOURCE"
+                                            Tag="&#xE8B7;" ContentTemplate="{StaticResource IconButtonContent}"
                                             Padding="14,7"
                                             Height="32"
-                                            ToolTip="Choose the item whose stats get copied. It is never modified."
+                                            ToolTip="Choose what gets copied: one of your items, a saved template, or another player&apos;s gear / a floor item. It is never modified."
                                             Click="BtnPickSource_Click" />
                                 </Grid>
                             </Border>
@@ -231,7 +215,7 @@
                                                FontWeight="SemiBold"
                                                Foreground="{StaticResource TextSecondaryBrush}"
                                                HorizontalAlignment="Center" />
-                                    <TextBlock Text="Pick the item whose stats you want to duplicate."
+                                    <TextBlock Text="Pick an item, a template, or another player&apos;s gear to duplicate."
                                                FontSize="11.5"
                                                Foreground="{StaticResource TextMutedBrush}"
                                                HorizontalAlignment="Center"
@@ -269,10 +253,19 @@
                                     BorderThickness="0,1,0,0"
                                     CornerRadius="0,0,8,8"
                                     Padding="14,10">
-                                <TextBlock Text="Never modified"
-                                           Foreground="{StaticResource TextMutedBrush}"
-                                           FontSize="11"
-                                           HorizontalAlignment="Center" />
+                                <StackPanel>
+                                    <Button x:Name="BtnSaveTemplate" Content="ADD TO TEMPLATES" Tag="&#xE8F1;"
+                                            ContentTemplate="{StaticResource IconButtonContent}"
+                                            Style="{StaticResource GhostButton}"
+                                            Padding="12,5" HorizontalAlignment="Center" Margin="0,0,0,8"
+                                            Visibility="Collapsed"
+                                            ToolTip="Save the source item to the template library (Templates tab)."
+                                            Click="BtnSaveTemplate_Click"/>
+                                    <TextBlock Text="Never modified"
+                                               Foreground="{StaticResource TextMutedBrush}"
+                                               FontSize="11"
+                                               HorizontalAlignment="Center" />
+                                </StackPanel>
                             </Border>
                         </Grid>
                     </Border>
@@ -321,6 +314,7 @@
                                             HorizontalAlignment="Right"
                                             VerticalAlignment="Center"
                                             Content="PICK TARGET"
+                                            Tag="&#xE8B7;" ContentTemplate="{StaticResource IconButtonContent}"
                                             Padding="14,7"
                                             Height="32"
                                             ToolTip="Choose the item that becomes the copy. Its own stats are lost."
@@ -390,11 +384,20 @@
                                     BorderThickness="0,1,0,0"
                                     CornerRadius="0,0,8,8"
                                     Padding="14,10">
-                                <TextBlock Text="Permanently overwritten"
-                                           Foreground="{StaticResource DangerBrush}"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           HorizontalAlignment="Center" />
+                                <StackPanel>
+                                    <Button x:Name="BtnSaveTargetTemplate" Content="ADD TO TEMPLATES" Tag="&#xE8F1;"
+                                            ContentTemplate="{StaticResource IconButtonContent}"
+                                            Style="{StaticResource GhostButton}"
+                                            Padding="12,5" HorizontalAlignment="Center" Margin="0,0,0,8"
+                                            Visibility="Collapsed"
+                                            ToolTip="Save the target item to the template library before it is overwritten."
+                                            Click="BtnSaveTargetTemplate_Click"/>
+                                    <TextBlock Text="Permanently overwritten"
+                                               Foreground="{StaticResource DangerBrush}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" />
+                                </StackPanel>
                             </Border>
                         </Grid>
                     </Border>

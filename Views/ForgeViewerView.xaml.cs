@@ -15,16 +15,10 @@ public partial class ForgeViewerView : UserControl
 {
     // ── Inner types ──────────────────────────────────────────────
 
-    private class CachedItem
+    // What the card draws (ItemCardData) plus what only the Forge list needs.
+    private class CachedItem : ItemCardData
     {
-        public int Address;
-        public string Name = "";
-        public string BaseName = "";
-        public string Description = "";
-        public string ForgerName = "";
-        public string SearchText = "";
         public int EquipmentTemplate;
-        public ItemUser User = new();
         public int FolderID;
         public int EquipmentID1;
         public int EquipmentID2;
@@ -40,29 +34,6 @@ public partial class ForgeViewerView : UserControl
         public override string ToString() => Label;
     }
 
-    private class TypeEntry
-    {
-        public EquipmentType Type;
-        public string Label;
-        public bool IsAll;
-        public EquipmentType[]? Group;
-
-        public TypeEntry(EquipmentType type, string label, bool isAll)
-        { Type = type; Label = label; IsAll = isAll; }
-
-        public TypeEntry(string label, params EquipmentType[] group)
-        { Label = label; Group = group; }
-
-        public bool Matches(EquipmentType t)
-        {
-            if (IsAll) return true;
-            if (Group != null) return Array.IndexOf(Group, t) >= 0;
-            return t == Type;
-        }
-
-        public override string ToString() => Label;
-    }
-
     private enum SourceMode { Forge, Hero, All }
 
     private class SourceEntry
@@ -73,56 +44,17 @@ public partial class ForgeViewerView : UserControl
         public override string ToString() => Label;
     }
 
-    private enum SortMode
-    {
-        Quality, MaxLevelDesc, MaxLevelAsc, LevelDesc,
-        HeroDamageDesc, TowerDamageDesc, WeaponDamageDesc,
-        NameAsc, BestStat
-    }
-
-    private class SortEntry
-    {
-        public SortMode Mode;
-        public string Label;
-        public SortEntry(SortMode mode, string label) { Mode = mode; Label = label; }
-        public override string ToString() => Label;
-    }
-
     // ── Constants & state ────────────────────────────────────────
 
     private const int PageSize = 30;
 
-    // Sentinel "icon path" for the weapon Elemental-damage tile, which has
-    // no dedicated asset — MakeIconTile renders a glyph placeholder for it.
-    private const string SelectionMarkerTag = "SelectionMarker";
-
-    private readonly Dictionary<string, ImageBrush?> _statIconBrushes = new();
-    private readonly SolidColorBrush _selectedCardBrush = new(Color.FromArgb(30, 88, 101, 242));
-
     private List<int> forgeResults = new();
     private List<CachedItem> cachedItems = new();
 
-    // Snapshot of the most recent forge read, exposed so other views (the
-    // Item Dupe picker) can surface the item list without having
-    // to re-scan. Updated after every ReadAllItems() pass. Internal because
-    // Quality2 / EquipmentType are internal to the assembly.
-    internal static IReadOnlyList<ForgeSnapshotItem> LastSnapshot { get; private set; } = Array.Empty<ForgeSnapshotItem>();
-
-    internal sealed class ForgeSnapshotItem
-    {
-        public int Address { get; init; }
-        public string Name { get; init; } = "";
-        public string ForgerName { get; init; } = "";
-        public int EquipmentTemplate { get; init; }
-        public int FolderID { get; init; }
-        public int EquipmentID1 { get; init; }
-        public int EquipmentID2 { get; init; }
-        public Quality2 Quality { get; init; }
-        public EquipmentType EquipmentType { get; init; }
-        public int Level { get; init; }
-        public bool IsHero { get; init; }
-        public bool IsRealInstance => EquipmentID1 != 0 || EquipmentID2 != 0;
-    }
+    // Attach the last committed scan was read under. A card's "Add to
+    // templates" capture is checked against it, like the dupe pickers do.
+    private DupeSession _scanSession;
+    private bool _templateCapture;
     private int currentPage;
     private HashSet<int> selectedAddresses = new();
     private bool _suppressFilterEvent;
@@ -146,11 +78,10 @@ public partial class ForgeViewerView : UserControl
     public ForgeViewerView()
     {
         InitializeComponent();
-        _selectedCardBrush.Freeze();
         _suppressFilterEvent = true;
         PopulateSourceCombo();
-        PopulateTypeCombo();
-        PopulateSortCombo();
+        ItemCard.FillTypeCombo(CboType);
+        ItemCard.FillSortCombo(CboSort);
         _suppressFilterEvent = false;
         _searchDebounce.Tick += (s, e) =>
         {
@@ -168,41 +99,6 @@ public partial class ForgeViewerView : UserControl
         CboSource.Items.Add(new SourceEntry(SourceMode.Forge, "Forge"));
         CboSource.Items.Add(new SourceEntry(SourceMode.Hero,  "Hero"));
         CboSource.SelectedIndex = 0; // default: All (Forge + Hero)
-    }
-
-    private void PopulateTypeCombo()
-    {
-        CboType.Items.Add(new TypeEntry(EquipmentType.All, "All types", true));
-        CboType.Items.Add(new TypeEntry(EquipmentType.Weapon, "Weapon", false));
-        CboType.Items.Add(new TypeEntry("All Armor / Accessories",
-            EquipmentType.ArmorHelmet, EquipmentType.ArmorTorso,
-            EquipmentType.ArmorBoots, EquipmentType.ArmorGloves,
-            EquipmentType.Hat, EquipmentType.ArmGuard,
-            EquipmentType.Shield, EquipmentType.Mask));
-        CboType.Items.Add(new TypeEntry(EquipmentType.ArmorHelmet, "Helmet", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.ArmorTorso, "Torso", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.ArmorBoots, "Boots", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.ArmorGloves, "Gloves", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.Familiar, "Familiar", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.Hat, "Hat", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.ArmGuard, "ArmGuard", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.Shield, "Shield", false));
-        CboType.Items.Add(new TypeEntry(EquipmentType.Mask, "Mask", false));
-        CboType.SelectedIndex = 0;
-    }
-
-    private void PopulateSortCombo()
-    {
-        CboSort.Items.Add(new SortEntry(SortMode.Quality, "Quality (best first)"));
-        CboSort.Items.Add(new SortEntry(SortMode.MaxLevelDesc, "Max Level (high to low)"));
-        CboSort.Items.Add(new SortEntry(SortMode.MaxLevelAsc, "Max Level (low to high)"));
-        CboSort.Items.Add(new SortEntry(SortMode.LevelDesc, "Level (high to low)"));
-        CboSort.Items.Add(new SortEntry(SortMode.HeroDamageDesc, "Hero Damage (high to low)"));
-        CboSort.Items.Add(new SortEntry(SortMode.TowerDamageDesc, "Tower Damage (high to low)"));
-        CboSort.Items.Add(new SortEntry(SortMode.WeaponDamageDesc, "Weapon Damage (high to low)"));
-        CboSort.Items.Add(new SortEntry(SortMode.BestStat, "Best stat total"));
-        CboSort.Items.Add(new SortEntry(SortMode.NameAsc, "Name (A-Z)"));
-        CboSort.SelectedIndex = 0;
     }
 
     // ── Button handlers ──────────────────────────────────────────
@@ -281,7 +177,7 @@ public partial class ForgeViewerView : UserControl
                 // Staged diagnosis: not running / 64-bit unsupported /
                 // menu (no pawn) / chain broke — say which.
                 string why = GameChain.DescribeScanFailure(_lastResolvedPawn);
-                Base.RaiseMessage(why, "Forge Viewer");
+                Toast.Show(why, ToastKind.Error, "Forge Viewer");
                 LblStatus.Text = "Items not reachable — " + why;
                 OnScanFail();
                 return;
@@ -319,7 +215,7 @@ public partial class ForgeViewerView : UserControl
             forgeResults = en.Addresses;
             _folderNames = read.folders;
             cachedItems = read.items;
-            PublishSnapshot();
+            _scanSession = DupeSession.Current;
             OnScanSuccess();
         }
         catch (Exception ex)
@@ -372,9 +268,21 @@ public partial class ForgeViewerView : UserControl
     // Worker-thread body: resolve the chain and enumerate. Touches no UI
     // (the Source mode is captured by the caller). null = chain unreachable.
     private Enumeration? TryEnumerate(Modinator.MainWindow mw, SourceMode mode)
+        => Enumerate(mw, mode, out _lastResolvedPawn);
+
+    private static Enumeration? Enumerate(Modinator.MainWindow mw, SourceMode mode, out int resolvedPawn)
     {
-        _lastResolvedPawn = mw.ResolvePlayerPawnAddress();
-        int heroMgr = GameChain.ResolveHeroManager(_lastResolvedPawn);
+        // Object-list route first (no character needed, ~0.3 s once per
+        // attach). Only if the game's object table is unavailable do we pay
+        // for the pawn resolve — which can be a multi-second WorldInfo sweep
+        // and needs the player in a level.
+        resolvedPawn = 0;
+        int heroMgr = GameChain.ResolveHeroManagerByObjectList();
+        if (!IsGamePtr(heroMgr))
+        {
+            resolvedPawn = mw.ResolvePlayerPawnAddress();
+            heroMgr = GameChain.ResolveHeroManager(resolvedPawn);
+        }
         if (!IsGamePtr(heroMgr)) return null;
 
         var en = new Enumeration { HeroMgr = heroMgr };
@@ -394,6 +302,38 @@ public partial class ForgeViewerView : UserControl
 
         return en;
     }
+
+    // The Item Dupe pickers' own read of the item box + hero gear: the same
+    // enumeration and per-item read as SCAN ALL, without touching this
+    // view's state, so picking never depends on a Forge scan having run.
+    // Worker thread only. Throws with the staged reason when unreachable.
+    internal static (List<ItemCardData> items, int failed) ScanForPicker(Modinator.MainWindow mw, IProgress<int>? progress)
+    {
+        var en = Enumerate(mw, SourceMode.All, out int pawn);
+        if (en == null)
+        {
+            mw.InvalidatePawnScanCache();
+            en = Enumerate(mw, SourceMode.All, out pawn);
+        }
+        if (en == null) throw new InvalidOperationException(GameChain.DescribeScanFailure(pawn));
+
+        var read = ReadAllItems(en, progress);
+        var items = new List<ItemCardData>(read.items.Count);
+        foreach (var ci in read.items)
+        {
+            ci.Key = ci.Address.ToString("X8");
+            ci.Source = ci.IsHero ? "Hero" : "Forge";
+            ci.Folder = ci.IsHero ? null : FolderLabel(ci.FolderID, read.folders);
+            items.Add(ci);
+        }
+        return (items, read.failed);
+    }
+
+    // FolderID -1 = items sitting loose in the forge box (not in any user
+    // folder) — labeled "Forge" instead of "Folder -1".
+    private static string FolderLabel(int folderId, Dictionary<int, string> names)
+        => names.TryGetValue(folderId, out string? name) && !string.IsNullOrEmpty(name) ? name
+         : folderId == -1 ? "Forge" : "Folder " + folderId;
 
     // Last pawn the chain resolution saw — feeds the staged failure
     // message (distinguishes "no character" from "chain broke").
@@ -465,7 +405,7 @@ public partial class ForgeViewerView : UserControl
         if (selectedAddresses.Count == 0) return;
 
         // Mixed types are fine now — bulk MAX is class-aware per item.
-        var typeEntry = CboType.SelectedItem as TypeEntry;
+        var typeEntry = CboType.SelectedItem as ItemCard.TypeEntry;
         string typeLabel = (typeEntry != null && !typeEntry.IsAll) ? typeEntry.Label : "selected items";
         var addresses = new List<int>(selectedAddresses);
 
@@ -551,7 +491,6 @@ public partial class ForgeViewerView : UserControl
         cachedItems.Clear();
         selectedAddresses.Clear();
         _folderNames.Clear();
-        LastSnapshot = Array.Empty<ForgeSnapshotItem>();
         currentPage = 0;
 
         _suppressFilterEvent = true;
@@ -736,7 +675,7 @@ public partial class ForgeViewerView : UserControl
     // include them), then every item's struct + strings + name fallback.
     // Builds fresh lists — the caller swaps them in on the UI thread, so a
     // filter change mid-read can never enumerate a list being rebuilt.
-    private (List<CachedItem> items, Dictionary<int, string> folders, int failed) ReadAllItems(
+    private static (List<CachedItem> items, Dictionary<int, string> folders, int failed) ReadAllItems(
         Enumeration en, IProgress<int>? progress)
     {
         var folders = ReadFolderNames(en.HeroMgr);
@@ -752,7 +691,7 @@ public partial class ForgeViewerView : UserControl
                 ItemNative native = Base.Push<ItemNative>(data);
                 ItemUser user = Base.ItemToUser(native);
                 string name = SafeReadName(address, native, user);
-                string baseName = SafeReadUni(address, "BaseEquipmentName");
+                string baseName = ItemNames.BaseName(address - 0x38);
                 string description = SafeReadUni(address, "Description");
                 string forgerName = SafeReadUni(address, "ForgerName");
 
@@ -786,29 +725,6 @@ public partial class ForgeViewerView : UserControl
         if (failed > 0)
             Base.LogEvent($"ReadAllItems: {failed} of {en.Addresses.Count} item reads failed");
         return (items, folders, failed);
-    }
-
-    private void PublishSnapshot()
-    {
-        var snap = new List<ForgeSnapshotItem>(cachedItems.Count);
-        foreach (var ci in cachedItems)
-        {
-            snap.Add(new ForgeSnapshotItem
-            {
-                Address = ci.Address,
-                Name = ci.Name,
-                ForgerName = ci.ForgerName,
-                EquipmentTemplate = ci.EquipmentTemplate,
-                FolderID = ci.FolderID,
-                EquipmentID1 = ci.EquipmentID1,
-                EquipmentID2 = ci.EquipmentID2,
-                Quality = ci.User.Quality2,
-                EquipmentType = ci.User.EquipmentType,
-                Level = ci.User.Level,
-                IsHero = ci.IsHero,
-            });
-        }
-        LastSnapshot = snap;
     }
 
     // ── Folder names — authoritative (HeroManager.ItemFolders) ────
@@ -877,15 +793,7 @@ public partial class ForgeViewerView : UserControl
         CboFolder.Items.Add(new FolderEntry(int.MinValue, "All folders (" + cachedItems.Count + ")"));
         foreach (var g in groups)
         {
-            // FolderID -1 = items sitting loose in the forge box (not in
-            // any user folder) \u2014 label it "Forge" instead of "Folder -1".
-            string folderName;
-            if (_folderNames.TryGetValue(g.FolderID, out string? realName) && !string.IsNullOrEmpty(realName))
-                folderName = realName;
-            else if (g.FolderID == -1)
-                folderName = "Forge";
-            else
-                folderName = "Folder " + g.FolderID;
+            string folderName = FolderLabel(g.FolderID, _folderNames);
             folderName += "  \u2014  " + g.Count + " item" + (g.Count == 1 ? "" : "s");
             CboFolder.Items.Add(new FolderEntry(g.FolderID, folderName));
         }
@@ -946,52 +854,6 @@ public partial class ForgeViewerView : UserControl
         return s;
     }
 
-    // Toggle the "selected" look on a card without rebuilding anything else.
-    // Mirrors the initial assignment inside CreateCard().
-    private void ApplySelectedVisual(Border card, bool isSelected)
-    {
-        card.BorderThickness = new Thickness(isSelected ? 2 : 1);
-        card.BorderBrush = isSelected
-            ? (Brush)FindResource("AccentBrush")
-            : (Brush)FindResource("BorderBrush");
-        card.Background = isSelected ? _selectedCardBrush : (Brush)FindResource("SurfaceLightBrush");
-        SetSelectionMarker(card, isSelected);
-    }
-
-    private void SetSelectionMarker(Border card, bool isSelected)
-    {
-        if (card.Child is not Grid grid) return;
-
-        for (int i = grid.Children.Count - 1; i >= 0; i--)
-        {
-            if (grid.Children[i] is FrameworkElement { Tag: SelectionMarkerTag })
-                grid.Children.RemoveAt(i);
-        }
-
-        if (!isSelected) return;
-
-        grid.Children.Add(new Border
-        {
-            Tag = SelectionMarkerTag,
-            Width = 20,
-            Height = 20,
-            CornerRadius = new CornerRadius(10),
-            Background = (Brush)FindResource("AccentBrush"),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 8, 8, 0),
-            Child = new TextBlock
-            {
-                Text = "\u2713",
-                Foreground = Brushes.White,
-                FontSize = 12,
-                FontWeight = FontWeights.Bold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            }
-        });
-    }
-
     // Re-compute just the status-line suffix so the "N selected" counter
     // stays current after a selection toggle. Keeps PopulateCards' exact
     // format so the visible string doesn't jitter.
@@ -1012,7 +874,7 @@ public partial class ForgeViewerView : UserControl
         if (CboFolder.SelectedItem is FolderEntry folder && folder.FolderID != int.MinValue)
             q = q.Where(ci => ci.FolderID == folder.FolderID);
 
-        if (CboType.SelectedItem is TypeEntry type && !type.IsAll)
+        if (CboType.SelectedItem is ItemCard.TypeEntry type && !type.IsAll)
             q = q.Where(ci => type.Matches(ci.User.EquipmentType));
 
         string? needle = TxtSearch.Text;
@@ -1028,33 +890,7 @@ public partial class ForgeViewerView : UserControl
     }
 
     private void ApplySort(List<CachedItem> list)
-    {
-        SortMode mode = CboSort.SelectedItem is SortEntry entry ? entry.Mode : SortMode.Quality;
-        Comparison<CachedItem> primary = mode switch
-        {
-            SortMode.MaxLevelDesc     => (a, b) => b.User.MaxLevel.CompareTo(a.User.MaxLevel),
-            SortMode.MaxLevelAsc      => (a, b) => a.User.MaxLevel.CompareTo(b.User.MaxLevel),
-            SortMode.LevelDesc        => (a, b) => b.User.Level.CompareTo(a.User.Level),
-            SortMode.HeroDamageDesc   => (a, b) => b.User.HeroDamage.CompareTo(a.User.HeroDamage),
-            SortMode.TowerDamageDesc  => (a, b) => b.User.TowerDamage.CompareTo(a.User.TowerDamage),
-            SortMode.WeaponDamageDesc => (a, b) => b.User.Damage.CompareTo(a.User.Damage),
-            SortMode.BestStat         => (a, b) => StatTotal(b.User).CompareTo(StatTotal(a.User)),
-            SortMode.NameAsc          => (a, b) => string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.OrdinalIgnoreCase),
-            _                         => (a, b) => QualityRank(b.User.Quality2).CompareTo(QualityRank(a.User.Quality2)),
-        };
-        // List.Sort is unstable and most keys tie heavily (quality has ~20
-        // values across ~1,000 items), so without a total order the page
-        // contents reshuffled on every REFRESH. Name, then address, makes
-        // the order deterministic across scans.
-        list.Sort((a, b) =>
-        {
-            int c = primary(a, b);
-            if (c != 0) return c;
-            c = string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.OrdinalIgnoreCase);
-            if (c != 0) return c;
-            return ((uint)a.Address).CompareTo((uint)b.Address);
-        });
-    }
+        => ItemCard.Sort(list, CboSort.SelectedItem is ItemCard.SortEntry entry ? entry.Mode : ItemSort.Quality);
 
     // ── Card rendering ───────────────────────────────────────────
 
@@ -1095,238 +931,16 @@ public partial class ForgeViewerView : UserControl
     }
 
     // ── Item card ────────────────────────────────────────────────────
-    // Laid out like DD1's own item panel (see DECISIONS.md, 2026-09-04):
-    // level and type top-left, forged-by top-right, name centred, the
-    // quality word leading straight into the description, then icon rows
-    // split by rule lines — primary stats as round icons, hero and tower
-    // bonuses as square tiles, weapon extras round again. Numbers sit under
-    // their icon. No per-tile boxes: the earlier bordered-pill grid gave
-    // every stat the same weight and read as a generic dashboard.
-    //
-    // Rows pack their live stats left (a zero stat is simply omitted) — the
-    // icon families already say which group a tile belongs to.
+    // The card itself is drawn by ItemCard (shared with the Templates tab
+    // and the Item Dupe pickers). This adds what only the Forge Viewer has:
+    // Ctrl+click multi-select, double-click to edit, and the per-card
+    // "Add to templates" button.
     private Border CreateCard(CachedItem ci, bool selectionMode)
     {
         bool isSelected = selectionMode && selectedAddresses.Contains(ci.Address);
-        var u = ci.User;
-        var qBrush = new SolidColorBrush(GetAccentColor(u.Quality2));
-        var tColor = GetTypeColor(u.EquipmentType);
-        var textPrimary   = (Brush)FindResource("TextPrimaryBrush");
-        var textSecondary = (Brush)FindResource("TextSecondaryBrush");
-        var textMuted     = (Brush)FindResource("TextMutedBrush");
-
-        var card = new Border
-        {
-            Width = 256,
-            Margin = new Thickness(5),
-            CornerRadius = new CornerRadius(6),
-            BorderThickness = new Thickness(isSelected ? 2 : 1),
-            BorderBrush = isSelected ? (Brush)FindResource("AccentBrush") : (Brush)FindResource("BorderBrush"),
-            Background = isSelected ? _selectedCardBrush : (Brush)FindResource("SurfaceLightBrush"),
-            Cursor = Cursors.Hand,
-            ClipToBounds = true,
-            Tag = ci.Address
-        };
-        // SetSelectionMarker overlays its check onto this Grid — keep it.
-        var outerGrid = new Grid();
-        card.Child = outerGrid;
-        var body = new StackPanel { Margin = new Thickness(12, 9, 12, 10) };
-        outerGrid.Children.Add(body);
-
-        // ── Top strip: [TYPE] Lv x / y ............ FORGED BY / Name ──
-        // Forged-by takes the game's two-line form (small label over the
-        // name) and every pixel the left group doesn't use, so a long forger
-        // name isn't squeezed by an inline "forged by" prefix.
-        var top = new Grid();
-        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        top.ColumnDefinitions.Add(new ColumnDefinition());
-
-        var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Top };
-        left.Children.Add(new Border
-        {
-            CornerRadius = new CornerRadius(3),
-            Padding = new Thickness(6, 1, 6, 1),
-            Margin = new Thickness(0, 0, 8, 0),
-            Background = new SolidColorBrush(Color.FromArgb(46, tColor.R, tColor.G, tColor.B)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(110, tColor.R, tColor.G, tColor.B)),
-            BorderThickness = new Thickness(1),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
-            {
-                Text = TypeLabel(u.EquipmentType).ToUpperInvariant(),
-                FontSize = 8,
-                FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(tColor)
-            }
-        });
-        left.Children.Add(new TextBlock
-        {
-            Text = "Lv " + u.Level.ToString("N0") + " / " + u.MaxLevel.ToString("N0"),
-            FontSize = 9.5,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = textSecondary,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        top.Children.Add(left);
-
-        if (!string.IsNullOrWhiteSpace(ci.ForgerName))
-        {
-            // The game's two-line form: a small FORGED BY label over the name,
-            // right-aligned, and the name keeps its own line breaks (a coloured
-            // two-line forger is common). The strip may grow on THIS side only:
-            // the tag/level group is pinned to the top, so it never slides down
-            // with a taller forged-by block — that slide was the earlier bug,
-            // not the second line itself.
-            var forged = new StackPanel
-            {
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(10, 0, 0, 0)
-            };
-            forged.Children.Add(new TextBlock
-            {
-                Text = "FORGED BY",
-                FontSize = 7.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = textMuted,
-                HorizontalAlignment = HorizontalAlignment.Right
-            });
-            var forger = new TextBlock
-            {
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                TextAlignment = TextAlignment.Right,
-                TextWrapping = TextWrapping.Wrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                LineHeight = 13,
-                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-                MaxHeight = 13 * 3   // three lines at most; beyond that, trim
-            };
-            AppendColorRuns(forger, ci.ForgerName, textSecondary);
-            forged.Children.Add(forger);
-            Grid.SetColumn(forged, 1);
-            top.Children.Add(forged);
-        }
-        body.Children.Add(top);
-
-        // ── Name, centred. Custom names can carry <color> runs too. ──
-        var name = new TextBlock
-        {
-            FontSize = 14.5,
-            FontWeight = FontWeights.SemiBold,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxHeight = 40,
-            Margin = new Thickness(0, 6, 0, 0)
-        };
-        AppendColorRuns(name, string.IsNullOrWhiteSpace(ci.Name) ? "(unnamed)" : ci.Name, textPrimary);
-        body.Children.Add(name);
-
-        // ── "Ultimate++ The last gift bestowed to Etheria" ──
-        var desc = new TextBlock
-        {
-            FontSize = 10,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            LineHeight = 13.5,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            MaxHeight = 13.5 * 3,
-            Margin = new Thickness(4, 2, 4, 0)
-        };
-        string qualityText = QualityDisplay.Name(u.Quality2);
-        if (u.Quality3 != Quality3.None) qualityText += " " + u.Quality3;
-        desc.Inlines.Add(new System.Windows.Documents.Run(qualityText) { Foreground = qBrush, FontWeight = FontWeights.Bold });
-
-        // The watermark line is lifted out of the description and drawn on
-        // its own line below, outside the three-line cap — a long or coloured
-        // description would otherwise push it out of view, which reads as
-        // "the watermark wasn't applied" when it was.
-        string descText = ColorMarkup.NormalizeNewlines(ci.Description);
-        string? markLine = null;
-        if (Watermark.IsMarked(descText))
-        {
-            var lines = descText.Split('\n').ToList();
-            int mi = lines.FindIndex(Watermark.IsMarked);
-            if (mi >= 0) { markLine = lines[mi]; lines.RemoveAt(mi); descText = string.Join("\n", lines).Trim('\n'); }
-        }
-        if (!string.IsNullOrWhiteSpace(descText))
-        {
-            desc.Inlines.Add(new System.Windows.Documents.Run(" "));
-            AppendColorRuns(desc, descText, textSecondary);
-        }
-        body.Children.Add(desc);
-        if (markLine != null)
-        {
-            var mark = new TextBlock
-            {
-                FontSize = 9.5,
-                TextAlignment = TextAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(4, 2, 4, 0)
-            };
-            AppendColorRuns(mark, markLine, textMuted);
-            body.Children.Add(mark);
-        }
-
-        // ── Stat rows ──
-        // Weapons AND familiars (pets) carry damage; everything else shows
-        // the four resistances.
-        bool isDamageItem = u.EquipmentType == EquipmentType.Weapon
-                         || u.EquipmentType == EquipmentType.Familiar;
-        if (isDamageItem)
-        {
-            AddIconRow(body, new (string?, string, int)[]
-            {
-                ("/Assets/Icons/weapon_damage.png",  "Attack",    u.Damage),
-                ("/Assets/Icons/weapon_ranged.png",  "Ranged",    u.RangedDamage),
-                ("/Assets/Icons/resist_generic.png", "Elemental", u.ElementalDamage?.Value ?? 0),
-            }, round: true, plus: false, iconSize: 28, fontSize: 13);
-        }
-        else
-        {
-            AddIconRow(body, new (string?, string, int)[]
-            {
-                ("/Assets/Icons/resist_generic.png",   "Generic",   u.Generic?.Value   ?? 0),
-                ("/Assets/Icons/resist_poison.png",    "Poison",    u.Poison?.Value    ?? 0),
-                ("/Assets/Icons/resist_fire.png",      "Fire",      u.Fire?.Value      ?? 0),
-                ("/Assets/Icons/resist_lightning.png", "Lightning", u.Lightning?.Value ?? 0),
-            }, round: true, plus: false, iconSize: 28, fontSize: 13);
-        }
-        AddIconRow(body, new (string?, string, int)[]
-        {
-            ("/Assets/Icons/hero_health.png",  "Health",  u.HeroHealth),
-            ("/Assets/Icons/hero_speed.png",   "Speed",   u.HeroSpeed),
-            ("/Assets/Icons/hero_damage.png",  "Damage",  u.HeroDamage),
-            ("/Assets/Icons/hero_casting.png", "Casting", u.HeroCasting),
-        }, round: false, plus: true, iconSize: 22, fontSize: 12);
-        AddIconRow(body, new (string?, string, int)[]
-        {
-            ("/Assets/Icons/tower_health.png", "Health", u.TowerHealth),
-            ("/Assets/Icons/tower_speed.png",  "Speed",  u.TowerSpeed),
-            ("/Assets/Icons/tower_damage.png", "Damage", u.TowerDamage),
-            ("/Assets/Icons/tower_range.png",  "Range",  u.TowerRange),
-        }, round: false, plus: true, iconSize: 22, fontSize: 12);
-        AddIconRow(body, new (string?, string, int)[]
-        {
-            ("/Assets/Icons/weapon_knockback.png",   "Knockback",   u.Knockback),
-            ("/Assets/Icons/weapon_projectiles.png", "Projectiles", u.NumberOfProjectiles),
-            ("/Assets/Icons/weapon_projspeed.png",   "Proj Spd",    u.SpeedOfProjectiles),
-            ("/Assets/Icons/weapon_shotspersec.png", "Shots/s",     u.ShotsPerSecond),
-            ("/Assets/Icons/weapon_reload.png",      "Reload",      u.ReloadSpeed),
-            ("/Assets/Icons/weapon_chargespeed.png", "Charge",      u.ChargeSpeed),
-            ("/Assets/Icons/weapon_clipammo.png",    "Clip",        u.ClipAmmo),
-            ("/Assets/Icons/weapon_blocking.png",    "Block",       u.Blocking),
-        }, round: true, plus: true, iconSize: 22, fontSize: 12);
-
-        // ── Selection checkmark ──
-        if (isSelected)
-            SetSelectionMarker(card, true);
-
-        // ── Hover ──
-        card.MouseEnter += (s, e) => { if (!selectedAddresses.Contains(ci.Address)) card.Background = (Brush)FindResource("SurfaceLighterBrush"); };
-        card.MouseLeave += (s, e) => { if (!selectedAddresses.Contains(ci.Address)) card.Background = (Brush)FindResource("SurfaceLightBrush"); };
+        var card = ItemCard.Build(ci, isSelected);
+        ItemCard.AddFooterButton(card, "\uE8F1", "ADD TO TEMPLATES",
+            "Save this item to the template library (Templates tab).", () => AddToTemplates(ci));
 
         // ── Click ──
         // Mutate only the clicked card's visuals + the set — rebuilding
@@ -1347,7 +961,7 @@ public partial class ForgeViewerView : UserControl
                     selectedAddresses.Add(ci.Address);
                     nowSelected = true;
                 }
-                ApplySelectedVisual(card, nowSelected);
+                ItemCard.SetSelected(card, nowSelected);
                 UpdateBulkButton();
                 UpdateSelectionStatus();
             }
@@ -1357,113 +971,31 @@ public partial class ForgeViewerView : UserControl
         return card;
     }
 
-    // DD1 <color:r,g,b> runs → coloured inlines. Uncoloured text takes
-    // `defaultBrush`; newlines inside a run become LineBreaks.
-    private static void AppendColorRuns(TextBlock target, string markup, Brush defaultBrush, FontWeight? weight = null)
+    // Saves one card's item to the template library. Identity and session
+    // come from the scan that drew the card, so an item sold or replaced
+    // since then is refused instead of being captured as something else.
+    private async void AddToTemplates(CachedItem ci)
     {
-        foreach (ColorRun r in ColorMarkup.Parse(markup))
+        if (_templateCapture || Window.GetWindow(this) is not Modinator.MainWindow main || !Base.OpenProcess()) return;
+        _templateCapture = true;
+        var identity = new ItemIdentity(ci.EquipmentTemplate, ci.EquipmentID1, ci.EquipmentID2);
+        var session = _scanSession;
+        LblStatus.Text = "Reading item for the template library…";
+        try
         {
-            string[] lines = r.Text.Split('\n');
-            for (int i = 0; i < lines.Length; i++)
-            {
-                if (i > 0) target.Inlines.Add(new System.Windows.Documents.LineBreak());
-                if (lines[i].Length == 0) continue;
-                var run = new System.Windows.Documents.Run(lines[i])
-                {
-                    Foreground = r.HasColor ? new SolidColorBrush(Color.FromRgb(r.R, r.G, r.B)) : defaultBrush
-                };
-                if (weight is FontWeight w) run.FontWeight = w;
-                target.Inlines.Add(run);
-            }
+            var entry = await System.Threading.Tasks.Task.Run(() => main.ReadForDupe(_ =>
+                ItemTemplateCapture.Capture(ci.Address, identity, session, System.Threading.CancellationToken.None)));
+            var editor = new ItemTemplateEditDialog(entry, isNew: true) { Owner = main };
+            LblStatus.Text = editor.ShowDialog() == true
+                ? "Template saved: " + editor.Saved!.Name
+                : "Template not saved.";
         }
-    }
-
-    // One rule-separated row of icon tiles, four to a line, wrapping past
-    // four. Zero-valued stats are omitted and the rest pack left.
-    private void AddIconRow(Panel body, (string? icon, string label, int value)[] slots,
-                            bool round, bool plus, double iconSize, double fontSize)
-    {
-        bool any = false;
-        foreach (var s in slots) if (s.value != 0) { any = true; break; }
-        if (!any) return;
-
-        body.Children.Add(new Border
+        catch (Exception ex)
         {
-            Height = 1,
-            Background = (Brush)FindResource("BorderBrush"),
-            Opacity = 0.55,
-            Margin = new Thickness(0, 8, 0, 8)
-        });
-        var grid = new System.Windows.Controls.Primitives.UniformGrid { Columns = 4 };
-        foreach (var (icon, label, value) in slots)
-        {
-            if (value == 0) continue;
-            grid.Children.Add(MakeIconTile(icon, label, value, round, plus, iconSize, fontSize));
+            LblStatus.Text = "Template not saved: " + ex.Message;
+            Base.RaiseMessage("That item could not be saved as a template.\n\n" + ex.Message, "Add to templates");
         }
-        body.Children.Add(grid);
-    }
-
-    // Icon over number over a small label, centred. Round for an item's own
-    // stats (damage / resists / weapon extras), square for hero and tower
-    // bonuses — the same visual grammar the game's panel uses.
-    private FrameworkElement MakeIconTile(string? iconPath, string label, int value,
-                                          bool round, bool plus, double iconSize, double fontSize)
-    {
-        var col = new StackPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 2),
-            // Exact value on hover — load-bearing once large values are
-            // compacted to "50K" / "12.5M" on the face.
-            ToolTip = label + ": " + value.ToString("N0")
-        };
-
-        ImageBrush? iconBrush = GetStatIconBrush(iconPath);
-        if (iconBrush != null)
-        {
-            col.Children.Add(new Border
-            {
-                Width = iconSize,
-                Height = iconSize,
-                CornerRadius = new CornerRadius(round ? iconSize / 2 : 4),
-                Background = iconBrush,
-                HorizontalAlignment = HorizontalAlignment.Center
-            });
-        }
-        else
-        {
-            col.Children.Add(new TextBlock
-            {
-                Text = ((char)0x2726).ToString(), // four-pointed star placeholder
-                FontSize = iconSize - 8,
-                Height = iconSize,
-                Foreground = (Brush)FindResource("AccentBrush"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                TextAlignment = TextAlignment.Center
-            });
-        }
-
-        var number = new TextBlock
-        {
-            Text = (plus && value > 0 ? "+" : "") + FormatStatValue(value),
-            FontSize = fontSize,
-            FontWeight = FontWeights.Bold,
-            Foreground = (Brush)FindResource("TextPrimaryBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 3, 0, 0)
-        };
-        System.Windows.Documents.Typography.SetNumeralAlignment(number, FontNumeralAlignment.Tabular);
-        col.Children.Add(number);
-
-        col.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontSize = 8,
-            Foreground = (Brush)FindResource("TextMutedBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, -1, 0, 0)
-        });
-        return col;
+        finally { _templateCapture = false; }
     }
 
     internal static string FormatStatValue(int v)
@@ -1482,32 +1014,6 @@ public partial class ForgeViewerView : UserControl
             return (k == Math.Floor(k) ? k.ToString("0") : k.ToString("0.#")) + "K";
         }
         return v.ToString("N0");
-    }
-
-    private ImageBrush? GetStatIconBrush(string? iconPath)
-    {
-        if (iconPath == null) return null;
-        if (_statIconBrushes.TryGetValue(iconPath, out ImageBrush? cached)) return cached;
-
-        try
-        {
-            var bmp = new System.Windows.Media.Imaging.BitmapImage();
-            bmp.BeginInit();
-            bmp.UriSource = new Uri("pack://application:,,," + iconPath, UriKind.Absolute);
-            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-            bmp.EndInit();
-            bmp.Freeze();
-
-            var brush = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
-            brush.Freeze();
-            _statIconBrushes[iconPath] = brush;
-            return brush;
-        }
-        catch
-        {
-            _statIconBrushes[iconPath] = null;
-            return null;
-        }
     }
 
     // Centered placeholder shown whenever no cards are on screen: a pre-scan
@@ -1560,38 +1066,10 @@ public partial class ForgeViewerView : UserControl
         return s;
     }
 
-    private static int StatTotal(ItemUser u)
-    {
-        return u.HeroHealth + u.HeroSpeed + u.HeroDamage + u.HeroCasting + u.HeroSkill1 + u.HeroSkill2
-            + u.TowerHealth + u.TowerSpeed + u.TowerDamage + u.TowerRange;
-    }
-
-    // Everything the search box matches against. Beyond the free text it
-    // covers what a user actually types to find gear: quality ("ultimate",
-    // "supreme"), the type both raw and as the card shows it ("ArmorBoots"
-    // / "Boots"), the base (archetype) name, and the folder name.
+    // One home for the search text (ItemCard) so the pickers match the same
+    // things the Forge search box does.
     private static string BuildSearchHaystack(CachedItem ci, Dictionary<int, string> folderNames)
-    {
-        var sb = new StringBuilder(192);
-        sb.Append(ci.Name ?? "").Append(' ');
-        sb.Append(ci.BaseName ?? "").Append(' ');
-        sb.Append(ci.Description ?? "").Append(' ');
-        sb.Append(ci.ForgerName ?? "").Append(' ');
-        sb.Append(QualityDisplay.Name(ci.User.Quality2)).Append(' ');
-        if (ci.User.Quality3 != Quality3.None) sb.Append(ci.User.Quality3).Append(' ');
-        sb.Append(ci.User.EquipmentType).Append(' ');
-        sb.Append(TypeLabel(ci.User.EquipmentType)).Append(' ');
-        if (folderNames.TryGetValue(ci.FolderID, out string? folder) && !string.IsNullOrEmpty(folder))
-            sb.Append(folder).Append(' ');
-        sb.Append("Level ").Append(ci.User.Level).Append(' ');
-        sb.Append("MaxLevel ").Append(ci.User.MaxLevel);
-        return sb.ToString();
-    }
-
-    private static int QualityRank(Quality2 q)
-    {
-        return QualityDisplay.Rank(q);
-    }
+        => ItemCard.SearchText(ci, folderNames.TryGetValue(ci.FolderID, out string? folder) ? folder : null);
 
     // internal: HeroViewerView reuses it for equipment-row quality dots.
     internal static Color GetAccentColor(Quality2 q) => QualityColors.Get(q);
@@ -1645,131 +1123,19 @@ public partial class ForgeViewerView : UserControl
         catch { return string.Empty; }
     }
 
-    private static bool LooksLikeRealName(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return false;
-        if (s.Length < 2 || s.Length > 80) return false;
-        int printable = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if (c >= 0x20 && c < 0x7F) printable++;
-            else if (c >= 0xA0 && c < 0xFFFE) printable++;
-        }
-        return printable >= s.Length - 1;
-    }
-
-    private static bool LooksLikeItemName(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return false;
-        if (s.Length < 3 || s.Length > 60) return false;
-        int letters = 0, spaces = 0, others = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            char c = s[i];
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) letters++;
-            else if (c == ' ' || c == '\'' || c == '-') spaces++;
-            else others++;
-        }
-        if (letters < s.Length / 2) return false;
-        if (others > 2) return false;
-        if (!char.IsLetter(s[0])) return false;
-        return true;
-    }
-
-    private static string? ScanMemoryForName(int centerAddr, int radiusBefore, int radiusAfter)
+    // The game's own naming data (ItemNames): custom name → rolled base name
+    // from the item's RandomBaseNames table → archetype name. Replaced
+    // (2026-09-27) a chain that showed the archetype PLACEHOLDER ("Gauntlet
+    // Base") for every unnamed generated item and, when all strings were
+    // blank, a heuristic scan of nearby memory that returned unrelated text.
+    private static string SafeReadName(int address, ItemNative native, ItemUser user)
     {
         try
         {
-            // Unsigned math: DD1 is LARGEADDRESSAWARE, so an item above 2 GB
-            // has a NEGATIVE int address. Signed `centerAddr - radiusBefore`
-            // went negative, tripped the low-address clamp, and the fallback
-            // silently scanned from 0x10000 instead of around the item.
-            long start = (long)(uint)centerAddr - radiusBefore;
-            if (start < 0x10000) start = 0x10000;
-            int size = radiusBefore + radiusAfter;
-            if (size <= 0) return null;
-
-            byte[] block;
-            try { block = Base.Instance.ReadMemory(unchecked((int)(uint)start), size); }
-            catch { return null; }
-
-            // NativeArray pointer scan, 4-byte aligned
-            for (int off = 0; off + 12 <= block.Length; off += 4)
-            {
-                int ptr = BitConverter.ToInt32(block, off);
-                int curLen = BitConverter.ToInt32(block, off + 4);
-                int maxLen = BitConverter.ToInt32(block, off + 8);
-
-                if ((uint)ptr < 0x100000u) continue;
-                if ((ptr & 1) != 0) continue;
-                if (curLen < 3 || curLen > 80) continue;
-                if (maxLen < curLen || maxLen > 256) continue;
-
-                try
-                {
-                    byte[] strBytes = Base.Instance.ReadMemory(ptr, (curLen - 1) * 2);
-                    string s = Encoding.Unicode.GetString(strBytes);
-                    if (LooksLikeItemName(s)) return s;
-                }
-                catch { }
-            }
-
-            // Inline UTF-16 string scan, 2-byte aligned
-            for (int off = 0; off + 10 <= block.Length; off += 2)
-            {
-                int maxChars = Math.Min(80, (block.Length - off) / 2);
-                int len = 0;
-                bool ok = true;
-                while (len < maxChars)
-                {
-                    ushort c = (ushort)(block[off + len * 2] | (block[off + len * 2 + 1] << 8));
-                    if (c == 0) break;
-                    if (c < 0x20 || c >= 0x7F) { ok = false; break; }
-                    len++;
-                }
-                if (!ok || len < 5 || len > 60) continue;
-                string s = Encoding.Unicode.GetString(block, off, len * 2);
-                if (LooksLikeItemName(s)) return s;
-            }
+            string name = ItemNames.DisplayName(address - 0x38);
+            if (!string.IsNullOrWhiteSpace(name)) return name;
         }
         catch { }
-        return null;
-    }
-
-    private static string SafeReadName(int address, ItemNative native, ItemUser user)
-    {
-        string custom = SafeReadUni(address, "EquipmentName");
-        if (!string.IsNullOrWhiteSpace(custom)) return custom;
-
-        string baseName = SafeReadUni(address, "BaseEquipmentName");
-        if (!string.IsNullOrWhiteSpace(baseName)) return baseName;
-
-        int tmpl = native.EquipmentTemplate;
-        if ((uint)tmpl >= 0x100000u && (tmpl & 3) == 0)
-        {
-            int archetypeProps = tmpl + 56;
-            string tmplBase = SafeReadUni(archetypeProps, "BaseEquipmentName");
-            if (!string.IsNullOrWhiteSpace(tmplBase)) return tmplBase;
-            string tmplName = SafeReadUni(archetypeProps, "EquipmentName");
-            if (!string.IsNullOrWhiteSpace(tmplName)) return tmplName;
-            string tmplBase2 = SafeReadUni(tmpl, "BaseEquipmentName");
-            if (!string.IsNullOrWhiteSpace(tmplBase2)) return tmplBase2;
-            string tmplName2 = SafeReadUni(tmpl, "EquipmentName");
-            if (!string.IsNullOrWhiteSpace(tmplName2)) return tmplName2;
-        }
-
-        string descr = SafeReadUni(address, "Description");
-        if (!string.IsNullOrWhiteSpace(descr)) return descr;
-
-        string? scanned = ScanMemoryForName(address, 256, 2048);
-        if (scanned != null) return scanned;
-
-        if ((uint)tmpl >= 0x100000u && (tmpl & 3) == 0)
-        {
-            string? archScanned = ScanMemoryForName(tmpl, 256, 2048);
-            if (archScanned != null) return archScanned;
-        }
 
         string typeLabel = user.EquipmentType.ToString();
         if (typeLabel.StartsWith("Armor"))

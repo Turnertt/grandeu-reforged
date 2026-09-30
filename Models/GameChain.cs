@@ -58,8 +58,33 @@ internal static class GameChain
     public static int ActiveHeroesOffset => Tunables.LocalHeroesOffset + 0xC;
     public static int HeroManagerOffset  => Tunables.HeroManagerOffset;
 
+    // The live HeroManager through the game's own object list — by class
+    // and package name, with no character, WorldInfo sweep or pawn pick
+    // involved (2026-09-27; GameReflection.FindLiveHeroManager). This is
+    // the primary route for Forge / Hero: it works in menus, on a client,
+    // with a modded-HP hero the pawn gates would reject, and when the
+    // player's pawn sits in a region the sweep skips. Keeps the pinned
+    // TheHeroManager hop in step so the chain route and the diagnostic
+    // report agree. 0 = unavailable → callers fall back to the chain.
+    public static int ResolveHeroManagerByObjectList()
+    {
+        int hm = GameReflection.FindLiveHeroManager();
+        if (!IsGamePtr(hm)) return 0;
+        int vp = GameReflection.ViewportClient;
+        int hop = vp != 0 ? GameReflection.FieldOffset(vp, "TheHeroManager") : -1;
+        if (hop > 0 && RdPtr(vp + hop) == hm && hop != HeroManagerOffset) Tunables.PinHeroManagerOffset(hop);
+        Base.Log($"Chain: HeroManager 0x{hm:X8} via object list (hop {(hop > 0 ? $"+0x{hop:X}" : "unknown")})");
+        return hm;
+    }
+
     public static int ResolveHeroManager(int playerPawn)
     {
+        // Object-list route first: identity by name beats every content
+        // check below, and it needs none of the chain. The chain remains the
+        // fallback for a build where the object table can't be found.
+        int byList = ResolveHeroManagerByObjectList();
+        if (byList != 0) return byList;
+
         if (!IsGamePtr(playerPawn)) { Base.Log("Chain: playerPawn=0 (no character resolved)"); return 0; }
         int controller = RdPtr(playerPawn + OFF_PAWN_CONTROLLER);
         int player     = RdPtr(controller + OFF_CONTROLLER_PLAYER);
@@ -80,13 +105,34 @@ internal static class GameChain
             return 0;
         }
 
+        // Reflection first: the game's own UProperty table names the hop, and
+        // the target is identified by NAME (Transient.DunDefHeroManager_*),
+        // not by what its arrays contain. Falls through to the content
+        // checks below when reflection is unavailable or can't confirm.
+        if (GameReflection.EnsureTrusted(playerPawn, controller, player))
+        {
+            int rHop = GameReflection.FieldOffset(vpClient, "TheHeroManager");
+            int rHm  = rHop > 0 ? RdPtr(vpClient + rHop) : 0;
+            if (rHop > 0 && GameReflection.IsLiveHeroManager(rHm) == true)
+            {
+                if (rHop != HeroManagerOffset) Tunables.PinHeroManagerOffset(rHop);
+                return rHm;
+            }
+            Base.LogEvent($"Reflection: TheHeroManager @0x{rHop:X} -> 0x{rHm:X8} not confirmed live — using content checks");
+        }
+
         // Fast path: the pinned/default hop still points at an object that
-        // verifiably CONTAINS the hero arrays or the forge box (this also
-        // rejects the HeroManagerTemplate archetype one field below, whose
-        // arrays are empty defaults).
+        // verifiably CONTAINS the hero-array pair. Only the hero pair is
+        // trusted here. A box-only match is NOT: the
+        // HeroManagerTemplate one slot below carries equipment-archetype
+        // arrays, and on 2026-09-26 a stale-default discovery pinned
+        // +0xCF8 (the template) + ItemBoxOffset +0x294 (its archetype
+        // array), after which this fast path accepted the template on
+        // every scan. The template's roster is always empty, so a box-only
+        // hit goes through the ranked discovery below instead.
         int off = HeroManagerOffset;
         int hm  = RdPtr(vpClient + off);
-        if (LooksLikeHeroManager(hm)) return hm;
+        if (IsGamePtr(hm) && IsHeroPairAt(hm, LocalHeroesOffset)) return hm;
 
         // Self-heal: a patch inserted fields into UDunDefViewportClient and
         // moved the hop. Rescan the window for a pointer whose target
@@ -95,7 +141,13 @@ internal static class GameChain
         if (found != 0)
         {
             if (found != off) Tunables.PinHeroManagerOffset(found);
-            return RdPtr(vpClient + found);
+            int winner = RdPtr(vpClient + found);
+            // Usually we got here because the hero-pair offset is stale (the
+            // hop itself rarely moves). Heal + pin it now so the next resolve
+            // takes the fast path instead of re-ranking the window. Safe: a
+            // pair is only found on the real manager.
+            EnsureHeroPairOffset(winner);
+            return winner;
         }
         // Nothing verifiable (menu/loading — arrays legitimately empty, or
         // a transient stale read). Return the raw hop like the original
@@ -105,14 +157,21 @@ internal static class GameChain
 
     // An object that reads as THE live HeroManager: real UObject vtable +
     // verifiable content (the hero-array pair or the forge box at their
-    // pinned/default offsets). Content, not identity — an archetype/copy
-    // with empty arrays fails.
+    // pinned/default offsets, else a hero pair anywhere in its window).
+    // Content, not identity — an archetype/copy with empty arrays fails.
+    // The discovery leg matters on a fresh install: until the hero offset
+    // is pinned (or if the pin write fails), the pinned-offset legs fail on
+    // the real manager too, and Item Dupe refused "inventory unavailable".
+    // Read-only — nothing is pinned from here (the target may be the
+    // template, which never has a hero pair).
     private static bool LooksLikeHeroManager(int hm)
     {
         if (!IsGamePtr(hm)) return false;
         uint vtable = (uint)RdInt(hm);
         if (vtable < 0x00400000u || vtable >= 0x02000000u) return false;
-        return IsHeroPairAt(hm, LocalHeroesOffset) || IsItemBoxAt(hm, ItemBoxOffset);
+        return IsHeroPairAt(hm, LocalHeroesOffset) ||
+               IsItemBoxAt(hm, ItemBoxOffset, ItemBoxFloor(LocalHeroesOffset)) ||
+               DiscoverHeroArraysOffset(hm) != 0;
     }
 
     // Public form of the content gate. Callers need this to tell "the hop
@@ -124,7 +183,8 @@ internal static class GameChain
     // user (CALIBRATE) has to check this too. The trap it guards against is
     // concrete: HeroManagerTemplate sits at vpClient+0xCF8, one slot below the
     // real hop, with the same vtable and empty arrays.
-    public static bool IsVerifiedHeroManager(int hm) => LooksLikeHeroManager(hm);
+    public static bool IsVerifiedHeroManager(int hm) =>
+        GameReflection.IsLiveHeroManager(hm) == true || LooksLikeHeroManager(hm);
 
     // Window scanned for the TheHeroManager pointer, ViewportClient-
     // relative — ±0x100 around the known +0xCFC.
@@ -141,6 +201,14 @@ internal static class GameChain
              : DiscoverHeroManagerIn(vpClient, HeroMgrScanWideStart, HeroMgrScanWideEnd);
     }
 
+    // RANKED, never first-hit. Scanning upward, HeroManagerTemplate
+    // (+0xCF8) comes before the real hop (+0xCFC), shares its vtable, and
+    // its archetype arrays can pass the box fingerprint — first-hit
+    // discovery pinned it on 2026-09-26. Every candidate is scored and the
+    // best wins: a verified hero pair beats any box-only match (the
+    // template's roster is always empty), then the larger roster, then the
+    // larger fingerprint-verified box (the real box is ~1000+ items, the
+    // template's archetype array ~292).
     private static int DiscoverHeroManagerIn(int vpClient, int scanStart, int scanEnd)
     {
         if (!IsGamePtr(vpClient)) return 0;
@@ -150,30 +218,60 @@ internal static class GameChain
         catch { win = null; }
         if (win == null || win.Length < winLen) return 0;
 
-        // Pass 1 — cheap: the hop moved but the array offsets didn't.
+        // Pass 1 — cheap: the hop moved but the hero-pair offset didn't.
+        int bestOff = 0, bestHeroes = 0;
         for (int off = scanStart; off <= scanEnd; off += 4)
         {
             int hm = System.BitConverter.ToInt32(win, off - scanStart);
-            if (LooksLikeHeroManager(hm))
-            {
-                Base.Log($"HeroMgr: hop relocated to ViewportClient+0x{off:X} (content-verified)");
-                return off;
-            }
+            if (!IsGamePtr(hm) || !IsHeroPairAt(hm, LocalHeroesOffset)) continue;
+            int n = RdInt(hm + LocalHeroesOffset + 4);
+            if (n > bestHeroes) { bestHeroes = n; bestOff = off; }
         }
-        // Pass 2 — deep: the hop AND the array offsets moved in the same
-        // patch. Accept a target in which the hero pair or the box is
-        // discoverable anywhere in their own windows.
+        if (bestOff != 0)
+        {
+            Base.Log($"HeroMgr: hop at ViewportClient+0x{bestOff:X} (hero pair verified, {bestHeroes} heroes)");
+            return bestOff;
+        }
+
+        // Pass 2 — deep: no in-play hero (menus) or the array offsets moved
+        // too. Score every object by discovered hero roster, then by
+        // fingerprint-verified box size.
+        int bestBox = 0, runnerBox = 0;
+        bestHeroes = 0; bestOff = 0;
         for (int off = scanStart; off <= scanEnd; off += 4)
         {
             int hm = System.BitConverter.ToInt32(win, off - scanStart);
             if (!IsGamePtr(hm)) continue;
             uint vtable = (uint)RdInt(hm);
             if (vtable < 0x00400000u || vtable >= 0x02000000u) continue;
-            if (DiscoverHeroArraysOffset(hm) != 0 || DiscoverItemBox(hm).pairVerified)
+
+            int h = DiscoverHeroArraysOffset(hm);
+            int heroes = h != 0 ? RdInt(hm + h + 4) : 0;
+            // Explicit floor: this candidate may be the template, so the
+            // default (which heals + pins the hero offset) must not run.
+            var box = DiscoverItemBox(hm, ItemBoxFloor(h != 0 ? h : LocalHeroesOffset));
+            int boxNum = box.pairVerified ? box.count : 0;
+            if (heroes == 0 && boxNum == 0) continue;
+
+            Base.Log($"HeroMgr: candidate ViewportClient+0x{off:X} heroes={heroes} box={boxNum}");
+            bool better = heroes != bestHeroes ? heroes > bestHeroes : boxNum > bestBox;
+            if (better)
             {
-                Base.Log($"HeroMgr: hop relocated to ViewportClient+0x{off:X} (deep-verified)");
-                return off;
+                if (bestHeroes == 0 && heroes == 0) runnerBox = bestBox;
+                bestHeroes = heroes; bestBox = boxNum; bestOff = off;
             }
+            else if (heroes == 0 && bestHeroes == 0 && boxNum > runnerBox)
+            {
+                runnerBox = boxNum;
+            }
+        }
+        // A box-only winner must beat every other box-only candidate
+        // outright — a tie means we can't tell the real manager from the
+        // template, and a wrong pin is sticky.
+        if (bestOff != 0 && (bestHeroes > 0 || bestBox > runnerBox))
+        {
+            Base.Log($"HeroMgr: hop at ViewportClient+0x{bestOff:X} (deep-ranked: heroes={bestHeroes} box={bestBox})");
+            return bestOff;
         }
         return 0;
     }
@@ -208,13 +306,15 @@ internal static class GameChain
     }
 
     // UE3 FString: data ptr, ArrayNum (chars incl. null), ArrayMax.
-    public static string ReadFString(int addr)
+    // maxChars: 256 suits engine names; item text passes more (a name
+    // colored letter by letter costs ~27 characters a letter).
+    public static string ReadFString(int addr, int maxChars = 256)
     {
         try
         {
             int ptr = RdPtr(addr);
             int num = RdInt(addr + 4);
-            if (!IsGamePtr(ptr) || num <= 1 || num > 256) return "";
+            if (!IsGamePtr(ptr) || num <= 1 || num > maxChars) return "";
             byte[]? b = Base.Instance.ReadMemory(ptr, (num - 1) * 2);
             if (b == null) return "";
             return System.Text.Encoding.Unicode.GetString(b).TrimEnd('\0');
@@ -246,6 +346,21 @@ internal static class GameChain
     // next field is another equipment array (the next page, or the box).
     // That adjacency fingerprint is required before anything is PINNED; a
     // score-only match is used for display at most, never saved.
+    //
+    // POSITION RULE (2026-09-26): the fingerprint alone is not unique. The
+    // SDK declares UDunDefHeroManager's fields in the order LocalLoadedHeroes,
+    // ActiveHeroes, ShopEquipments[3], ItemBoxEquipments, ItemBoxEntries —
+    // so the box always sits ABOVE the hero-array pair. Patches insert
+    // fields; they have never reordered them. Below the pair, at +0x294 on
+    // the 2026-06 build, sits AdditionalReferences (SDK 0x288 + the +0xC
+    // shift): 292 equipment archetypes followed by the non-equipment
+    // MultiplayerModeImages array, i.e. a perfect fingerprint match. It was
+    // pinned on 2026-09-26, and because a pinned offset that verifies is
+    // trusted before any window scan, the forge then read archetypes on
+    // every scan. Every box gate now requires off >= the pair base + 0x18.
+    private const int HeroPairSize = 0x18; // LocalLoadedHeroes + ActiveHeroes
+
+    private static int ItemBoxFloor(int heroPairOffset) => heroPairOffset + HeroPairSize;
 
     // Window scanned for the forge box, HeroManager-relative. Wide enough
     // to absorb several inserted OR removed fields around the known
@@ -276,11 +391,28 @@ internal static class GameChain
     {
         if (!IsGamePtr(heroMgr)) return new List<int>();
 
+        // Reflection first: the field NAMED ItemBoxEquipments, whatever its
+        // items look like. This is the fix for heavily modded saves, whose
+        // real box fails every "looks like a normal item" gate below.
+        int rBox = GameReflection.FieldOffset(heroMgr, "ItemBoxEquipments");
+        if (rBox > 0)
+        {
+            if (rBox != ItemBoxOffset) Tunables.PinItemBoxOffset(rBox);
+            var byName = ReadPtrArray(heroMgr + rBox);
+            Base.Log($"ItemBox: reflection +0x{rBox:X} -> {byName.Count} items");
+            return byName;
+        }
+
+        // The box must sit above the hero pair (POSITION RULE above), so
+        // locate the pair first — this also heals + pins a stale pair
+        // offset, which is what makes the floor trustworthy.
+        int floor = ItemBoxFloor(EnsureHeroPairOffset(heroMgr));
+
         // Fast path: the pinned/default offset still reads as a populated
-        // equipment array carrying the ItemBoxEntries fingerprint → it is
-        // the box, no scan needed.
+        // equipment array carrying the ItemBoxEntries fingerprint, above
+        // the hero pair → it is the box, no scan needed.
         int off = ItemBoxOffset;
-        if (IsItemBoxAt(heroMgr, off))
+        if (IsItemBoxAt(heroMgr, off, floor))
         {
             var fast = ReadPtrArray(heroMgr + off);
             Base.Log($"ItemBox: fast path OK at +0x{off:X} -> {fast.Count} items");
@@ -290,12 +422,14 @@ internal static class GameChain
         // "the box is empty" and "the box moved" and "the pinned offset is
         // reading a shop page" all look identical from the outside.
         Base.Log($"ItemBox: pinned +0x{off:X} did NOT verify " +
-                 $"(num={RdInt(heroMgr + off + 4)} entriesNum={RdInt(heroMgr + off + 0x10)}) — rediscovering");
+                 $"(num={RdInt(heroMgr + off + 4)} entriesNum={RdInt(heroMgr + off + 0x10)}" +
+                 (off < floor ? $", below the hero pair floor +0x{floor:X} — cannot be the box" : "") +
+                 ") — rediscovering");
 
         // Pinned offset no longer positively reads as the box: a patch
         // moved it, the box is simply empty, or the fingerprint
         // assumption broke. Rediscover.
-        (int found, bool verified, int count) = DiscoverItemBox(heroMgr);
+        (int found, bool verified, int count) = DiscoverItemBox(heroMgr, floor);
         // LogEvent, not Log: this single line is what identified the
         // edited-item box bug from a remote machine — it has to survive into
         // the shipped build's shareable log.
@@ -314,7 +448,10 @@ internal static class GameChain
         // Max 17) from masquerading while the box is legitimately empty
         // mid-mission, and the dominance test keeps a stale pin that
         // landed on a small look-alike from hiding a large real box.
-        List<int> current = ReadPtrArray(heroMgr + off);
+        // A pinned offset below the floor is a known look-alike (the +0x294
+        // archetype list): showing its contents as forge items is worse than
+        // showing nothing, so it reads as empty.
+        List<int> current = off >= floor ? ReadPtrArray(heroMgr + off) : new List<int>();
         if (found != 0 && found != off &&
             count >= ItemBoxLooseMinCount && count > current.Count * 4)
         {
@@ -327,9 +464,11 @@ internal static class GameChain
     }
 
     // Does this HeroManager offset read as THE box right now — a populated
-    // equipment array with the ItemBoxEntries fingerprint next door?
-    private static bool IsItemBoxAt(int heroMgr, int off)
+    // equipment array with the ItemBoxEntries fingerprint next door, above
+    // the hero pair (`floor` = pair base + 0x18)?
+    private static bool IsItemBoxAt(int heroMgr, int off, int floor)
     {
+        if (off < floor) return false;
         int data = RdPtr(heroMgr + off);
         int num  = RdInt(heroMgr + off + 4);
         int max  = RdInt(heroMgr + off + 8);
@@ -348,12 +487,23 @@ internal static class GameChain
     // Returns the best candidate offset (0 = none), whether it carries the
     // ItemBoxEntries fingerprint (only then may it be pinned), and its
     // element count. Read-only; needs a populated box to succeed — an
-    // empty box keeps the current offset.
-    public static (int offset, bool pairVerified, int count) DiscoverItemBox(int heroMgr)
+    // empty box keeps the current offset. Candidates below `floor` (the hero
+    // pair base + 0x18, POSITION RULE above) are never considered; the
+    // default locates the pair on this HeroManager (healing + pinning a
+    // stale pair offset). Callers probing an object that may NOT be the real
+    // manager must pass an explicit floor so nothing is pinned from it.
+    public static (int offset, bool pairVerified, int count) DiscoverItemBox(int heroMgr, int floor = -1)
     {
-        var r = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, false);
+        if (floor < 0)
+        {
+            // Called on the real manager: the named field is authoritative.
+            int rBox = GameReflection.FieldOffset(heroMgr, "ItemBoxEquipments");
+            if (rBox > 0) return (rBox, true, System.Math.Max(0, RdInt(heroMgr + rBox + 4)));
+            floor = ItemBoxFloor(EnsureHeroPairOffset(heroMgr));
+        }
+        var r = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, false, floor);
         if (r.pairVerified) return r;
-        var w = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd, false);
+        var w = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd, false, floor);
         if (w.pairVerified) return w;
 
         // ── Fallback tier: EDITED-ITEM saves (added 2026-09-04) ──
@@ -372,21 +522,21 @@ internal static class GameChain
         // 2336-item box, false for a 12-item box on a modded save, which
         // would lose the pin to a bigger look-alike (the documented
         // 292-element array at +0x294). If the pinned/default offset itself
-        // passes the lenient gate + fingerprint, that is the answer.
-        if (IsItemBoxAt(heroMgr, ItemBoxOffset))
+        // passes the lenient gate + fingerprint + floor, that is the answer.
+        if (IsItemBoxAt(heroMgr, ItemBoxOffset, floor))
         {
             int pinnedCount = RdInt(heroMgr + ItemBoxOffset + 4);
             Base.Log($"ItemBox: LENIENT tier — pinned +0x{ItemBoxOffset:X} verifies ({pinnedCount} items); keeping it");
             return (ItemBoxOffset, true, pinnedCount);
         }
-        var lr = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, true);
+        var lr = DiscoverItemBoxIn(heroMgr, ItemBoxScanStart, ItemBoxScanEnd, true, floor);
         if (lr.pairVerified && lr.count >= ItemBoxLooseMinCount)
         {
             Base.Log($"ItemBox: LENIENT tier matched +0x{lr.offset:X} ({lr.count} items) — " +
                      "strict value ranges rejected every candidate (edited items?)");
             return lr;
         }
-        var lw = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd, true);
+        var lw = DiscoverItemBoxIn(heroMgr, ItemBoxScanWideStart, ItemBoxScanWideEnd, true, floor);
         if (lw.pairVerified && lw.count >= ItemBoxLooseMinCount)
         {
             Base.Log($"ItemBox: LENIENT tier matched +0x{lw.offset:X} ({lw.count} items, wide window)");
@@ -396,7 +546,7 @@ internal static class GameChain
     }
 
     private static (int offset, bool pairVerified, int count) DiscoverItemBoxIn(
-        int heroMgr, int scanStart, int scanEnd, bool lenient)
+        int heroMgr, int scanStart, int scanEnd, bool lenient, int floor)
     {
         if (!IsGamePtr(heroMgr)) return (0, false, 0);
 
@@ -412,6 +562,7 @@ internal static class GameChain
         int looseOff = 0, looseNum = 0;         // equipment-only tier
         for (int off = scanStart; off <= scanEnd; off += 4)
         {
+            if (off < floor) continue; // below the hero pair — never the box
             int i    = off - scanStart;
             int data = System.BitConverter.ToInt32(win, i);
             int num  = System.BitConverter.ToInt32(win, i + 4);
@@ -432,8 +583,13 @@ internal static class GameChain
             int pMax  = System.BitConverter.ToInt32(win, i + 0x14);
             // NotEquipment, not !Equipment: an unreadable neighbour must not
             // count as "the entries array is next door" (see ClassifyArray).
+            // Neighbour judged with the LENIENT gate, always (2026-09-26): a
+            // strict "not equipment" verdict on a box of heavily MODDED items
+            // made the 3-item shop page just below it look fingerprinted, and
+            // the forge read the shop. ItemBoxEntries (FItemBoxEntry structs)
+            // is not equipment under either gate.
             bool pair = IsGamePtr(pData) && pNum > 0 && pMax >= pNum && pMax <= 200000 &&
-                        ClassifyArray(pData, pNum, lenient) == ArrayKind.NotEquipment;
+                        ClassifyArray(pData, pNum, lenient: true) == ArrayKind.NotEquipment;
 
             Base.Log($"ItemBox: candidate HeroManager+0x{off:X} num={num} pair={pair}" +
                      (lenient ? " [lenient]" : ""));
@@ -448,14 +604,17 @@ internal static class GameChain
     // TArray (ItemBoxEntries, one entry per registered user). The
     // not-equipment leg is what rejects a shop page — its neighbour is
     // more equipment. Do NOT require Num equality with the box: entries
-    // are per-user (live-verified Num=1 against a 1114-item box).
+    // are per-user (live-verified Num=1 against a large item box). The
+    // neighbour is judged with the LENIENT gate — a strict gate calls a box
+    // of heavily modded items "not equipment", which fingerprinted the
+    // 3-item shop page below it (2026-09-26).
     private static bool HasEntriesFingerprint(int heroMgr, int off)
     {
         int pData = RdPtr(heroMgr + off + 0xC);
         int pNum  = RdInt(heroMgr + off + 0x10);
         int pMax  = RdInt(heroMgr + off + 0x14);
         return IsGamePtr(pData) && pNum > 0 && pMax >= pNum && pMax <= 200000 &&
-               ClassifyArray(pData, pNum, lenient: false) == ArrayKind.NotEquipment;
+               ClassifyArray(pData, pNum, lenient: true) == ArrayKind.NotEquipment;
     }
 
     // Do this array's elements read as live UHeroEquipment*?
@@ -594,27 +753,41 @@ internal static class GameChain
     private static List<int> ReadHeroArray(int heroMgr, bool activeOnly)
     {
         if (!IsGamePtr(heroMgr)) return new List<int>();
-        int off = LocalHeroesOffset;
-        if (!IsHeroPairAt(heroMgr, off))
-        {
-            Base.Log($"HeroArrays: pinned +0x{off:X} did NOT verify " +
-                     $"(local num={RdInt(heroMgr + off + 4)} active num={RdInt(heroMgr + off + 0x10)}) — rediscovering");
-            int found = DiscoverHeroArraysOffset(heroMgr);
-            Base.Log($"HeroArrays: discovery -> offset=+0x{found:X}" +
-                     (found == 0 ? " (NOTHING verified — the dense-roster + sparse-active pair test failed)" : ""));
-            if (found != 0)
-            {
-                if (found != off) Tunables.PinLocalHeroesOffset(found);
-                off = found;
-            }
-            // else: keep the pinned/default offset — empty menus and
-            // transient stale reads must not degrade a good pin.
-        }
+        int off = EnsureHeroPairOffset(heroMgr);
         var result = activeOnly ? ReadPtrArray(heroMgr + off + 0xC)
                                 : ReadPtrArray(heroMgr + off, 8);
         Base.Log($"HeroArrays: read {(activeOnly ? "active" : "local")} at +0x{(activeOnly ? off + 0xC : off):X} " +
                  $"-> {result.Count} heroes");
         return result;
+    }
+
+    // The hero-pair base for THIS HeroManager: the pinned offset while it
+    // verifies, else rediscovered and pinned. Falls back to the pinned value
+    // when nothing verifies, so callers always get a usable offset. Also the
+    // item box's floor (POSITION RULE), which is why the box path calls it.
+    // Only call on the real manager — a found pair is pinned.
+    private static int EnsureHeroPairOffset(int heroMgr)
+    {
+        // Reflection first. The code reads ActiveHeroes as the pair base +
+        // 0xC, so only accept the named offsets while that still holds.
+        int rLocal = GameReflection.FieldOffset(heroMgr, "LocalLoadedHeroes");
+        if (rLocal > 0 && GameReflection.FieldOffset(heroMgr, "ActiveHeroes") == rLocal + 0xC)
+        {
+            if (rLocal != LocalHeroesOffset) Tunables.PinLocalHeroesOffset(rLocal);
+            return rLocal;
+        }
+        int off = LocalHeroesOffset;
+        if (IsHeroPairAt(heroMgr, off)) return off;
+        Base.Log($"HeroArrays: pinned +0x{off:X} did NOT verify " +
+                 $"(local num={RdInt(heroMgr + off + 4)} active num={RdInt(heroMgr + off + 0x10)}) — rediscovering");
+        int found = DiscoverHeroArraysOffset(heroMgr);
+        Base.Log($"HeroArrays: discovery -> offset=+0x{found:X}" +
+                 (found == 0 ? " (NOTHING verified — the dense-roster + sparse-active pair test failed)" : ""));
+        // Nothing verified: keep the pinned/default offset — empty menus and
+        // transient stale reads must not degrade a good pin.
+        if (found == 0) return off;
+        if (found != off) Tunables.PinLocalHeroesOffset(found);
+        return found;
     }
 
     // The pinned offset's fingerprint, from live reads (fast path): a
@@ -765,6 +938,11 @@ internal static class GameChain
         var sb = new System.Text.StringBuilder();
         if (!IsGamePtr(heroMgr)) return "  (no HeroManager)\n";
         const int start = 0x280, end = 0x480;
+        // Read-only: locate the hero pair without pinning (the report must
+        // never change state), then apply the same floor discovery uses.
+        int pair = IsHeroPairAt(heroMgr, LocalHeroesOffset) ? LocalHeroesOffset
+                 : DiscoverHeroArraysOffset(heroMgr);
+        int floor = ItemBoxFloor(pair != 0 ? pair : LocalHeroesOffset);
         int hits = 0;
         for (int off = start; off <= end; off += 4)
         {
@@ -786,7 +964,9 @@ internal static class GameChain
             int pNum  = RdInt(heroMgr + off + 0x10);
             bool entriesNext = IsGamePtr(pData) && pNum > 0 && !ElementsLookLikeEquipment(pData, pNum);
 
-            string tag = eq ? (entriesNext ? "EQUIPMENT +entries-next => ITEM BOX" : "equipment (shop page / lobby?)")
+            string tag = eq ? (!entriesNext ? "equipment (shop page / lobby?)"
+                               : off < floor ? "equipment +entries-next, BELOW hero pair => not the box (archetype list)"
+                               : "EQUIPMENT +entries-next => ITEM BOX")
                        : dense ? "heroes (dense => LocalLoadedHeroes)"
                        : sparse ? "heroes (sparse => ActiveHeroes)"
                        : "other";
@@ -875,7 +1055,8 @@ internal static class GameChain
             return "This tool only works on the 32-bit version of Dungeon Defenders — " +
                    "the running game is 64-bit. Switch to the 32-bit build and rescan.";
         if (playerPawn == 0)
-            return "No character found — the game looks like it's in a menu or loading screen. " +
+            return "No character found — the game looks like it's in a menu or loading screen " +
+                   "(and the game's object list didn't expose the item manager: " + GameReflection.ObjectListStatus + "). " +
                    "Go to the Tavern or a mission, then rescan. " +
                    "If that doesn't help, run CALIBRATE in Settings.";
         // The pawn resolved but the chain off it didn't. The common causes

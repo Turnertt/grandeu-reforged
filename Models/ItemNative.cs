@@ -66,7 +66,17 @@ internal struct ItemNative
 
 	public EquipmentType EquipmentType;
 
-	public byte R2;
+	// Live-verified 2026-09-27 (game UProperty offsets, DD1_INTERNALS.md §8b):
+	// bHideQualityDescriptors 0xDB, bEquipmentFeatureByte1 0xDC,
+	// bEquipmentFeatureByte2 0xDD, then two alignment bytes — FIVE bytes
+	// before PrimaryColorSets at 0xE0. The original decompile had ONE byte
+	// here and an extra int (R4) after SecondaryColorOverride, so every
+	// field from PrimaryColorSets to SecondaryColorOverride sat 4 bytes
+	// early: the "A" of each color override was really the previous
+	// field's last dword, and the real alpha was never written (the
+	// "colors render black" bug). Struct size is unchanged.
+	[MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
+	public byte[] R2;
 
 	public NativeArray PrimaryColorSets;
 
@@ -75,8 +85,6 @@ internal struct ItemNative
 	public LinearColorNative PrimaryColorOverride;
 
 	public LinearColorNative SecondaryColorOverride;
-
-	public int R4;
 
 	public int MaximumSellWorth;
 
