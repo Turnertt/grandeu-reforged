@@ -180,48 +180,14 @@ internal sealed class DupeReferenceResolver
     private void FindGlobals()
     {
         Check();
-        // GameReflection already located GNames/GObjects for this attach on
-        // the first Forge/Hero/floor scan; reuse them instead of sweeping the
-        // 15 MB module again (which also slept 1 ms per 64 KB chunk).
-        if (GameReflection.TryGetGlobals(out int namesData, out int namesCount, out int objectsHeader))
-        {
-            _namesData = namesData; _namesCount = namesCount; _objectsAddress = objectsHeader;
-            return;
-        }
-        using var process = Process.GetProcessById(_session.Pid);
-        var module = process.MainModule ?? throw new InvalidOperationException("Cannot read the game module.");
-        int start = unchecked((int)module.BaseAddress.ToInt64());
-        int size = module.ModuleMemorySize;
-        if (size < 4096 || size > 128 * 1024 * 1024) throw new InvalidDataException("Unrecognized game module.");
-        byte[] np = [0x8B, 0x0D, 0, 0, 0, 0, 0x83, 0x3C, 0x81, 0, 0x74];
-        byte[] op = [0x8B, 0, 0, 0, 0, 0, 0x8B, 0x04, 0, 0x8B, 0x40, 0, 0x25, 0, 0x02, 0, 0];
-        for (int offset = 0; offset < size && (_namesData == 0 || _objectsAddress == 0); offset += 65536)
-        {
-            Check();
-            byte[] b;
-            try { b = Base.Instance.ReadMemory(unchecked(start + offset), Math.Min(65536 + 16, size - offset)); }
-            catch { continue; }
-            for (int i = 0; i < b.Length - 16; i++)
-            {
-                if (_namesData == 0 && Matches(b, i, np, "xx????xxxxx"))
-                {
-                    int addr = BitConverter.ToInt32(b, i + 2);
-                    if (TryHeader(addr, out int data, out int count)) { _namesData = data; _namesCount = count; }
-                }
-                if (_objectsAddress == 0 && Matches(b, i, op, "x?????xx?xx?xxxxx"))
-                {
-                    int addr = BitConverter.ToInt32(b, i + 2);
-                    if (TryHeader(addr, out _, out _)) _objectsAddress = addr;
-                }
-            }
-        }
-        if (_namesData == 0) throw new InvalidOperationException("This game build's item names could not be resolved. No template was applied.");
-    }
-
-    private static bool Matches(byte[] b, int at, byte[] pattern, string mask)
-    {
-        for (int i = 0; i < mask.Length; i++) if (mask[i] == 'x' && b[at + i] != pattern[i]) return false;
-        return true;
+        // GameReflection's bootstrap is the only source (2026-10-28): pin,
+        // every signature site and a data-section scan, validated and in
+        // agreement. This resolver's own first-hit module sweep is gone — it
+        // took whichever header matched first, unvalidated beyond its shape.
+        // objectsHeader 0 is allowed: observed references are tried first.
+        if (!GameReflection.TryGetGlobals(out int namesData, out int namesCount, out int objectsHeader))
+            throw new InvalidOperationException("This game build's item names could not be resolved. No template was applied.");
+        _namesData = namesData; _namesCount = namesCount; _objectsAddress = objectsHeader;
     }
 
     private static bool TryHeader(int address, out int data, out int count)

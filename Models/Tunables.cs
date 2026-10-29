@@ -91,6 +91,10 @@ internal static class Tunables
     private const int  MaxLocalHeroesOffset = 0x800;
     private const int  MinHeroManagerOffset = 0x400;
     private const int  MaxHeroManagerOffset = 0x3000;
+    // GNames / GObjects FArray headers are statics inside the exe image
+    // (non-ASLR, base 0x00400000).
+    private const uint MinGlobalHeader = 0x00401000;
+    private const uint MaxGlobalHeader = 0x10000000;
 
     private static readonly object _gate = new();
     private static bool _loaded;
@@ -107,6 +111,14 @@ internal static class Tunables
     // lets the Auto-Kill path detect "the game updated since the pin"
     // on attach and skip the doomed fast sweep entirely.
     private static uint _gameStamp;
+    // The engine's name / object tables as last accepted by
+    // GameReflection's bootstrap, with their OWN build stamp: they are
+    // pinned by a different path than the vtable seed, and sharing one
+    // stamp would let either pin vouch for the other's build. A pin is a
+    // witness, never an override — it is honored only for the same build
+    // and only after it validates by content and agrees with the code
+    // signatures.
+    private static uint _gNamesHeader, _gObjectsHeader, _globalsStamp;
     private static string _status = "Not loaded yet";
 
     // Effective values. The getters lazily load the file on first use so
@@ -124,6 +136,12 @@ internal static class Tunables
 
     // TimeDateStamp recorded with the last pin (0 = none). See _gameStamp.
     public static uint GameTimeDateStamp { get { EnsureLoaded(); return _gameStamp; } }
+
+    // Pinned GNames / GObjects headers (0 = none) and the build they
+    // belong to. See _gNamesHeader.
+    public static uint GNamesHeader { get { EnsureLoaded(); return _gNamesHeader; } }
+    public static uint GObjectsHeader { get { EnsureLoaded(); return _gObjectsHeader; } }
+    public static uint GlobalsTimeDateStamp { get { EnsureLoaded(); return _globalsStamp; } }
 
     public static string FilePath =>
         System.IO.Path.Combine(
@@ -159,6 +177,9 @@ internal static class Tunables
         public string? LocalHeroesOffset { get; set; }
         public string? HeroManagerOffset { get; set; }
         public string? GameTimeDateStamp { get; set; }
+        public string? GNamesHeader      { get; set; }
+        public string? GObjectsHeader    { get; set; }
+        public string? GlobalsTimeDateStamp { get; set; }
         public string? Note              { get; set; }
     }
 
@@ -173,6 +194,7 @@ internal static class Tunables
         int  localHeroes = DefaultLocalHeroesOffset;
         int  heroMgrOff  = DefaultHeroManagerOffset;
         uint stamp  = 0;
+        uint gNames = 0, gObjects = 0, globalsStamp = 0;
         var applied = new List<string>();
         string outcome;
 
@@ -243,6 +265,16 @@ internal static class Tunables
                     // (it is metadata about the pin, not an override).
                     TryParseU32(f.GameTimeDateStamp, out stamp);
 
+                    // Both headers or neither; GameReflection re-validates
+                    // them by content against the live build anyway.
+                    if (TryParseU32(f.GNamesHeader, out uint gn) && IsValidGlobalHeader(gn) &&
+                        TryParseU32(f.GObjectsHeader, out uint go) && IsValidGlobalHeader(go) &&
+                        TryParseU32(f.GlobalsTimeDateStamp, out uint gs) && gs != 0)
+                    {
+                        gNames = gn; gObjects = go; globalsStamp = gs;
+                        applied.Add($"GNames=0x{gn:X8}, GObjects=0x{go:X8}");
+                    }
+
                     outcome = applied.Count == 0
                         ? "Saved file has no usable values — using defaults"
                         : "Using saved values — " + string.Join(", ", applied);
@@ -260,6 +292,7 @@ internal static class Tunables
             localHeroes = DefaultLocalHeroesOffset;
             heroMgrOff  = DefaultHeroManagerOffset;
             stamp  = 0;
+            gNames = gObjects = globalsStamp = 0;
             outcome = "Saved file couldn't be read — it will be rebuilt automatically on the next scan";
         }
 
@@ -270,6 +303,9 @@ internal static class Tunables
         _localHeroesOffset = localHeroes;
         _heroManagerOffset = heroMgrOff;
         _gameStamp      = stamp;
+        _gNamesHeader   = gNames;
+        _gObjectsHeader = gObjects;
+        _globalsStamp   = globalsStamp;
         _status = outcome;
         Base.Log($"Tunables: {outcome} (file: {FilePath})");
     }
@@ -284,6 +320,9 @@ internal static class Tunables
 
     private static bool IsValidHeroManagerOffset(int off)
         => off >= MinHeroManagerOffset && off <= MaxHeroManagerOffset && (off & 3) == 0;
+
+    private static bool IsValidGlobalHeader(uint addr)
+        => addr >= MinGlobalHeader && addr < MaxGlobalHeader && (addr & 3) == 0;
 
     // Re-read the pin file from disk and report the seed it actually holds.
     // CALIBRATE needs this to prove ITS write landed: File.Exists is not
@@ -354,6 +393,9 @@ internal static class Tunables
                 // cost one wasted fast sweep after the next patch, but
                 // there's no reason for a template write to discard it.
                 GameTimeDateStamp = GameTimeDateStamp != 0 ? $"0x{GameTimeDateStamp:X8}" : null,
+                GNamesHeader = GNamesHeader != 0 ? $"0x{GNamesHeader:X8}" : null,
+                GObjectsHeader = GObjectsHeader != 0 ? $"0x{GObjectsHeader:X8}" : null,
+                GlobalsTimeDateStamp = GlobalsTimeDateStamp != 0 ? $"0x{GlobalsTimeDateStamp:X8}" : null,
             };
             File.WriteAllText(FilePath,
                 JsonSerializer.Serialize(tpl, new JsonSerializerOptions
@@ -566,6 +608,44 @@ internal static class Tunables
                 _heroManagerOffset = discovered;
                 _status = $"HeroManager hop learned and saved — HeroManagerOffset=0x{discovered:X}";
                 Base.Log($"Tunables: pinned HeroManagerOffset=0x{discovered:X}");
+            }
+            catch
+            {
+                _pinRetryAfterUtc = DateTime.UtcNow.AddSeconds(30);
+            }
+        }
+    }
+
+    // Auto-pin the GNames / GObjects headers GameReflection's bootstrap
+    // accepted (content-validated, signatures and data scan in agreement),
+    // with the build they belong to. Next attach to the same build they are
+    // a third witness and let the data-section scan be skipped. Writes once
+    // per build; same contract as PinItemBoxOffset.
+    public static void PinGlobals(uint namesHeader, uint objectsHeader, uint liveStamp)
+    {
+        if (!IsValidGlobalHeader(namesHeader) || !IsValidGlobalHeader(objectsHeader) || liveStamp == 0) return;
+        lock (_gate)
+        {
+            EnsureLoadedLocked();
+            if (namesHeader == _gNamesHeader && objectsHeader == _gObjectsHeader &&
+                liveStamp == _globalsStamp && File.Exists(FilePath)) return;
+            if (DateTime.UtcNow < _pinRetryAfterUtc) return;
+            try
+            {
+                OverrideFile f = TryReadFileLocked() ?? new OverrideFile();
+                f.GNamesHeader = $"0x{namesHeader:X8}";
+                f.GObjectsHeader = $"0x{objectsHeader:X8}";
+                f.GlobalsTimeDateStamp = $"0x{liveStamp:X8}";
+                f.Note ??= "Auto-pinned by GrandeuReforged: the game's name and object " +
+                           "tables (GNames / GObjects) for the exe build in " +
+                           "GlobalsTimeDateStamp. Re-validated on every attach; ignored " +
+                           "for any other build. Delete these keys (or the file) to " +
+                           "re-discover them.";
+                WritePinnedFileLocked(f);
+                _gNamesHeader = namesHeader;
+                _gObjectsHeader = objectsHeader;
+                _globalsStamp = liveStamp;
+                Base.Log($"Tunables: pinned GNames=0x{namesHeader:X8} GObjects=0x{objectsHeader:X8} stamp=0x{liveStamp:X8}");
             }
             catch
             {

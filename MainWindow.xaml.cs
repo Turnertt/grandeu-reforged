@@ -682,6 +682,11 @@ public partial class MainWindow : Window
                           $"num={ReadU32(hmList + GameChain.ItemBoxOffset + 4)}  heroes +0x{GameReflection.FieldOffset(hmList, "LocalLoadedHeroes"):X} " +
                           $"num={ReadU32(hmList + GameChain.LocalHeroesOffset + 4)}");
                     }
+                    // How GNames/GObjects were found (pin / signatures / data
+                    // scan, and any disagreement), then how the reflection
+                    // reader proved itself and which slots it reads through.
+                    L("globals    : " + GameReflection.GlobalsStatus.Replace("\n", "\n             "));
+                    L("trust      : " + GameReflection.TrustDetail.Replace("\n", "\n             "));
                 }
 
                 int wi = _cachedWorldInfo;

@@ -7,10 +7,14 @@ internal sealed record FloorSource(int Actor, int World, int Class, int Internal
 
 internal static class FloorEquipment
 {
-    // AActor.WorldInfo +110, bHidden/bDeleteMe at +B0 (masks 0x4/0x10);
-    // DunDefDroppedEquipment.MyEquipmentObject +318, DoFadeOut /
-    // bTransferredToItemBox / bAutoDestroyed at +308 (masks 0x8/0x10/0x20).
-    // All live-verified by name 2026-09-27 (DD1_INTERNALS.md §8b).
+    // Field positions come from the game's own property table, by name
+    // (GameReflection), so a patch that inserts a field cannot silently
+    // hide every pickup. The 2026-10-23 DD1 build grew DunDefDroppedEquipment
+    // by 0xC: the flag dword moved 0x308 → 0x314 and MyEquipmentObject
+    // 0x318 → 0x324. The old literals then read a float whose bits looked
+    // like bTransferredToItemBox, and every pickup was listed as "removed".
+    // The literals below (that build, live-verified by name 2026-10-29) are
+    // only the fallback when the reader isn't trusted this attach.
     //
     // DoFadeOut is NOT a removal (2026-09-27): live in the Tavern, actors
     // with it set stayed for 12+ s, were neither in the item box nor worn,
@@ -19,15 +23,40 @@ internal static class FloorEquipment
     // "fading" tag instead; bTransferredToItemBox / bAutoDestroyed /
     // bDeleteMe / bHidden still reject, and copy-time Verify re-checks all
     // of them against the live actor.
-    private const int EquipmentObject = 0x318;
-    private const int RemovalFlags = 0x308;
-    private const uint FlagFadeOut = 0x08, FlagTransferred = 0x10, FlagAutoDestroyed = 0x20;
-    private const uint RemovedMask = FlagTransferred | FlagAutoDestroyed;
-    private const uint ActorHiddenOrDeleted = 0x14; // bHidden | bDeleteMe at +0xB0
+    private readonly record struct Flag(int Offset, uint Mask);
+
+    private sealed record Layout(int World, int Equipment, Flag Hidden, Flag Deleted,
+        Flag FadeOut, Flag Transferred, Flag AutoDestroyed, bool ByName)
+    {
+        public string Describe() =>
+            (ByName ? "by name" : "compiled fallback (reflection unavailable)") +
+            $": equipment +0x{Equipment:X}, flags +0x{Transferred.Offset:X}";
+    }
+
+    private static readonly Layout Fallback = new(0x110, 0x324, new(0xB0, 0x4), new(0xB0, 0x10),
+        new(0x314, 0x08), new(0x314, 0x10), new(0x314, 0x20), ByName: false);
+
+    // All-or-nothing: a partly resolved layout would mix this build's
+    // offsets with a possibly stale literal. GameReflection caches each
+    // lookup per class, so this is cheap per actor.
+    private static Layout LayoutOf(int actor)
+    {
+        int world = GameReflection.FieldOffset(actor, "WorldInfo");
+        int equipment = GameReflection.FieldOffset(actor, "MyEquipmentObject");
+        Flag Bool(string name) { var (offset, mask) = GameReflection.BoolField(actor, name); return new(offset, mask); }
+        var flags = new[] { Bool("bHidden"), Bool("bDeleteMe"), Bool("DoFadeOut"), Bool("bTransferredToItemBox"), Bool("bAutoDestroyed") };
+        if (world <= 0 || equipment <= 0 || flags.Any(f => f.Offset <= 0)) return Fallback;
+        return new(world, equipment, flags[0], flags[1], flags[2], flags[3], flags[4], ByName: true);
+    }
+
+    private static bool IsSet(int actor, Flag flag) => (Int(actor + flag.Offset) & flag.Mask) != 0;
+
+    private static bool IsRemoved(int actor, Layout l) =>
+        IsSet(actor, l.Transferred) || IsSet(actor, l.AutoDestroyed) || IsSet(actor, l.Hidden) || IsSet(actor, l.Deleted);
 
     public static bool IsFading(FloorSource source)
     {
-        try { return (Int(source.Actor + RemovalFlags) & FlagFadeOut) != 0; } catch { return false; }
+        try { return IsSet(source.Actor, LayoutOf(source.Actor).FadeOut); } catch { return false; }
     }
 
     private static int Int(int address) => BitConverter.ToInt32(Base.Instance.ReadMemory(address, 4));
@@ -37,13 +66,13 @@ internal static class FloorEquipment
         if (world == 0 || source.World != world || !DupeMemory.IsObject(world) || !DupeMemory.IsObject(source.Actor))
             throw new InvalidOperationException("The lobby or floor item changed. Refresh floor items.");
         byte[] header = Base.Instance.ReadMemory(source.Actor, 0x38);
+        var layout = LayoutOf(source.Actor);
         if (BitConverter.ToInt32(header, 0x34) != source.Class ||
             BitConverter.ToInt32(header, 4) != source.InternalIndex ||
             BitConverter.ToInt32(header, 0x2C) != source.NameIndex ||
             BitConverter.ToInt32(header, 0x30) != source.NameNumber ||
             BitConverter.ToInt32(header, 0x28) != source.Outer ||
-            Int(source.Actor + 0x110) != world || (Int(source.Actor + 0xB0) & ActorHiddenOrDeleted) != 0 ||
-            (Int(source.Actor + RemovalFlags) & RemovedMask) != 0)
+            Int(source.Actor + layout.World) != world || IsRemoved(source.Actor, layout))
             throw new InvalidOperationException("That floor item was picked up, removed or replaced. Refresh floor items.");
         byte[] catalogue = Base.Instance.ReadMemory(source.CatalogueHeader, 12);
         int data = BitConverter.ToInt32(catalogue, 0), count = BitConverter.ToInt32(catalogue, 4), max = BitConverter.ToInt32(catalogue, 8);
@@ -58,7 +87,7 @@ internal static class FloorEquipment
         item.Session.Check();
         var source = item.Floor ?? throw new InvalidOperationException("No floor source was captured.");
         CheckActor(source, world);
-        if (Int(source.Actor + EquipmentObject) != unchecked(item.Address - 0x38) ||
+        if (Int(source.Actor + LayoutOf(source.Actor).Equipment) != unchecked(item.Address - 0x38) ||
             !item.Identity.Matches(DupeMemory.ReadItem(item.Address)))
             throw new InvalidOperationException("That floor item's equipment changed. Refresh floor items.");
         item.Session.Check();
@@ -97,18 +126,20 @@ internal static class FloorEquipment
                 progress?.Report(new ScanProgress($"Finding floor items… {p.done:N0} / {p.total:N0}",
                     p.total > 0 ? (double)p.done / p.total : 0)));
             int fading = 0, removed = 0, noEquipment = 0, live = 0;
+            string layoutNote = "no pickups";
             GameReflection.ForEachInstance("DunDefDroppedEquipment", (actor, actorClass, slot) =>
             {
                 cancel.ThrowIfCancellationRequested();
                 try
                 {
+                    var layout = LayoutOf(actor);
+                    layoutNote = layout.Describe();
                     // Archetypes and other-world leftovers are normal catalogue
                     // entries: no world backref, or a different one. Not counted.
-                    if (Int(actor + 0x110) != world) return;
+                    if (Int(actor + layout.World) != world) return;
                     live++;
-                    uint flags = (uint)Int(actor + RemovalFlags);
-                    if ((flags & RemovedMask) != 0 || (Int(actor + 0xB0) & ActorHiddenOrDeleted) != 0) { removed++; return; }
-                    int equipmentObject = Int(actor + EquipmentObject);
+                    if (IsRemoved(actor, layout)) { removed++; return; }
+                    int equipmentObject = Int(actor + layout.Equipment);
                     if (!GameChain.IsGamePtr(equipmentObject)) { noEquipment++; return; }
 
                     byte[] h = Base.Instance.ReadMemory(actor, 0x38);
@@ -117,7 +148,7 @@ internal static class FloorEquipment
                     CheckActor(source, world);
                     int address = unchecked(equipmentObject + 0x38);
                     var native = DupeMemory.ReadItem(address);
-                    bool isFading = (flags & FlagFadeOut) != 0;
+                    bool isFading = IsSet(actor, layout.FadeOut);
                     var item = new MultiplayerItem(address, 0, 0, ItemIdentity.Of(native), session,
                         "Floor", "Current lobby", DupeMemory.ItemName(address), native.EquipmentType.ToString(),
                         QualityDisplay.Name(native.NameIndex_QualityDescriptor), native.Level) { Floor = source, Fading = isFading };
@@ -132,7 +163,7 @@ internal static class FloorEquipment
             // signature to look for in a remote report.
             note = Describe(items.Count, fading, removed, noEquipment, missing);
             Base.LogEvent($"Floor: {live} live pickups -> {items.Count} listed ({fading} fading), {removed} removed, " +
-                          $"{noEquipment} without equipment data, {missing} unreadable");
+                          $"{noEquipment} without equipment data, {missing} unreadable; layout {layoutNote}");
         }
         cancel.ThrowIfCancellationRequested();
         session.Check();

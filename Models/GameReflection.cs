@@ -28,24 +28,39 @@ namespace Modinator;
 // hardcoded chain offsets): UObject.Outer +0x28, Name (FName) +0x2C, Class
 // +0x34; UField.SuperField +0x3C, Next +0x40; UStruct.Children +0x4C,
 // PropertySize +0x50; UProperty.Offset +0x64. Names come from GNames and the
-// object list from GObjects, both found by the code signatures the SDK's
-// DD_Basic.cpp uses (as does DupeReferenceResolver).
+// object list from GObjects. Since 2026-10-28 both are found by a pin, every
+// site of the SDK's code signatures and a scan of the exe's data section,
+// each validated by content, and must agree (FindGlobalsLocked).
 //
-// Trust: nothing is returned by FieldOffset until, once per attach, three
-// frozen UE3 engine fields (Pawn.Controller, PlayerController.Player,
-// LocalPlayer.ViewportClient) resolve to their known hardcoded values —
-// either on the local player's chain objects (EnsureTrusted) or on the
-// engine UClass objects found in the walk (no character needed). If they
-// don't, the reader stays off for that attach and callers fall back to
-// content discovery — never worse than before. Read-only; all reads via
-// Base.Instance.
+// Trust (2026-10-28, DECISIONS "reflection trust is self-referential"):
+// nothing is returned by FieldOffset until, once per attach, the reader
+// reads back Core.Object's own declared header (Outer 0x28, Name 0x2C, …)
+// through the same Children/Next/Offset slots it uses for game classes. If
+// that fails, those slots are re-derived by structural search and checked
+// again; only a failed or ambiguous search turns the reader off for the
+// attach, and callers fall back to content discovery — never worse than
+// before. The three frozen engine fields (Pawn.Controller,
+// PlayerController.Player, LocalPlayer.ViewportClient) are still compared
+// with the tool's constants, but a mismatch is reported, not a gate.
+// Read-only; all reads via Base.Instance.
 internal static class GameReflection
 {
     private const int ModuleBase = 0x00400000; // DD1 ships non-ASLR
     private const int OFF_OBJ_OUTER = 0x28, OFF_OBJ_NAME = 0x2C, OFF_OBJ_CLASS = 0x34;
-    private const int OFF_FIELD_SUPER = 0x3C, OFF_FIELD_NEXT = 0x40;
-    private const int OFF_STRUCT_CHILDREN = 0x4C, OFF_STRUCT_PROPSIZE = 0x50;
-    private const int OFF_PROP_OFFSET = 0x64;
+
+    // Reflection-internal slots. UE3 licensees place these differently (BL2:
+    // Next 0x3C, SuperField in UStruct at 0x48, Offset 0x60) and none of them
+    // has a UProperty of its own ("NOT AUTO-GENERATED PROPERTY" in the SDK),
+    // so they are proven per attach against Core.Object's self-description
+    // and re-derived structurally when that fails (CalibrateCoreLocked).
+    // Defaults = the live-verified DD1 layout. The UObject header offsets
+    // above stay constant: every name read goes through them.
+    private const int DefFieldSuper = 0x3C, DefFieldNext = 0x40;
+    private const int DefStructChildren = 0x4C, DefStructPropSize = 0x50;
+    private const int DefPropOffset = 0x64, DefBoolBitmask = 0x84;
+    private static int _offFieldSuper = DefFieldSuper, _offFieldNext = DefFieldNext;
+    private static int _offStructChildren = DefStructChildren, _offStructPropSize = DefStructPropSize;
+    private static int _offPropOffset = DefPropOffset, _offBoolBitmask = DefBoolBitmask;
 
     // The engine UClass objects the trust check anchors on (exact UE3 class
     // names — each exists exactly once, loaded at engine start).
@@ -53,11 +68,17 @@ internal static class GameReflection
 
     private static readonly object _gate = new();
     private static (int pid, long gen) _session;
-    private static int _namesData, _namesCount;
+    private static int _namesData, _namesCount; // snapshot of GNames, refreshed from _namesHeader on a cache miss
+    private static int _namesHeader;        // FArray header of GNames (data, num, max)
     private static int _objHeader;          // FArray header of GObjects (data, num, max) — re-read per walk
     private static bool _globalsSearched;
+    private static string _globalsStatus = "not searched yet";
     private static bool? _trusted;
     private static string _status = "not checked yet";
+    private static string _trustDetail = "";
+    private static string _anchorNote = "";  // "" = not compared yet
+    private static bool _boolFieldsUsable = true;
+    private static readonly Dictionary<string, int> _coreClasses = new(); // Core.Object/Field/Struct/Property/BoolProperty, Engine.Actor
     private static string _objectStatus = "not walked yet";
     private static int _liveHeroManager, _viewportClient;
     private static readonly List<int> _worldInfos = new();     // every non-default AWorldInfo seen in the last walk
@@ -68,7 +89,42 @@ internal static class GameReflection
     private static readonly Dictionary<(int cls, string field), (int offset, uint mask)> _boolFields = new();
     private static readonly Dictionary<(int cls, string name), bool> _classMatches = new(); // "is cls a subclass of name" (fully read chains only)
 
-    public static string Status { get { lock (_gate) { SyncSession(); return _status; } } }
+    public static string Status
+    {
+        get
+        {
+            lock (_gate)
+            {
+                SyncSession();
+                return _anchorNote.StartsWith("MOVED", System.StringComparison.Ordinal) ? _status + "; engine anchors " + _anchorNote : _status;
+            }
+        }
+    }
+
+    // Multi-line trust report for COPY REPORT: how the reader was proven,
+    // the slots in use, and whether the frozen engine fields still agree.
+    public static string TrustDetail
+    {
+        get
+        {
+            lock (_gate)
+            {
+                SyncSession();
+                string s = _status;
+                if (_trustDetail.Length > 0) s += "\ncore   : " + _trustDetail;
+                s += $"\nslots  : SuperField 0x{_offFieldSuper:X}  Next 0x{_offFieldNext:X}  Children 0x{_offStructChildren:X}  " +
+                     $"PropertySize 0x{_offStructPropSize:X}  Offset 0x{_offPropOffset:X}  BitMask " +
+                     (_boolFieldsUsable ? $"0x{_offBoolBitmask:X}" : "unproven (bool flags use compiled masks)");
+                s += "\nanchors: " + (_anchorNote.Length > 0 ? _anchorNote : "not compared yet");
+                return s;
+            }
+        }
+    }
+
+    // How GNames and GObjects were found this attach (pin / signatures /
+    // data-section scan), any disagreement, and the scan timings. Runs the
+    // bootstrap if it hasn't run yet.
+    public static string GlobalsStatus { get { lock (_gate) { SyncSession(); FindGlobalsLocked(); return _globalsStatus; } } }
 
     // One line for the diagnostic report: was the object list found, how
     // long the walk took, what it found.
@@ -85,11 +141,17 @@ internal static class GameReflection
         var now = (Base.AttachedPid, Base.Instance.AttachmentGeneration);
         if (now == _session) return;
         _session = now;
-        _namesData = _namesCount = 0;
+        _namesData = _namesCount = _namesHeader = 0;
         _objHeader = 0;
         _globalsSearched = false;
+        _globalsStatus = "not searched yet";
         _trusted = null;
+        _trustRetryAt = 0;
         _status = "not checked yet";
+        _trustDetail = _anchorNote = "";
+        _boolFieldsUsable = true;
+        ResetSlots();
+        _coreClasses.Clear();
         _objectStatus = "not walked yet";
         _liveHeroManager = _viewportClient = 0;
         _worldInfos.Clear();
@@ -103,17 +165,26 @@ internal static class GameReflection
 
     // ── Object-list utilities for other readers ───────────────────────
 
-    // GNames / GObjects as found for this attach (false = the object table
-    // is unavailable). Lets DupeReferenceResolver skip its own 15 MB module
-    // sweep when this reader already did it.
+    // GNames / GObjects as found for this attach (false = the name table is
+    // unavailable; objectsHeader is 0 when only the object table was not
+    // found or was refused). DupeReferenceResolver's only source since
+    // 2026-10-28 — its own first-hit module sweep was removed.
     public static bool TryGetGlobals(out int namesData, out int namesCount, out int objectsHeader)
     {
         lock (_gate)
         {
             SyncSession();
             bool ok = FindGlobalsLocked();
+            // GNames grows (and can reallocate) as maps load. Callers index
+            // it directly, so hand out the live header, not the attach-time
+            // snapshot — names added since attach read as "Invalid object name".
+            if (ok && Read(_namesHeader, 8) is byte[] h)
+            {
+                int data = System.BitConverter.ToInt32(h, 0), num = System.BitConverter.ToInt32(h, 4);
+                if (GameChain.IsGamePtr(data) && num > 0 && num <= 2_000_000) { _namesData = data; _namesCount = num; }
+            }
             namesData = _namesData; namesCount = _namesCount; objectsHeader = _objHeader;
-            return ok && _objHeader != 0;
+            return ok;
         }
     }
 
@@ -182,7 +253,7 @@ internal static class GameReflection
         var seen = new HashSet<int>();
         int c = cls;
         bool match = false;
-        for (; GameChain.IsGamePtr(c) && seen.Add(c) && seen.Count <= 32; c = GameChain.RdInt(c + OFF_FIELD_SUPER))
+        for (; GameChain.IsGamePtr(c) && seen.Add(c) && seen.Count <= 32; c = GameChain.RdInt(c + _offFieldSuper))
         {
             string? n = ClassNameLocked(c);
             if (n == null) return false; // torn — decide next time
@@ -192,57 +263,346 @@ internal static class GameReflection
         return match;
     }
 
-    // Establish trust once per attach from the local player's chain objects.
-    // A transient read failure leaves the verdict open (retried next scan);
-    // only a real disagreement with the known engine offsets switches the
-    // reader off for the attach.
+    // Establish trust once per attach from the local player's chain objects
+    // (the route used when the object list is unavailable, and by COPY
+    // REPORT). Core.Object is the root of the pawn's class chain; reaching
+    // it by name through SuperField also proves that slot. When it can't be
+    // reached that way, the object walk supplies it (and the classes the
+    // calibration needs). Undecided (false, verdict left open) until then.
     public static bool EnsureTrusted(int pawn, int controller, int player)
     {
         lock (_gate)
         {
             SyncSession();
-            if (_trusted.HasValue) return _trusted.Value;
-            if (!FindGlobalsLocked())
+            if (!_trusted.HasValue)
             {
-                _trusted = false;
-                _status = "unavailable — the game's name table was not found";
-                Base.LogEvent("Reflection: " + _status);
-                return false;
+                if (!FindGlobalsLocked())
+                {
+                    // Undecided, not off: the bootstrap retries (a game still
+                    // starting up has a name table too small to validate).
+                    _status = "unavailable — the game's name table was not found";
+                    return false;
+                }
+                int core = CoreFromChainLocked(GameChain.IsGamePtr(pawn) ? GameChain.RdInt(pawn + OFF_OBJ_CLASS) : 0);
+                bool superProven = core != 0;
+                if (core == 0 && _objHeader != 0 && !_coreClasses.ContainsKey("Object")) WalkObjectsLocked();
+                if (core == 0) _coreClasses.TryGetValue("Object", out core);
+                if (core == 0 || DecideTrustLocked(core, superProven) == null) return false;
             }
-            int a = OffsetLocked(pawn, "Controller");
-            int b = OffsetLocked(controller, "Player");
-            int c = OffsetLocked(player, "ViewportClient");
-            if (a < 0 || b < 0 || c < 0) return false; // unreadable right now — decide later
-            return DecideTrustLocked(a, b, c, "chain objects");
+            if (_trusted == true)
+                CompareAnchorsLocked(OffsetLocked(pawn, "Controller"), OffsetLocked(controller, "Player"),
+                                     OffsetLocked(player, "ViewportClient"), "chain objects");
+            return _trusted == true;
         }
     }
 
-    // Same three anchors, read from the engine UClass objects the object
-    // walk recorded — so trust can be established with no character at all.
-    // Undecided (false, verdict left open) until a walk has seen all three.
-    private static bool EnsureTrustedFromClassesLocked()
+    // Same decision from the classes the object walk recorded — no
+    // character needed. Undecided until a walk has seen Core.Object.
+    private static bool EnsureTrustedLocked()
     {
-        if (_trusted.HasValue) return _trusted.Value;
-        if (!_classObjects.TryGetValue(ClsPawn, out int cPawn) ||
-            !_classObjects.TryGetValue(ClsPlayerController, out int cPc) ||
-            !_classObjects.TryGetValue(ClsLocalPlayer, out int cLp)) return false;
-        int a = OffsetOfClassLocked(cPawn, "Controller");
-        int b = OffsetOfClassLocked(cPc, "Player");
-        int c = OffsetOfClassLocked(cLp, "ViewportClient");
-        if (a < 0 || b < 0 || c < 0) return false;
-        return DecideTrustLocked(a, b, c, "engine classes");
+        if (!_trusted.HasValue)
+        {
+            if (!_coreClasses.TryGetValue("Object", out int core)) return false;
+            if (DecideTrustLocked(core, superProven: false) == null) return false;
+        }
+        if (_trusted == true && _classObjects.TryGetValue(ClsPawn, out int cPawn) &&
+            _classObjects.TryGetValue(ClsPlayerController, out int cPc) &&
+            _classObjects.TryGetValue(ClsLocalPlayer, out int cLp))
+            CompareAnchorsLocked(OffsetOfClassLocked(cPawn, "Controller"), OffsetOfClassLocked(cPc, "Player"),
+                                 OffsetOfClassLocked(cLp, "ViewportClient"), "engine classes");
+        return _trusted == true;
     }
 
-    private static bool DecideTrustLocked(int a, int b, int c, string via)
+    // The root of a class's SuperField chain, when it is Core.Object.
+    private static int CoreFromChainLocked(int cls)
     {
-        bool ok = a == GameChain.OFF_PAWN_CONTROLLER && b == GameChain.OFF_CONTROLLER_PLAYER &&
-                  c == GameChain.OFF_PLAYER_VIEWPORT;
-        _trusted = ok;
-        _status = ok ? $"verified (via {via})"
-                     : $"off — disagrees with known engine offsets (Controller 0x{a:X}, Player 0x{b:X}, ViewportClient 0x{c:X})";
-        if (!ok) { _offsets.Clear(); _boolFields.Clear(); }
-        Base.LogEvent("Reflection: " + _status);
-        return ok;
+        var seen = new HashSet<int>();
+        int c = cls;
+        while (GameChain.IsGamePtr(c) && seen.Add(c) && seen.Count <= 32)
+        {
+            int super = GameChain.RdInt(c + _offFieldSuper);
+            if (super == 0) return IsCoreClassLocked(c, "Object", "Core") ? c : 0;
+            c = super;
+        }
+        return 0;
+    }
+
+    private static bool IsCoreClassLocked(int cls, string name, string package)
+    {
+        if (ObjectNameLocked(cls) != name) return false;
+        int outer = GameChain.RdInt(cls + OFF_OBJ_OUTER);
+        return GameChain.IsGamePtr(outer) && ObjectNameLocked(outer) == package &&
+               GameChain.RdInt(outer + OFF_OBJ_OUTER) == 0;
+    }
+
+    // The trust verdict, once per attach. Core.Object's self-check first; on
+    // failure the slots are calibrated and the check re-run. null = can't
+    // tell yet (Core.Object unreadable, or Field/Property not seen yet).
+    private static bool? DecideTrustLocked(int core, bool superProven)
+    {
+        if (_trusted.HasValue) return _trusted;
+        if (_deciding || System.Environment.TickCount64 < _trustRetryAt) return null; // re-entered from the walk below / waiting
+        _deciding = true;
+        try { return DecideTrustCoreLocked(core, superProven); }
+        finally { _deciding = false; }
+    }
+
+    private static bool _deciding;
+    private static long _trustRetryAt;
+
+    private static bool? DecideTrustCoreLocked(int core, bool superProven)
+    {
+        bool? ok = CoreSelfCheckLocked(core, superProven, out string detail);
+        if (ok == null) return null;
+        string via = "core self-check";
+        if (ok == false)
+        {
+            string first = detail;
+            // Calibration reads Core.Field/Struct/Property/BoolProperty and
+            // Engine.Actor, which only the object walk records.
+            if (!_coreClasses.ContainsKey("Field") && _objHeader != 0) WalkObjectsLocked();
+            bool? calibrated = CalibrateCoreLocked(core, out string cal);
+            if (calibrated == null)
+            {
+                // Nothing to calibrate against YET — not evidence of a wrong
+                // layout. Core.Object's script properties load with Core.u,
+                // after the native classes: at the splash screen (live
+                // 10/2026, 128 objects) the self-check fails this way and an
+                // "off" verdict would have stuck for the whole attach.
+                _trustDetail = first;
+                _status = "waiting — " + first + " (" + cal + "); retried every 5 s";
+                _trustRetryAt = System.Environment.TickCount64 + 5_000;
+                return null;
+            }
+            if (calibrated == true) ok = CoreSelfCheckLocked(core, superProven: false, out detail);
+            if (ok != true)
+            {
+                ResetSlots();
+                _trusted = false;
+                _trustDetail = first;
+                _status = "off — Core.Object self-check failed (" + first + ") and " +
+                          (calibrated == true ? "the calibrated slots failed it too (" + detail + ")" : "calibration found no unique layout (" + cal + ")");
+                _offsets.Clear(); _boolFields.Clear(); _classMatches.Clear();
+                Base.LogEvent("Reflection: " + _status);
+                return false;
+            }
+            via = "calibrated (" + cal + ")";
+            // Everything cached so far was read through the old slots.
+            _offsets.Clear(); _boolFields.Clear(); _classMatches.Clear();
+        }
+        _trusted = true;
+        _trustDetail = detail;
+        _status = $"verified ({via})";
+        Base.LogEvent("Reflection: " + _status + " — " + detail);
+        return true;
+    }
+
+    // Core.Object declares its own header as native script properties (SDK
+    // DD_Core_classes.hpp). Reading them back through Children/Next/
+    // UProperty.Offset proves those slots in one pass: they can only move
+    // together with the header every name read already relies on. SuperField
+    // is proven by the Field→Object and Property→Field links (or by the
+    // caller having reached Core.Object through it). null = undecided.
+    private static readonly (string name, int offset)[] CoreHeader =
+    {
+        ("ObjectInternalInteger", 0x04), ("Outer", 0x28), ("Name", 0x2C), ("Class", 0x34), ("ObjectArchetype", 0x38),
+    };
+    private const int CoreObjectSize = 0x3C;
+
+    private static bool? CoreSelfCheckLocked(int core, bool superProven, out string detail)
+    {
+        byte[]? sz = Read(core + _offStructPropSize, 4);
+        if (sz == null) { detail = "Core.Object unreadable"; return null; }
+        int size = System.BitConverter.ToInt32(sz, 0);
+        if (size != CoreObjectSize)
+        {
+            detail = $"Core.Object PropertySize reads 0x{size:X} at +0x{_offStructPropSize:X}, expected 0x{CoreObjectSize:X}";
+            return false;
+        }
+        var props = ChildPropertiesLocked(core, _offStructChildren, _offFieldNext, out _);
+        if (props == null) { detail = $"Core.Object's field list (Children +0x{_offStructChildren:X}, Next +0x{_offFieldNext:X}) is not a valid list"; return false; }
+        foreach (var (name, offset) in CoreHeader)
+        {
+            int got = props.TryGetValue(name, out int p) ? GameChain.RdInt(p + _offPropOffset) : -1;
+            if (got != offset)
+            {
+                detail = got < 0 ? $"Core.Object.{name} not in its field list"
+                                 : $"Core.Object.{name} Offset reads 0x{got:X} at +0x{_offPropOffset:X}, expected 0x{offset:X}";
+                return false;
+            }
+        }
+        if (!superProven)
+        {
+            if (!_coreClasses.TryGetValue("Field", out int field) || !_coreClasses.TryGetValue("Property", out int prop))
+            {
+                detail = "Core.Field / Core.Property not seen yet";
+                return null;
+            }
+            if (GameChain.RdInt(core + _offFieldSuper) != 0 || GameChain.RdInt(field + _offFieldSuper) != core ||
+                GameChain.RdInt(prop + _offFieldSuper) != field)
+            {
+                detail = $"SuperField +0x{_offFieldSuper:X} does not link Property→Field→Object";
+                return false;
+            }
+        }
+        detail = $"Core.Object PropertySize 0x{size:X}; " +
+                 string.Join("  ", System.Array.ConvertAll(CoreHeader, h => $"{h.name} 0x{h.offset:X}"));
+        return true;
+    }
+
+    // name -> UProperty* for every *Property node in a class's own field
+    // list, read through the given slots. null = not a valid list (a node
+    // that isn't a UField, a cycle, or no terminating null within the cap).
+    // `nodes` = list length (properties, functions, consts, structs, …).
+    private static Dictionary<string, int>? ChildPropertiesLocked(int cls, int childrenSlot, int nextSlot, out int nodes)
+    {
+        nodes = 0;
+        var props = new Dictionary<string, int>();
+        var seen = new HashSet<int>();
+        int len = System.Math.Max(0x44, nextSlot + 4);
+        int f = GameChain.RdInt(cls + childrenSlot);
+        while (f != 0)
+        {
+            if (!GameChain.IsGamePtr(f) || !seen.Add(f) || seen.Count > 8000) return null;
+            byte[]? h = Read(f, len);
+            if (h == null) return null;
+            string? cn = ClassNameLocked(System.BitConverter.ToInt32(h, OFF_OBJ_CLASS));
+            if (cn == null || !IsFieldClassName(cn)) return null;
+            if (cn.EndsWith("Property", System.StringComparison.Ordinal))
+            {
+                string? n = NameLocked(System.BitConverter.ToInt32(h, OFF_OBJ_NAME));
+                if (n != null) props.TryAdd(n, f);
+            }
+            f = System.BitConverter.ToInt32(h, nextSlot);
+        }
+        nodes = seen.Count;
+        return props;
+    }
+
+    // Every UField subclass in DD1's Core (SDK DD_Core_classes.hpp) — a
+    // class's Children list holds nothing else.
+    private static bool IsFieldClassName(string cn) =>
+        cn.EndsWith("Property", System.StringComparison.Ordinal) ||
+        cn is "Function" or "Const" or "Enum" or "ScriptStruct" or "Struct" or "State";
+
+    // Re-derive the reflection slots from Core.Object's self-description
+    // when the defaults fail the self-check (a licensee layout or a future
+    // engine patch). Every slot must have exactly ONE solution, else the
+    // calibration fails and the reader stays off. null = nothing to
+    // calibrate against yet (the Core classes not recorded, or no layout
+    // reaches Core.Object's header properties because they aren't loaded).
+    // Needs the classes the object walk records. Read-only; nothing is
+    // pinned to disk.
+    private static bool? CalibrateCoreLocked(int core, out string detail)
+    {
+        if (!_coreClasses.TryGetValue("Field", out int field) || !_coreClasses.TryGetValue("Struct", out int strct) ||
+            !_coreClasses.TryGetValue("Property", out int prop) || !_coreClasses.TryGetValue("BoolProperty", out int boolProp))
+        {
+            detail = "the object walk has not recorded Core.Field/Struct/Property/BoolProperty";
+            return null;
+        }
+
+        // A. Children + Next: the one pair whose list reaches all five header
+        //    properties, every node a UField, terminated.
+        var lists = new List<(int children, int next, Dictionary<string, int> props)>();
+        for (int children = 0x40; children <= 0x60; children += 4)
+            foreach (int next in new[] { 0x3C, 0x40, 0x44, 0x48 })
+            {
+                if (next == children) continue;
+                var p = ChildPropertiesLocked(core, children, next, out _);
+                if (p != null && System.Array.TrueForAll(CoreHeader, h => p.ContainsKey(h.name))) lists.Add((children, next, p));
+            }
+        if (lists.Count == 0) { detail = "no Children/Next pair reaches Core.Object's header properties — not loaded yet?"; return null; }
+        if (lists.Count > 1) { detail = $"{lists.Count} Children/Next candidates"; return false; }
+        var (childrenSlot, nextSlot, coreProps) = lists[0];
+
+        // B. UProperty.Offset: the one slot holding all five known offsets.
+        var offsets = new List<int>();
+        for (int slot = 0x40; slot <= 0x90; slot += 4)
+            if (System.Array.TrueForAll(CoreHeader, h => GameChain.RdInt(coreProps[h.name] + slot) == h.offset)) offsets.Add(slot);
+        if (offsets.Count != 1) { detail = $"{offsets.Count} UProperty.Offset candidates"; return false; }
+
+        // C. SuperField: Object is the root; Field, Struct and Property derive
+        //    from the class above them.
+        var supers = new List<int>();
+        foreach (int slot in new[] { 0x3C, 0x40, 0x44, 0x48 })
+            if (GameChain.RdInt(core + slot) == 0 && GameChain.RdInt(field + slot) == core &&
+                GameChain.RdInt(strct + slot) == field && GameChain.RdInt(prop + slot) == field &&
+                GameChain.RdInt(boolProp + slot) == prop) supers.Add(slot);
+        if (supers.Count != 1) { detail = $"{supers.Count} SuperField candidates"; return false; }
+
+        // D. PropertySize: Object is 0x3C, Field a little more, Struct and
+        //    Property more again, BoolProperty exactly Property + its BitMask.
+        var sizes = new List<int>();
+        for (int slot = 0x40; slot <= 0x5C; slot += 4)
+        {
+            if (slot == childrenSlot || slot == nextSlot || slot == supers[0]) continue;
+            int fieldSize = GameChain.RdInt(field + slot), propSize = GameChain.RdInt(prop + slot);
+            if (GameChain.RdInt(core + slot) == CoreObjectSize && fieldSize > CoreObjectSize && fieldSize <= 0x60 &&
+                (fieldSize & 3) == 0 && GameChain.RdInt(strct + slot) > fieldSize && propSize > fieldSize &&
+                propSize < 0x200 && GameChain.RdInt(boolProp + slot) == propSize + 4) sizes.Add(slot);
+        }
+        if (sizes.Count != 1) { detail = $"{sizes.Count} PropertySize candidates"; return false; }
+
+        _offStructChildren = childrenSlot;
+        _offFieldNext = nextSlot;
+        _offPropOffset = offsets[0];
+        _offFieldSuper = supers[0];
+        _offStructPropSize = sizes[0];
+
+        // E. UBoolProperty.BitMask is its only member, so it sits at
+        //    UProperty's instance size. Proven on Engine.Actor's bools (one-bit
+        //    masks, distinct within a dword); unproven → BoolField stays off
+        //    and every caller uses its compiled mask.
+        _offBoolBitmask = GameChain.RdInt(prop + _offStructPropSize);
+        _boolFieldsUsable = BitMaskSlotHoldsLocked();
+        detail = $"SuperField 0x{_offFieldSuper:X}, Next 0x{_offFieldNext:X}, Children 0x{_offStructChildren:X}, " +
+                 $"PropertySize 0x{_offStructPropSize:X}, Offset 0x{_offPropOffset:X}, BitMask " +
+                 (_boolFieldsUsable ? $"0x{_offBoolBitmask:X}" : "unproven");
+        Base.LogEvent("Reflection: calibrated — " + detail);
+        return true;
+    }
+
+    private static bool BitMaskSlotHoldsLocked()
+    {
+        if (!_coreClasses.TryGetValue("Actor", out int actor)) return false;
+        var props = ChildPropertiesLocked(actor, _offStructChildren, _offFieldNext, out _);
+        if (props == null) return false;
+        var masks = new HashSet<(int offset, uint mask)>();
+        int bools = 0;
+        foreach (int p in props.Values)
+        {
+            if (ObjectNameLocked(GameChain.RdInt(p + OFF_OBJ_CLASS)) != "BoolProperty") continue;
+            uint mask = (uint)GameChain.RdInt(p + _offBoolBitmask);
+            if (mask == 0 || (mask & (mask - 1)) != 0 || !masks.Add((GameChain.RdInt(p + _offPropOffset), mask))) return false;
+            bools++;
+        }
+        return bools >= 8;
+    }
+
+    private static void ResetSlots()
+    {
+        _offFieldSuper = DefFieldSuper; _offFieldNext = DefFieldNext;
+        _offStructChildren = DefStructChildren; _offStructPropSize = DefStructPropSize;
+        _offPropOffset = DefPropOffset; _offBoolBitmask = DefBoolBitmask;
+    }
+
+    // Pawn.Controller / PlayerController.Player / LocalPlayer.ViewportClient
+    // against the tool's constants (the Auto-Kill / Mana / chain code still
+    // uses them hardcoded). A mismatch means a patch moved an ENGINE field:
+    // reported in Status and COPY REPORT, never a reason to distrust the
+    // reader. Compared once per attach, when all three resolve.
+    private static void CompareAnchorsLocked(int a, int b, int c, string via)
+    {
+        if (_anchorNote.Length > 0 || a < 0 || b < 0 || c < 0) return;
+        var moved = new List<string>();
+        if (a != GameChain.OFF_PAWN_CONTROLLER) moved.Add($"Pawn.Controller 0x{a:X} (tool uses 0x{GameChain.OFF_PAWN_CONTROLLER:X})");
+        if (b != GameChain.OFF_CONTROLLER_PLAYER) moved.Add($"PlayerController.Player 0x{b:X} (tool uses 0x{GameChain.OFF_CONTROLLER_PLAYER:X})");
+        if (c != GameChain.OFF_PLAYER_VIEWPORT) moved.Add($"LocalPlayer.ViewportClient 0x{c:X} (tool uses 0x{GameChain.OFF_PLAYER_VIEWPORT:X})");
+        _anchorNote = moved.Count == 0
+            ? $"agree (Controller 0x{a:X}, Player 0x{b:X}, ViewportClient 0x{c:X}; via {via})"
+            : "MOVED — " + string.Join(", ", moved) + $" (via {via}); a patch moved an engine field the pawn chain, Auto-Kill and Mana still read at the old offset";
+        if (moved.Count > 0) Base.LogEvent("Reflection: engine anchors " + _anchorNote);
     }
 
     // Offset of a named field on obj's class or any superclass; -1 when the
@@ -252,7 +612,7 @@ internal static class GameReflection
         lock (_gate)
         {
             SyncSession();
-            if (_trusted == null) EnsureTrustedFromClassesLocked(); // a walk may have recorded the anchors already
+            if (_trusted == null) EnsureTrustedLocked(); // a walk may have recorded Core.Object already
             return _trusted == true ? OffsetLocked(obj, field) : -1;
         }
     }
@@ -325,12 +685,12 @@ internal static class GameReflection
             if (_liveHeroManager != 0 && IsLiveHeroManagerLocked(_liveHeroManager) == true &&
                 IsLiveObjectLocked(_liveHeroManager) != false)
             {
-                EnsureTrustedFromClassesLocked();
+                EnsureTrustedLocked();
                 return _liveHeroManager;
             }
             _liveHeroManager = 0;
             WalkObjectsLocked();
-            EnsureTrustedFromClassesLocked();
+            EnsureTrustedLocked();
             return _liveHeroManager;
         }
     }
@@ -377,9 +737,14 @@ internal static class GameReflection
                     case "Class":
                     {
                         // A UClass object: record the engine classes the
-                        // trust check anchors on (each exists exactly once).
+                        // anchor comparison reads, and the Core classes the
+                        // trust self-check / calibration read (each exists
+                        // exactly once, loaded at engine start).
                         string? n = ObjectNameLocked(obj);
                         if (n is ClsPawn or ClsPlayerController or ClsLocalPlayer) _classObjects.TryAdd(n, obj);
+                        else if (n is "Object" or "Field" or "Struct" or "Property" or "BoolProperty" && IsCoreClassLocked(obj, n, "Core"))
+                            _coreClasses.TryAdd(n, obj);
+                        else if (n == "Actor" && IsCoreClassLocked(obj, n, "Engine")) _coreClasses.TryAdd(n, obj);
                         break;
                     }
                     case "DunDefHeroManager":
@@ -415,7 +780,7 @@ internal static class GameReflection
         int pick = managers.Count == 1 ? managers[0] : 0;
         if (managers.Count > 1)
         {
-            EnsureTrustedFromClassesLocked();
+            EnsureTrustedLocked();
             int hop = viewport != 0 && _trusted == true ? OffsetLocked(viewport, "TheHeroManager") : -1;
             int viaViewport = hop > 0 ? GameChain.RdInt(viewport + hop) : 0;
             pick = managers.Contains(viaViewport) ? viaViewport : managers[0];
@@ -474,14 +839,15 @@ internal static class GameReflection
     // UBoolProperty, live-verified 2026-09-27: GRI IsLobbyLevel/
     // IsGameplayLevel both at +0x2C4 with masks 0x40000/0x80000, NOT the
     // bit 12/13 the tool had hardcoded). (-1, 0) when the reader is not
-    // trusted, the field isn't a BoolProperty, or the mask isn't one bit.
+    // trusted, the field isn't a BoolProperty, the mask isn't one bit, or a
+    // calibration could not prove where BitMask moved to.
     public static (int offset, uint mask) BoolField(int obj, string field)
     {
         lock (_gate)
         {
             SyncSession();
-            if (_trusted == null) EnsureTrustedFromClassesLocked();
-            if (_trusted != true || !GameChain.IsGamePtr(obj)) return (-1, 0);
+            if (_trusted == null) EnsureTrustedLocked();
+            if (_trusted != true || !_boolFieldsUsable || !GameChain.IsGamePtr(obj)) return (-1, 0);
             // Cached per class: item naming asks for the same flag once per
             // item, and an uncached lookup walks the class's property list.
             int cls = GameChain.RdInt(obj + OFF_OBJ_CLASS);
@@ -498,12 +864,10 @@ internal static class GameReflection
         int prop = FindPropertyLocked(cls, field, out int off);
         if (prop == 0 || off <= 0) return (-1, 0);
         if (ObjectNameLocked(GameChain.RdInt(prop + OFF_OBJ_CLASS)) != "BoolProperty") return (-1, 0);
-        uint mask = (uint)GameChain.RdInt(prop + OFF_BOOL_BITMASK);
+        uint mask = (uint)GameChain.RdInt(prop + _offBoolBitmask);
         if (mask == 0 || (mask & (mask - 1)) != 0) return (-1, 0);
         return (off, mask);
     }
-
-    private const int OFF_BOOL_BITMASK = 0x84;
 
     private static int OffsetLocked(int obj, string field)
     {
@@ -529,28 +893,29 @@ internal static class GameReflection
         offset = -1;
         if (!GameChain.IsGamePtr(cls) || !FindGlobalsLocked()) return 0;
 
+        int len = System.Math.Max(0x44, _offFieldNext + 4);
         var seenClasses = new HashSet<int>();
         for (int c = cls; GameChain.IsGamePtr(c) && seenClasses.Add(c) && seenClasses.Count <= 32;
-             c = GameChain.RdInt(c + OFF_FIELD_SUPER))
+             c = GameChain.RdInt(c + _offFieldSuper))
         {
-            int size = GameChain.RdInt(c + OFF_STRUCT_PROPSIZE);
+            int size = GameChain.RdInt(c + _offStructPropSize);
             var seen = new HashSet<int>();
-            int f = GameChain.RdInt(c + OFF_STRUCT_CHILDREN);
+            int f = GameChain.RdInt(c + _offStructChildren);
             while (GameChain.IsGamePtr(f) && seen.Add(f) && seen.Count <= 4000)
             {
-                byte[]? h = Read(f, 0x44);
+                byte[]? h = Read(f, len);
                 if (h == null) return 0; // torn read — don't cache a miss
                 if (NameLocked(System.BitConverter.ToInt32(h, OFF_OBJ_NAME)) == field &&
                     (ObjectNameLocked(System.BitConverter.ToInt32(h, OFF_OBJ_CLASS)) ?? "").EndsWith("Property"))
                 {
-                    int off = GameChain.RdInt(f + OFF_PROP_OFFSET);
+                    int off = GameChain.RdInt(f + _offPropOffset);
                     // A field lies inside its declaring class's instance.
                     if (off <= 0 || off >= size || (off & 3) != 0) return 0;
                     _offsets[(cls, field)] = off;
                     offset = off;
                     return f;
                 }
-                f = System.BitConverter.ToInt32(h, OFF_FIELD_NEXT);
+                f = System.BitConverter.ToInt32(h, _offFieldNext);
             }
         }
         return 0;
@@ -574,11 +939,29 @@ internal static class GameReflection
         return n == null ? null : number > 0 ? n + "_" + (number - 1) : n;
     }
 
+    // Names are cached by index for the attach. A miss re-reads the GNames
+    // header first: the table grows as maps load, and growing can move its
+    // data array (a stale snapshot would read freed memory).
     private static string? NameLocked(int index)
     {
         if (_names.TryGetValue(index, out string? s)) return s;
-        if (index < 0 || index >= _namesCount) return null;
-        int entry = GameChain.RdInt(_namesData + index * 4);
+        if (_namesHeader != 0 && Read(_namesHeader, 8) is byte[] h)
+        {
+            int data = System.BitConverter.ToInt32(h, 0), num = System.BitConverter.ToInt32(h, 4);
+            if (GameChain.IsGamePtr(data) && num > 0 && num <= 2_000_000) { _namesData = data; _namesCount = num; }
+        }
+        string? n = DecodeName(_namesData, _namesCount, index);
+        if (n != null) _names[index] = n;
+        return n;
+    }
+
+    // FNameEntry: flags +0x4; the string inline at +0x10, or (flag 0x4000)
+    // a pointer to it there. Uncached — the bootstrap decodes from
+    // candidate tables that may not be the real one.
+    private static string? DecodeName(int namesData, int namesCount, int index)
+    {
+        if (index < 0 || index >= namesCount) return null;
+        int entry = GameChain.RdInt(namesData + index * 4);
         if (!GameChain.IsGamePtr(entry)) return null;
         int flags = GameChain.RdInt(entry + 4);
         int str = (flags & 0x4000) == 0 ? entry + 0x10 : GameChain.RdInt(entry + 0x10);
@@ -589,66 +972,359 @@ internal static class GameReflection
             if (part == null) return null;
             foreach (byte ch in part)
             {
-                if (ch == 0) return _names[index] = System.Text.Encoding.Latin1.GetString(bytes.ToArray());
+                if (ch == 0) return System.Text.Encoding.Latin1.GetString(bytes.ToArray());
                 bytes.Add(ch);
             }
         }
         return null;
     }
 
-    // GNames + GObjects via the code signatures from the SDK's DD_Basic.cpp
-    // (same as DupeReferenceResolver). One pass over the module per attach,
-    // only on an explicit scan; names validated by index 0 reading "None".
-    // Returns true when the NAME table is available (the object table is
-    // optional — the chain route never needs it).
+    // ── Bootstrap: GNames / GObjects ──────────────────────────────────
+    //
+    // Three independent witnesses, each validated by CONTENT before it
+    // counts (DECISIONS "redundant, self-checking globals bootstrap"):
+    //   pin        — the headers accepted last time (Tunables), honored only
+    //                for the same exe build (PE TimeDateStamp);
+    //   signatures — EVERY site of each code signature, resolved to the
+    //                header it references. One global has dozens of sites
+    //                (10/2026 build: GNames ×3, GObjects ×55 + A1 ×1), so
+    //                agreement means one distinct validated header, not one
+    //                match — the old sweep took the first hit;
+    //   data scan  — every aligned {data, num, max} in the exe's writable
+    //                sections that validates as the table (skipped when both
+    //                pins validate). Survives a patch that breaks the
+    //                signatures, since it needs no code bytes.
+    // Two validated witnesses naming different headers = refused (the table
+    // is reported unavailable and callers fall back to their content routes)
+    // rather than a guess. A name table not found is retried after 15 s.
+    // Returns true when the NAME table is available; the object table is
+    // optional (the chain route never needs it).
     private static bool FindGlobalsLocked()
     {
-        if (_namesData != 0) return true;
-        if (_globalsSearched) return false;
+        if (_namesHeader != 0) return true;
+        if (_globalsSearched && System.Environment.TickCount64 < _globalsRetryAt) return false;
         _globalsSearched = true;
+        _globalsRetryAt = System.Environment.TickCount64 + 15_000;
 
-        int size = 0;
-        byte[]? dos = Read(ModuleBase, 0x40);
-        if (dos != null) size = GameChain.RdInt(ModuleBase + System.BitConverter.ToInt32(dos, 0x3C) + 0x50); // SizeOfImage
-        if (size < 0x10000 || size > 128 * 1024 * 1024) size = 32 * 1024 * 1024;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var pe = ReadPeLayout();
+        uint pinStamp = Tunables.GlobalsTimeDateStamp;
+        bool pinUsable = pe.Stamp != 0 && pinStamp == pe.Stamp;
+        int pnData = 0, pnCount = 0;
+        int pinNames = pinUsable && ValidateNamesHeader((int)Tunables.GNamesHeader, out pnData, out pnCount) ? (int)Tunables.GNamesHeader : 0;
+        int pinObjects = pinUsable && pinNames != 0 && ValidateObjectsHeader((int)Tunables.GObjectsHeader, pnData, pnCount) ? (int)Tunables.GObjectsHeader : 0;
 
-        byte[] np = { 0x8B, 0x0D, 0, 0, 0, 0, 0x83, 0x3C, 0x81, 0x00, 0x74 };
-        const string nm = "xx????xxxxx";
-        byte[] op = { 0x8B, 0, 0, 0, 0, 0, 0x8B, 0x04, 0, 0x8B, 0x40, 0, 0x25, 0, 0x02, 0, 0 };
-        const string om = "x?????xx?xx?xxxxx";
-        for (int off = 0; off < size && (_namesData == 0 || _objHeader == 0); off += 0x10000)
+        var sites = ScanSignatures(pe);
+        long sigMs = sw.ElapsedMilliseconds;
+        List<int>? dataNames = null, dataObjects = null;
+        string dataNote = "skipped (both pins valid)";
+        if (pinNames == 0 || pinObjects == 0)
         {
-            byte[]? b = Read(ModuleBase + off, System.Math.Min(0x10000 + 32, size - off));
-            if (b == null) continue;
-            for (int i = 0; i + om.Length < b.Length; i++)
+            if (!pe.Parsed) dataNote = "skipped (PE header unreadable)";
+            else
             {
-                if (b[i] != 0x8B) continue;
-                if (_namesData == 0 && Matches(b, i, np, nm))
+                ScanDataSections(pe, out dataNames, out dataObjects, out dataNote);
+                dataNote += $" in {sw.ElapsedMilliseconds - sigMs} ms";
+            }
+        }
+
+        // Names first: the object validator checks class names through them.
+        var namesSigs = new Dictionary<int, string>();
+        foreach (var (hdr, how) in sites.names)
+            if (ValidateNamesHeader(hdr, out _, out _)) namesSigs[hdr] = how;
+        int names = Agree(pinNames, namesSigs, dataNames, out string namesVerdict);
+        int nData = 0, nCount = 0;
+        if (names != 0) ValidateNamesHeader(names, out nData, out nCount);
+
+        int objects = 0;
+        string objectsVerdict = "not searched (no name table)";
+        if (names != 0)
+        {
+            var objectsSigs = new Dictionary<int, string>();
+            foreach (var (hdr, how) in sites.objects)
+                if (ValidateObjectsHeader(hdr, nData, nCount)) objectsSigs[hdr] = how;
+            objects = Agree(pinObjects, objectsSigs, dataObjects, out objectsVerdict);
+        }
+
+        _namesHeader = names;
+        _namesData = nData; _namesCount = nCount;
+        _objHeader = objects;
+        _names.Clear();
+        sw.Stop();
+        string pinNote = pinStamp == 0 ? "" : !pinUsable ? $" (pin is for 0x{pinStamp:X8}, ignored)"
+                       : pinNames == 0 || pinObjects == 0 ? " (pin failed validation, ignored)" : "";
+        _globalsStatus = $"GNames {namesVerdict}\nGObjects {objectsVerdict}\n" +
+                         $"build 0x{pe.Stamp:X8}{pinNote}; " +
+                         $"signatures {sites.note} in {sigMs} ms; data scan {dataNote}; total {sw.ElapsedMilliseconds} ms";
+        Base.LogEvent("Globals: " + _globalsStatus.Replace("\n", "; "));
+        if (names != 0 && objects != 0 && pe.Stamp != 0) Tunables.PinGlobals((uint)names, (uint)objects, pe.Stamp);
+        return names != 0;
+    }
+
+    private static long _globalsRetryAt;
+
+    private static int Fail(out string verdict, string why) { verdict = why; return 0; }
+
+    // The agreement rule (see FindGlobalsLocked). sigs: validated header ->
+    // which signatures reached it; data: validated data-scan hits (null =
+    // the scan did not run).
+    private static int Agree(int pin, Dictionary<int, string> sigs, List<int>? data, out string verdict)
+    {
+        if (sigs.Count > 1)
+            return Fail(out verdict, "refused — the signatures name " + sigs.Count + " different valid tables (" +
+                                     string.Join(", ", System.Linq.Enumerable.Select(sigs, kv => $"0x{kv.Key:X8} via {kv.Value}")) + ")");
+        int sig = 0; string how = "";
+        foreach (var kv in sigs) { sig = kv.Key; how = kv.Value; }
+        if (pin != 0 && sig != 0 && pin != sig)
+            return Fail(out verdict, $"refused — pin 0x{pin:X8} but signatures 0x{sig:X8} ({how})");
+        int pick = sig != 0 ? sig : pin;
+        string dataPart = "";
+        if (data != null)
+        {
+            if (pick != 0)
+            {
+                if (data.Count > 0 && !data.Contains(pick))
+                    return Fail(out verdict, $"refused — {(sig != 0 ? "signatures" : "pin")} 0x{pick:X8} but data scan " +
+                                             string.Join("/", data.ConvertAll(d => $"0x{d:X8}")));
+                dataPart = data.Count == 0 ? ", data scan found none" : data.Count == 1 ? ", data scan agrees" : $", data scan agrees ({data.Count} hits)";
+            }
+            else if (data.Count == 1) { pick = data[0]; dataPart = "data scan only (signatures found nothing)"; }
+            else return Fail(out verdict, data.Count == 0 ? "not found (no pin, no signature, no data-scan hit)"
+                                                          : $"refused — data scan alone found {data.Count} tables");
+        }
+        else if (pick == 0) return Fail(out verdict, "not found (no pin, no signature hit)");
+        verdict = $"0x{pick:X8} — " +
+                  (sig != 0 ? "signatures " + how + (pin != 0 ? ", pin agrees" : "") : pin != 0 ? "pin" : "") + dataPart;
+        return pick;
+    }
+
+    // {data, num, max} at hdr with the shape of a populated engine table
+    // (num capped like the walk's count; max only loosely — slack policy is
+    // the engine's business).
+    private static bool IsTableShape(int data, int num, int max) =>
+        GameChain.IsGamePtr(data) && (data & 3) == 0 && num >= 1000 && num <= 2_000_000 && num <= max && max <= 0x1000000;
+
+    private static bool ReadTableHeader(int hdr, out int data, out int num)
+    {
+        data = num = 0;
+        byte[]? h = GameChain.IsGamePtr(hdr) || (hdr >= ModuleBase && hdr < 0x01000000) ? Read(hdr, 12) : null;
+        if (h == null) return false;
+        data = System.BitConverter.ToInt32(h, 0); num = System.BitConverter.ToInt32(h, 4);
+        return IsTableShape(data, num, System.BitConverter.ToInt32(h, 8));
+    }
+
+    // GNames: entry 0 is "None", UE3's hardcoded property-type names sit in
+    // the first slots, and a spread sample of entries decodes as plain text.
+    // The table is sparse — UE3 reserves fixed slots for its hardcoded
+    // names, most of them unused (live 10/2026: 10 of 16 spread samples
+    // null at the splash screen) — so only the non-null samples are judged.
+    private static bool ValidateNamesHeader(int hdr, out int data, out int num)
+    {
+        if (!ReadTableHeader(hdr, out data, out num) || DecodeName(data, num, 0) != "None") return false;
+        var early = new HashSet<string>();
+        for (int i = 1; i <= 15; i++) if (DecodeName(data, num, i) is string s) early.Add(s);
+        if (!early.Contains("ByteProperty") || !early.Contains("IntProperty") || !early.Contains("BoolProperty")) return false;
+        int used = 0, printable = 0;
+        for (int k = 0; k < 32; k++)
+        {
+            int i = (int)((long)(num - 1) * k / 31);
+            if (GameChain.RdInt(data + i * 4) == 0) continue; // reserved, unused slot
+            used++;
+            string? s = DecodeName(data, num, i);
+            if (s is { Length: > 0 } && System.Linq.Enumerable.All(s, ch => ch >= 0x20 && ch < 0x7F)) printable++;
+        }
+        return used >= 4 && printable >= used - 1;
+    }
+
+    // GObjects: the first live object in each of 16 spread windows sits at
+    // the slot its ObjectInternalInteger names (the same round trip
+    // IsLiveObject uses), and the class of its class is "Class" (UClass is
+    // its own class). Windows, not single slots: the table can be very
+    // sparse (live 10/2026 at the splash screen: 15 of 17 spread slots
+    // null in 120k).
+    private static bool ValidateObjectsHeader(int hdr, int namesData, int namesCount)
+    {
+        if (!ReadTableHeader(hdr, out int data, out int num)) return false;
+        int used = 0, good = 0, someClass = 0;
+        const int window = 1024; // one page of slots
+        for (int k = 0; k < 16; k++)
+        {
+            int start = (int)((long)(num - 1) * k / 15);
+            int take = System.Math.Min(window, num - start);
+            byte[]? w = Read(data + start * 4, take * 4);
+            if (w == null) continue;
+            for (int j = 0; j < take; j++)
+            {
+                int p = System.BitConverter.ToInt32(w, j * 4);
+                if (p == 0) continue;
+                used++;
+                if (GameChain.IsGamePtr(p) && GameChain.RdInt(p + OFF_OBJ_INDEX) == start + j &&
+                    GameChain.IsGamePtr(GameChain.RdInt(p + OFF_OBJ_CLASS)))
                 {
-                    int hdr = System.BitConverter.ToInt32(b, i + 2);
-                    int data = GameChain.RdInt(hdr), count = GameChain.RdInt(hdr + 4), max = GameChain.RdInt(hdr + 8);
-                    if (GameChain.IsGamePtr(data) && count > 0 && count <= 2_000_000 && max >= count)
+                    good++;
+                    if (someClass == 0) someClass = GameChain.RdInt(p + OFF_OBJ_CLASS);
+                }
+                break;
+            }
+        }
+        if (used < 2 || good * 5 < used * 4) return false; // ≥ 80%: a slot can be freed mid-sample
+        int meta = GameChain.RdInt(someClass + OFF_OBJ_CLASS);
+        if (!GameChain.IsGamePtr(meta) || GameChain.RdInt(meta + OFF_OBJ_CLASS) != meta) return false;
+        return namesData == 0 || DecodeName(namesData, namesCount, GameChain.RdInt(meta + OFF_OBJ_NAME)) == "Class";
+    }
+
+    // Executable and writable section ranges of the exe image, and its
+    // build stamp. Unparseable header: the whole image counts as code, the
+    // header check falls back to "inside the image", and the data scan is
+    // skipped (Parsed = false).
+    private sealed class PeLayout
+    {
+        public readonly List<(int start, int end)> Exec = new(), Writable = new();
+        public uint Stamp;
+        public bool Parsed;
+        public int ImageEnd;
+
+        public bool HoldsHeader(int addr) =>
+            (addr & 3) == 0 && (Parsed ? Writable.Exists(r => addr >= r.start && addr + 12 <= r.end)
+                                       : addr >= ModuleBase && addr + 12 <= ImageEnd);
+    }
+
+    private static PeLayout ReadPeLayout()
+    {
+        var pe = new PeLayout();
+        byte[]? dos = Read(ModuleBase, 0x40);
+        int lfanew = dos != null && dos[0] == 'M' && dos[1] == 'Z' ? System.BitConverter.ToInt32(dos, 0x3C) : 0;
+        byte[]? nt = lfanew is > 0 and < 0x1000 ? Read(ModuleBase + lfanew, 0x54) : null;
+        int size = 0;
+        if (nt != null && nt[0] == 'P' && nt[1] == 'E' && nt[2] == 0 && nt[3] == 0)
+        {
+            int sections = System.BitConverter.ToUInt16(nt, 6);
+            pe.Stamp = System.BitConverter.ToUInt32(nt, 8);
+            int optSize = System.BitConverter.ToUInt16(nt, 20);
+            size = System.BitConverter.ToInt32(nt, 0x50); // SizeOfImage
+            byte[]? tbl = sections is > 0 and <= 96 ? Read(ModuleBase + lfanew + 24 + optSize, sections * 40) : null;
+            if (tbl != null)
+                for (int s = 0; s < sections; s++)
+                {
+                    int vsize = System.BitConverter.ToInt32(tbl, s * 40 + 8), va = System.BitConverter.ToInt32(tbl, s * 40 + 12);
+                    uint flags = System.BitConverter.ToUInt32(tbl, s * 40 + 36);
+                    if (vsize <= 0 || va <= 0 || vsize > 0x4000000) continue;
+                    var r = (ModuleBase + va, ModuleBase + va + vsize);
+                    if ((flags & 0x20000000) != 0) pe.Exec.Add(r);     // IMAGE_SCN_MEM_EXECUTE
+                    if ((flags & 0x80000000) != 0) pe.Writable.Add(r); // IMAGE_SCN_MEM_WRITE
+                }
+            pe.Parsed = pe.Exec.Count > 0 && pe.Writable.Count > 0;
+        }
+        if (size < 0x10000 || size > 128 * 1024 * 1024) size = 32 * 1024 * 1024;
+        pe.ImageEnd = ModuleBase + size;
+        if (!pe.Parsed) { pe.Exec.Clear(); pe.Writable.Clear(); pe.Exec.Add((ModuleBase, pe.ImageEnd)); }
+        return pe;
+    }
+
+    // Code signatures for instructions that load the table headers. The
+    // first two are the SDK's (DD_Basic.cpp); A1 is the `mov eax, [abs]`
+    // form of the GObjects flag test (`and eax, 0x200` = RF_ flag on
+    // ObjectFlags +0x8), found by static analysis of the 10/2026 build.
+    private readonly record struct Sig(string Name, bool Names, byte[] Pat, string Mask, int OperandAt);
+
+    private static readonly Sig[] Sigs =
+    {
+        new("#1", true, new byte[] { 0x8B, 0x0D, 0, 0, 0, 0, 0x83, 0x3C, 0x81, 0x00, 0x74 }, "xx????xxxxx", 2),
+        new("#1", false, new byte[] { 0x8B, 0, 0, 0, 0, 0, 0x8B, 0x04, 0, 0x8B, 0x40, 0, 0x25, 0, 0x02, 0, 0 }, "x?????xx?xx?xxxxx", 2),
+        new("A1", false, new byte[] { 0xA1, 0, 0, 0, 0, 0x8B, 0, 0, 0x8B, 0, 0, 0x25, 0, 0x02, 0, 0 }, "x????x??x??xxxxx", 1),
+    };
+
+    // Every site of every signature over the executable sections, grouped
+    // by the header each references (must lie in a writable section).
+    // Values: "#1 ×55 + A1 ×1".
+    private static (Dictionary<int, string> names, Dictionary<int, string> objects, string note) ScanSignatures(PeLayout pe)
+    {
+        var counts = new Dictionary<(int hdr, bool names), Dictionary<string, int>>();
+        int sites = 0;
+        const int chunk = 1 << 20, overlap = 32;
+        foreach (var (start, end) in pe.Exec)
+            for (int at = start; at < end; at += chunk)
+            {
+                int len = System.Math.Min(chunk + overlap, end - at);
+                byte[]? b = ReadLoose(at, len);
+                if (b == null) continue;
+                int stop = System.Math.Min(chunk, len);
+                for (int i = 0; i < stop; i++)
+                {
+                    byte first = b[i];
+                    if (first != 0x8B && first != 0xA1) continue;
+                    foreach (var sig in Sigs)
                     {
-                        _namesData = data;
-                        _namesCount = count;
-                        if (NameLocked(0) != "None") { _namesData = _namesCount = 0; _names.Clear(); }
+                        if (sig.Pat[0] != first || !Matches(b, i, sig.Pat, sig.Mask)) continue;
+                        // 8B /r with a disp32-only ModRM: the operand really is
+                        // an absolute address.
+                        if (first == 0x8B && (b[i + 1] & 0xC7) != 0x05) continue;
+                        int hdr = System.BitConverter.ToInt32(b, i + sig.OperandAt);
+                        if (!pe.HoldsHeader(hdr)) continue;
+                        sites++;
+                        if (!counts.TryGetValue((hdr, sig.Names), out var bySig)) counts[(hdr, sig.Names)] = bySig = new();
+                        bySig[sig.Name] = bySig.GetValueOrDefault(sig.Name) + 1;
                     }
                 }
-                if (_objHeader == 0 && Matches(b, i, op, om))
-                {
-                    int hdr = System.BitConverter.ToInt32(b, i + 2);
-                    int data = GameChain.RdInt(hdr), count = GameChain.RdInt(hdr + 4), max = GameChain.RdInt(hdr + 8);
-                    if (GameChain.IsGamePtr(data) && count > 0 && count <= 2_000_000 && max >= count && max <= 2_000_000)
-                        _objHeader = hdr;
-                }
             }
-            if ((off / 0x10000) % 16 == 15) System.Threading.Thread.Sleep(1); // share the game handle
+        var names = new Dictionary<int, string>();
+        var objects = new Dictionary<int, string>();
+        foreach (var ((hdr, isNames), bySig) in counts)
+            (isNames ? names : objects)[hdr] = string.Join(" + ", System.Linq.Enumerable.Select(bySig, kv => $"{kv.Key} ×{kv.Value}"));
+        return (names, objects, $"{sites} sites → {names.Count} names / {objects.Count} objects header(s)");
+    }
+
+    // Every 4-aligned {data, num, max} in the writable sections that
+    // validates as GNames or GObjects. Header shape is checked from the
+    // section bytes already read; only the survivors cost extra reads.
+    private static void ScanDataSections(PeLayout pe, out List<int> names, out List<int> objects, out string note)
+    {
+        names = new List<int>();
+        objects = new List<int>();
+        var candidates = new List<int>();
+        const int chunk = 256 * 1024, cap = 4096;
+        foreach (var (start, end) in pe.Writable)
+            for (int at = start; at < end && candidates.Count < cap; at += chunk)
+            {
+                int len = System.Math.Min(chunk + 8, end - at);
+                byte[]? b = ReadLoose(at, len);
+                if (b == null) continue;
+                int stop = System.Math.Min(chunk, len - 12);
+                for (int i = 0; i <= stop && candidates.Count < cap; i += 4)
+                    if (IsTableShape(System.BitConverter.ToInt32(b, i), System.BitConverter.ToInt32(b, i + 4), System.BitConverter.ToInt32(b, i + 8)))
+                        candidates.Add(at + i);
+            }
+        int nData = 0, nCount = 0;
+        foreach (int c in candidates)
+            if (ValidateNamesHeader(c, out int d, out int n)) { names.Add(c); if (nData == 0) { nData = d; nCount = n; } }
+        foreach (int c in candidates)
+            if (!names.Contains(c) && ValidateObjectsHeader(c, nData, nCount)) objects.Add(c);
+        note = $"{candidates.Count}{(candidates.Count >= cap ? " (capped)" : "")} candidates → {names.Count} names / {objects.Count} objects";
+    }
+
+    // A read that survives an unreadable page inside the range: on failure
+    // it re-reads page by page and leaves the holes zeroed. null only when
+    // nothing at all was readable.
+    private static byte[]? ReadLoose(int addr, int len)
+    {
+        byte[]? whole = Read(addr, len);
+        if (whole != null) return whole;
+        var b = new byte[len];
+        bool any = false;
+        for (int off = 0; off < len;)
+        {
+            int pageEnd = ((addr + off) & ~0xFFF) + 0x1000;
+            int take = System.Math.Min(pageEnd - (addr + off), len - off);
+            byte[]? part = Read(addr + off, take);
+            if (part != null) { System.Buffer.BlockCopy(part, 0, b, off, take); any = true; }
+            off += take;
         }
-        return _namesData != 0;
+        return any ? b : null;
     }
 
     private static bool Matches(byte[] b, int at, byte[] pat, string mask)
     {
+        if (at + mask.Length > b.Length) return false;
         for (int k = 0; k < mask.Length; k++)
             if (mask[k] == 'x' && b[at + k] != pat[k]) return false;
         return true;
