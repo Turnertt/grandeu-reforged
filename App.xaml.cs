@@ -103,13 +103,78 @@ public partial class App : Application
     // than bool: OnMessage can be raised from a background thread.
     private static int _messageBoxOpen;
 
+    protected override void OnExit(ExitEventArgs e)
+    {
+        // The marker the next session looks for: without it, this session
+        // crashed or was killed (Base.BeginSession reports that).
+        Base.EndSession();
+        base.OnExit(e);
+    }
+
+    // Everything here comes from the OS and the tool's own files — never
+    // game memory — so the header is written even when nothing else works.
+    // The " | admin " token on the first line also tells the next session
+    // this log carries the clean-exit marker (Base.EndedCleanly).
     private static string BuildSessionHeader()
     {
         string ver = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-        return "=== GrandeuReforged " + ver
+        string header = "=== GrandeuReforged " + ver
              + " | " + System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
              + " | Windows " + Environment.OSVersion.Version
+             + " | admin " + (IsElevated() ? "yes" : "no")
              + " | " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ===";
+        try
+        {
+            string? wine = WineVersion();
+            header += "\nhost: " + (wine != null ? "Wine/Proton " + wine : "Windows (not Wine)")
+                    + " | " + System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription
+                    + " | exe " + (Environment.ProcessPath ?? "?");
+        }
+        catch { }
+        try
+        {
+            header += "\nsaved addresses: "
+                    + (File.Exists(Tunables.FilePath)
+                        ? (Tunables.GameTimeDateStamp != 0 ? $"present, pinned for game build 0x{Tunables.GameTimeDateStamp:X8}" : "present, no game build recorded")
+                        : "none yet")
+                    + " | last game build seen: " + (Prefs.Current.LastGameBuild ?? "none yet");
+        }
+        catch { }
+        return header;
+    }
+
+    private static bool IsElevated()
+    {
+        try
+        {
+            using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return new System.Security.Principal.WindowsPrincipal(id)
+                .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch { return false; }
+    }
+
+    // Wine exports wine_get_version from its ntdll; real Windows doesn't.
+    // The standard detection — no file or registry sniffing.
+    [System.Runtime.InteropServices.DllImport("kernel32", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string name);
+    [System.Runtime.InteropServices.DllImport("kernel32", CharSet = System.Runtime.InteropServices.CharSet.Ansi)]
+    private static extern IntPtr GetProcAddress(IntPtr module, string name);
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate IntPtr WineGetVersion();
+
+    private static string? WineVersion()
+    {
+        try
+        {
+            IntPtr ntdll = GetModuleHandle("ntdll.dll");
+            if (ntdll == IntPtr.Zero) return null;
+            IntPtr fn = GetProcAddress(ntdll, "wine_get_version");
+            if (fn == IntPtr.Zero) return null;
+            var get = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<WineGetVersion>(fn);
+            return System.Runtime.InteropServices.Marshal.PtrToStringAnsi(get()) ?? "unknown";
+        }
+        catch { return null; }
     }
 
     private static void LogFatal(string kind, Exception? ex)

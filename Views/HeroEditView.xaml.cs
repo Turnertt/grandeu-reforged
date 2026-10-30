@@ -20,6 +20,9 @@ public partial class HeroEditView : UserControl
     public HeroEditView(int address, string name)
     {
         InitializeComponent();
+        // Hero Search scans on the UI thread, so the layout check may not
+        // have run this attach; start it now (worker) for the write gate.
+        _ = System.Threading.Tasks.Task.Run(LayoutRegistry.Ensure);
         Address = address;
         StatusText.Text = "Hero - " + Base.Truncate(name);
         Loaded += (s, e) => ShowDetails();
@@ -129,6 +132,12 @@ public partial class HeroEditView : UserControl
         {
             StatusText.Text = "Invalid: " + v.Report();
             v.FocusFirstError();
+            return;
+        }
+
+        if (!LayoutRegistry.HeroBlockOk(out string why))
+        {
+            StatusText.Text = "Not written — " + why;
             return;
         }
 

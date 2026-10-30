@@ -27,8 +27,13 @@ public sealed class Prefs
     // Write a session log to %LOCALAPPDATA%\Modinator\modinator_log.txt so it
     // can be shared when something goes wrong. ON by default: a log that only
     // exists after the user has already hit the bug is no use. One session per
-    // file — Base.BeginSession truncates it at startup.
+    // file — Base.BeginSession moves the previous one to modinator_log.prev.txt.
     public bool ErrorLogEnabled { get; set; } = true;
+
+    // The DunDefGame.exe build (PE stamp + date) seen on the last attach, so
+    // the log can say "same build as last time" / "NEW GAME BUILD". Read from
+    // the exe file, never game memory. Bookkeeping only — nothing keys off it.
+    public string? LastGameBuild { get; set; }
 
     public static string FilePath =>
         Path.Combine(

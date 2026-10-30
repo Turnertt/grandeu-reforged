@@ -61,6 +61,9 @@ public partial class BulkEditDialog : Window
                             IReadOnlyDictionary<int, ItemIdentity> identities)
     {
         InitializeComponent();
+        // Item Search scans on the UI thread, so the layout check may not
+        // have run this attach; start it now (worker) for the write gate.
+        _ = System.Threading.Tasks.Task.Run(LayoutRegistry.Ensure);
         // Removal is only offered while the watermark is switched off.
         BtnRemoveMarks.Visibility = Watermark.Enabled ? Visibility.Collapsed : Visibility.Visible;
 
@@ -288,9 +291,19 @@ public partial class BulkEditDialog : Window
         }.Count(c => c);
     }
 
+    // Whole runs are refused, not single items: a moved field is moved on
+    // every item. Only a positive Moved verdict refuses (LayoutRegistry).
+    private static bool LayoutOk()
+    {
+        if (LayoutRegistry.ItemBlockOk(out string why)) return true;
+        Base.RaiseMessage(why, "Bulk Edit");
+        return false;
+    }
+
     private void BtnApply_Click(object sender, RoutedEventArgs e)
     {
         if (_loadFailed) return; // baselines are zeroed — dialog is closing
+        if (!LayoutOk()) return;
         var v = new FieldValidator();
         var p = new BulkPlan();
 
@@ -559,6 +572,7 @@ public partial class BulkEditDialog : Window
     private void BtnRemoveMarks_Click(object sender, RoutedEventArgs e)
     {
         if (_loadFailed || Watermark.Enabled) return;
+        if (!LayoutOk()) return;
         var confirm = MessageBox.Show(
             $"Remove the watermark from the descriptions of {_addresses.Count} items? Nothing else on them is changed.",
             "Remove watermarks", MessageBoxButton.YesNo, MessageBoxImage.Question);
@@ -601,6 +615,7 @@ public partial class BulkEditDialog : Window
     private void BtnMax_Click(object sender, RoutedEventArgs e)
     {
         if (_loadFailed) return; // baselines are zeroed — dialog is closing
+        if (!LayoutOk()) return;
         var cfg = MaxItemConfig.Load();
 
         var confirm = MessageBox.Show(
@@ -673,12 +688,12 @@ public partial class BulkEditDialog : Window
         catch (Exception ex) { return (false, "Push<ItemNative>", ex.GetType().Name + ": " + ex.Message); }
 
         // weaponType (EWeaponType) lives outside the marshaled ItemNative
-        // (object+0x824 = address + MaxCompat.WeaponTypeOffset). Read the
+        // (object+0x824, by name via DupeMemory.WeaponTypeItemOffset). Read the
         // byte so ApplyTo can be class-aware; harmless/ignored for non-weapons.
         byte weaponType = 0;
         try
         {
-            byte[]? wb = Base.Instance.ReadMemory(address + MaxCompat.WeaponTypeOffset, 1);
+            byte[]? wb = Base.Instance.ReadMemory(address + DupeMemory.WeaponTypeItemOffset(address), 1);
             if (wb != null && wb.Length > 0) weaponType = wb[0];
         }
         catch { }

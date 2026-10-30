@@ -421,7 +421,7 @@ public partial class ItemDupeView : UserControl
                 int obj = unchecked(src - 0x38);
                 return new DupeSourceShape(DupeMemory.ClassPath(archetype), GameReflection.ObjectPath(archetype),
                     Base.Instance.ReadMemory(obj + 0xDA, 1)[0],
-                    Base.Instance.ReadMemory(obj + DupeMemory.WeaponTypeObjectOffset, 1)[0]);
+                    Base.Instance.ReadMemory(obj + DupeMemory.WeaponTypeOffset(obj), 1)[0]);
             }
         }
         catch { }

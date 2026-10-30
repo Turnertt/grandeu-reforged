@@ -172,11 +172,14 @@
                     </Button>
                 </Grid>
 
-                <!-- Row 2: tip card + update tile (half-width each). The
-                     Item / Hero / Misc memory-search tools now live under
-                     "Advanced" in the sidebar. -->
+                <!-- Row 2: tip card + Discord tile + update tile (same
+                     three-column grid as the GO TO row). The Item / Hero /
+                     Misc memory-search tools now live under "Advanced" in
+                     the sidebar. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="12" />
                         <ColumnDefinition Width="*" />
@@ -199,8 +202,34 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Update tile -->
+                    <!-- Discord tile -->
                     <Button Grid.Column="2" Style="{StaticResource TileButton}"
+                            Click="OpenLink_Click"
+                            Tag="https://discord.gg/ZuX5n567TV"
+                            ToolTip="Opens the GrandeuReforged Discord invite in your browser">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,14" HorizontalAlignment="Left">
+                                <Border Width="40" Height="40" CornerRadius="10"
+                                        Background="{StaticResource AccentSubtleBrush}" />
+                                <TextBlock Text="&#xE8F2;"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                           Foreground="{StaticResource AccentBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="Join the Discord"
+                                       FontSize="16" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Margin="0,0,0,4" />
+                            <TextBlock Text="Get help, report bugs and hear about new releases. Paste your COPY REPORT from Settings when you post a bug."
+                                       FontSize="12"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       TextWrapping="Wrap" LineHeight="17" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Update tile -->
+                    <Button Grid.Column="4" Style="{StaticResource TileButton}"
                             Click="OpenLink_Click"
                             Tag="https://github.com/Turnertt/grandeu-reforged"
                             ToolTip="Opens the GrandeuReforged GitHub page in your browser">

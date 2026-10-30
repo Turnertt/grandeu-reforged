@@ -61,6 +61,13 @@ internal static class GameReflection
     private static int _offFieldSuper = DefFieldSuper, _offFieldNext = DefFieldNext;
     private static int _offStructChildren = DefStructChildren, _offStructPropSize = DefStructPropSize;
     private static int _offPropOffset = DefPropOffset, _offBoolBitmask = DefBoolBitmask;
+    // UProperty.ElementSize (DD1_INTERNALS §3a; live 2026-10-29: Byte 1,
+    // Int 4, Name 8, Str 12, LinearColor 16 — the SDK does not name it).
+    // Not calibrated: it is used only when Core.Object's header properties
+    // read back their known sizes through it this attach (CoreSelfCheck);
+    // otherwise the property-offset check keeps its 4-byte alignment rule.
+    private const int DefPropElementSize = 0x48;
+    private static bool _elementSizeUsable;
 
     // The engine UClass objects the trust check anchors on (exact UE3 class
     // names — each exists exactly once, loaded at engine start).
@@ -73,6 +80,9 @@ internal static class GameReflection
     private static int _objHeader;          // FArray header of GObjects (data, num, max) — re-read per walk
     private static bool _globalsSearched;
     private static string _globalsStatus = "not searched yet";
+    private static long _objectsRetryAt;    // next object-table re-search while names are found but objects aren't
+    private static int _objectsRetries;
+    private static string _objectLogKey = ""; // last Objects: line logged, minus per-walk counts/timing
     private static bool? _trusted;
     private static string _status = "not checked yet";
     private static string _trustDetail = "";
@@ -85,7 +95,9 @@ internal static class GameReflection
     private static readonly Dictionary<int, string> _names = new();
     private static readonly Dictionary<int, string> _classNames = new();   // UClass* -> name
     private static readonly Dictionary<string, int> _classObjects = new(); // engine class name -> UClass*
+    private static readonly Dictionary<string, HashSet<int>> _classesByLeaf = new(); // class name -> every UClass* with it (last walk)
     private static readonly Dictionary<(int cls, string field), int> _offsets = new();
+    private static bool _lastLookupTorn; // the last FindPropertyLocked miss was a torn read, not an absent field
     private static readonly Dictionary<(int cls, string field), (int offset, uint mask)> _boolFields = new();
     private static readonly Dictionary<(int cls, string name), bool> _classMatches = new(); // "is cls a subclass of name" (fully read chains only)
 
@@ -145,6 +157,9 @@ internal static class GameReflection
         _objHeader = 0;
         _globalsSearched = false;
         _globalsStatus = "not searched yet";
+        _objectsRetryAt = 0;
+        _objectsRetries = 0;
+        _objectLogKey = "";
         _trusted = null;
         _trustRetryAt = 0;
         _status = "not checked yet";
@@ -158,9 +173,17 @@ internal static class GameReflection
         _names.Clear();
         _classNames.Clear();
         _classObjects.Clear();
+        _classesByLeaf.Clear();
         _offsets.Clear();
         _boolFields.Clear();
         _classMatches.Clear();
+    }
+
+    // The reader's verdict for this attach: null = undecided (waiting for
+    // Core.u at the splash screen, or no walk yet), false = off.
+    public static bool? Trusted
+    {
+        get { lock (_gate) { SyncSession(); if (_trusted == null) EnsureTrustedLocked(); return _trusted; } }
     }
 
     // ── Object-list utilities for other readers ───────────────────────
@@ -421,6 +444,7 @@ internal static class GameReflection
         }
         var props = ChildPropertiesLocked(core, _offStructChildren, _offFieldNext, out _);
         if (props == null) { detail = $"Core.Object's field list (Children +0x{_offStructChildren:X}, Next +0x{_offFieldNext:X}) is not a valid list"; return false; }
+        bool sizesOk = true;
         foreach (var (name, offset) in CoreHeader)
         {
             int got = props.TryGetValue(name, out int p) ? GameChain.RdInt(p + _offPropOffset) : -1;
@@ -430,7 +454,10 @@ internal static class GameReflection
                                  : $"Core.Object.{name} Offset reads 0x{got:X} at +0x{_offPropOffset:X}, expected 0x{offset:X}";
                 return false;
             }
+            // Name is an FName (8 bytes); the other four header fields are 4.
+            if (GameChain.RdInt(p + DefPropElementSize) != (name == "Name" ? 8 : 4)) sizesOk = false;
         }
+        _elementSizeUsable = sizesOk;
         if (!superProven)
         {
             if (!_coreClasses.TryGetValue("Field", out int field) || !_coreClasses.TryGetValue("Property", out int prop))
@@ -446,7 +473,8 @@ internal static class GameReflection
             }
         }
         detail = $"Core.Object PropertySize 0x{size:X}; " +
-                 string.Join("  ", System.Array.ConvertAll(CoreHeader, h => $"{h.name} 0x{h.offset:X}"));
+                 string.Join("  ", System.Array.ConvertAll(CoreHeader, h => $"{h.name} 0x{h.offset:X}")) +
+                 (sizesOk ? "; ElementSize 0x48 proven" : "; ElementSize 0x48 unproven (byte fields not resolved)");
         return true;
     }
 
@@ -585,6 +613,7 @@ internal static class GameReflection
         _offFieldSuper = DefFieldSuper; _offFieldNext = DefFieldNext;
         _offStructChildren = DefStructChildren; _offStructPropSize = DefStructPropSize;
         _offPropOffset = DefPropOffset; _offBoolBitmask = DefBoolBitmask;
+        _elementSizeUsable = false;
     }
 
     // Pawn.Controller / PlayerController.Player / LocalPlayer.ViewportClient
@@ -700,7 +729,7 @@ internal static class GameReflection
         if (!FindGlobalsLocked() || _objHeader == 0)
         {
             _objectStatus = "unavailable — the game's object table (GObjects) was not found";
-            Base.LogEvent("Objects: " + _objectStatus);
+            LogObjectsLocked(_objectStatus);
             return;
         }
         // Re-read the header every walk: objects are created and destroyed
@@ -709,13 +738,14 @@ internal static class GameReflection
         if (!GameChain.IsGamePtr(data) || count <= 0 || count > 2_000_000)
         {
             _objectStatus = $"unavailable — object table header unreadable (data=0x{data:X8} num={count})";
-            Base.LogEvent("Objects: " + _objectStatus);
+            LogObjectsLocked("unavailable — object table header unreadable");
             return;
         }
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var managers = new List<int>();
         _worldInfos.Clear();
+        _classesByLeaf.Clear();
         int viewport = 0, seen = 0;
         const int chunk = 4096;
         for (int i = 0; i < count; i += chunk)
@@ -741,6 +771,11 @@ internal static class GameReflection
                         // trust self-check / calibration read (each exists
                         // exactly once, loaded at engine start).
                         string? n = ObjectNameLocked(obj);
+                        if (n != null)
+                        {
+                            if (!_classesByLeaf.TryGetValue(n, out var same)) _classesByLeaf[n] = same = new();
+                            same.Add(obj);
+                        }
                         if (n is ClsPawn or ClsPlayerController or ClsLocalPlayer) _classObjects.TryAdd(n, obj);
                         else if (n is "Object" or "Field" or "Struct" or "Property" or "BoolProperty" && IsCoreClassLocked(obj, n, "Core"))
                             _coreClasses.TryAdd(n, obj);
@@ -792,6 +827,15 @@ internal static class GameReflection
                         (viewport != 0 ? $", viewport 0x{viewport:X8}" : ", no viewport instance") +
                         (_classObjects.Count == 3 ? "" : $", engine anchors {_classObjects.Count}/3") +
                         $", {_worldInfos.Count} WorldInfo";
+        LogObjectsLocked(_objectStatus.Substring(_objectStatus.IndexOf(" — ", System.StringComparison.Ordinal) + 3));
+    }
+
+    // Logs the walk's status only when `key` (the outcome, without the
+    // object count and timing that differ every walk) changes.
+    private static void LogObjectsLocked(string key)
+    {
+        if (key == _objectLogKey) return;
+        _objectLogKey = key;
         Base.LogEvent("Objects: " + _objectStatus);
     }
 
@@ -859,6 +903,99 @@ internal static class GameReflection
         }
     }
 
+    // ── Class-keyed lookups (LayoutRegistry) ──────────────────────────
+    //
+    // FieldOffset needs an instance, and Main / DunDefPlayer / dropped items
+    // only have one inside a level. These take the UClass itself, found by
+    // package-qualified name from the last object walk — so the whole
+    // registry can be checked at the main menu.
+
+    // Re-walk the object list so ClassByName sees classes loaded since the
+    // last walk (LayoutRegistry's retry after a "not loaded" verdict).
+    public static void RefreshClasses()
+    {
+        lock (_gate) { SyncSession(); WalkObjectsLocked(); }
+    }
+
+    // The UClass `package.leaf`; 0 with a reason when it isn't loaded or
+    // when more than one class carries that name (a mod package could add
+    // one) — never a guess. Walks the object list once if nothing has yet.
+    public static int ClassByName(string package, string leaf, out string why)
+    {
+        lock (_gate)
+        {
+            SyncSession();
+            why = "";
+            if (_classesByLeaf.Count == 0) WalkObjectsLocked();
+            if (_classesByLeaf.Count == 0) { why = "object list unavailable"; return 0; }
+            if (!_classesByLeaf.TryGetValue(leaf, out var all)) { why = $"class {package}.{leaf} is not loaded"; return 0; }
+            int hit = 0, hits = 0;
+            foreach (int c in all)
+                if (OutermostNameLocked(c) == package) { hit = c; hits++; }
+            if (hits == 1) return hit;
+            why = hits == 0 ? $"class {leaf} is loaded, but not from package {package}" : $"{hits} classes named {package}.{leaf}";
+            return 0;
+        }
+    }
+
+    private static string? OutermostNameLocked(int obj)
+    {
+        for (int i = 0; i < 12 && GameChain.IsGamePtr(obj); i++)
+        {
+            int outer = GameChain.RdInt(obj + OFF_OBJ_OUTER);
+            if (outer == 0) return ObjectNameLocked(obj);
+            obj = outer;
+        }
+        return null;
+    }
+
+    // Offset of `field` on the class `cls` or a superclass: -1 when the
+    // reader isn't trusted or no property by that name passed the checks;
+    // `torn` = the miss was an unreadable node (retry later), not an answer.
+    public static int ClassFieldOffset(int cls, string field, out bool torn)
+    {
+        lock (_gate)
+        {
+            SyncSession();
+            torn = false;
+            if (_trusted == null) EnsureTrustedLocked();
+            if (_trusted != true) return -1;
+            _lastLookupTorn = false;
+            int off = OffsetOfClassLocked(cls, field);
+            torn = off < 0 && _lastLookupTorn;
+            return off;
+        }
+    }
+
+    // BoolField by class: (-1, 0) as BoolField; `torn` as ClassFieldOffset.
+    public static (int offset, uint mask) ClassBoolField(int cls, string field, out bool torn)
+    {
+        lock (_gate)
+        {
+            SyncSession();
+            torn = false;
+            if (_trusted == null) EnsureTrustedLocked();
+            if (_trusted != true || !_boolFieldsUsable || !GameChain.IsGamePtr(cls)) return (-1, 0);
+            if (_boolFields.TryGetValue((cls, field), out var cached)) return cached;
+            _lastLookupTorn = false;
+            var result = ResolveBoolFieldLocked(cls, field);
+            if (result.offset < 0 && _lastLookupTorn) { torn = true; return result; } // don't cache a torn miss
+            _boolFields[(cls, field)] = result;
+            return result;
+        }
+    }
+
+    // UStruct.PropertySize of a class (its instance size); -1 when untrusted.
+    public static int ClassPropertySize(int cls)
+    {
+        lock (_gate)
+        {
+            SyncSession();
+            if (_trusted == null) EnsureTrustedLocked();
+            return _trusted == true && GameChain.IsGamePtr(cls) ? GameChain.RdInt(cls + _offStructPropSize) : -1;
+        }
+    }
+
     private static (int offset, uint mask) ResolveBoolFieldLocked(int cls, string field)
     {
         int prop = FindPropertyLocked(cls, field, out int off);
@@ -904,13 +1041,26 @@ internal static class GameReflection
             while (GameChain.IsGamePtr(f) && seen.Add(f) && seen.Count <= 4000)
             {
                 byte[]? h = Read(f, len);
-                if (h == null) return 0; // torn read — don't cache a miss
+                if (h == null) { _lastLookupTorn = true; return 0; } // torn read — don't cache a miss
                 if (NameLocked(System.BitConverter.ToInt32(h, OFF_OBJ_NAME)) == field &&
                     (ObjectNameLocked(System.BitConverter.ToInt32(h, OFF_OBJ_CLASS)) ?? "").EndsWith("Property"))
                 {
                     int off = GameChain.RdInt(f + _offPropOffset);
-                    // A field lies inside its declaring class's instance.
-                    if (off <= 0 || off >= size || (off & 3) != 0) return 0;
+                    // A field lies inside its declaring class's instance,
+                    // aligned to its element: bytes anywhere, 2-byte
+                    // elements on 2, everything wider on 4. Alignment is
+                    // the largest power of two dividing the size, so a
+                    // byte-only struct of 3 or 6 bytes isn't refused.
+                    // Without a proven ElementSize, 4 for all (byte fields
+                    // then don't resolve — the pre-2026-10-29 rule).
+                    int align = 4;
+                    if (_elementSizeUsable)
+                    {
+                        int es = GameChain.RdInt(f + DefPropElementSize);
+                        if (es < 1 || es > 0x10000) { _lastLookupTorn = true; return 0; } // failed read — retry, don't cache
+                        align = es % 4 == 0 ? 4 : es % 2 == 0 ? 2 : 1;
+                    }
+                    if (off <= 0 || off >= size || off % align != 0) return 0;
                     _offsets[(cls, field)] = off;
                     offset = off;
                     return f;
@@ -1001,7 +1151,19 @@ internal static class GameReflection
     // optional (the chain route never needs it).
     private static bool FindGlobalsLocked()
     {
-        if (_namesHeader != 0) return true;
+        if (_namesHeader != 0)
+        {
+            // Names found but the object table not: usually an attach while
+            // the game was still loading (GObjects isn't populated yet, so no
+            // witness validates). That verdict used to stick for the whole
+            // attach — floor items and every object-list route stayed dead
+            // until the tool was restarted. Re-search the object table alone,
+            // backing off 5 s → 60 s so a table that's genuinely gone costs
+            // one search a minute.
+            if (_objHeader == 0 && System.Environment.TickCount64 >= _objectsRetryAt)
+                RetryObjectsLocked();
+            return true;
+        }
         if (_globalsSearched && System.Environment.TickCount64 < _globalsRetryAt) return false;
         _globalsSearched = true;
         _globalsRetryAt = System.Environment.TickCount64 + 15_000;
@@ -1062,6 +1224,39 @@ internal static class GameReflection
     }
 
     private static long _globalsRetryAt;
+
+    // The object-table half of FindGlobalsLocked, same witnesses and the
+    // same agreement rule. Validated against the LIVE name table (it grows
+    // while the game loads). Quiet on failure — the first search logged why.
+    private static void RetryObjectsLocked()
+    {
+        _objectsRetries++;
+        _objectsRetryAt = System.Environment.TickCount64 + System.Math.Min(60_000, 5_000L << System.Math.Min(_objectsRetries - 1, 4));
+        try
+        {
+            if (!ValidateNamesHeader(_namesHeader, out int nData, out int nCount)) return;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var pe = ReadPeLayout();
+            bool pinUsable = pe.Stamp != 0 && Tunables.GlobalsTimeDateStamp == pe.Stamp;
+            int pinObjects = pinUsable && ValidateObjectsHeader((int)Tunables.GObjectsHeader, nData, nCount) ? (int)Tunables.GObjectsHeader : 0;
+            var sites = ScanSignatures(pe);
+            List<int>? dataObjects = null;
+            if (pinObjects == 0 && pe.Parsed) ScanDataSections(pe, out _, out dataObjects, out _);
+            var objectsSigs = new Dictionary<int, string>();
+            foreach (var (hdr, how) in sites.objects)
+                if (ValidateObjectsHeader(hdr, nData, nCount)) objectsSigs[hdr] = how;
+            int objects = Agree(pinObjects, objectsSigs, dataObjects, out string verdict);
+            if (objects == 0) return;
+            _objHeader = objects;
+            _namesData = nData; _namesCount = nCount;
+            string[] lines = _globalsStatus.Split('\n');
+            if (lines.Length > 1) lines[1] = "GObjects " + verdict + $" (retry {_objectsRetries})";
+            _globalsStatus = string.Join("\n", lines);
+            Base.LogEvent($"Globals: GObjects {verdict} — found on retry {_objectsRetries} in {sw.ElapsedMilliseconds} ms");
+            if (pe.Stamp != 0) Tunables.PinGlobals((uint)_namesHeader, (uint)objects, pe.Stamp);
+        }
+        catch { }
+    }
 
     private static int Fail(out string verdict, string why) { verdict = why; return 0; }
 

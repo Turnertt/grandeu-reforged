@@ -36,15 +36,13 @@ public partial class HeroViewerView : UserControl
     // LocalLoadedHeroes / ActiveHeroes are read via GameChain.ReadLocalHeroes /
     // ReadActiveHeroes — their HeroManager offsets are version-fragile and
     // discovered + pinned (see GameChain), not hardcoded here.
-    private const int OFF_CLASS_DISPLAYNAME  = 0x424; // UDunDefHero.HeroClassDisplayName
-    private const int OFF_HERO_NATIVE        = 0x504; // UDunDefHero.HeroHealthModifier — HeroNative base
+    // UDunDefHero field positions (class display name, HeroNative base,
+    // equipment, weapon, template) come from HeroFields — by name, with the
+    // offsets in the header above as the fallback.
     // UDunDefHero.ManaPower per the SDK. A header readout was tried 2026-09-04
     // and did NOT match the in-game mana, so it was removed; verify against a
     // live value before displaying anything from this offset.
     private const int OFF_HERO_MANA          = 0x53C;
-    private const int OFF_HERO_EQUIPMENTS    = 0x5B0; // UDunDefHero.HeroEquipments
-    private const int OFF_HERO_WEAPON        = 0x5C8; // UDunDefHero.HeroWeaponEquipment
-    private const int OFF_HERO_TEMPLATE      = 0x5D8; // UDunDefHero.BasedOnHeroTemplate
     private const int OFF_HE_ITEMNATIVE      = 0x38;  // UHeroEquipment → inline ItemNative
 
     public HeroViewerView()
@@ -129,7 +127,11 @@ public partial class HeroViewerView : UserControl
             var heroes = await System.Threading.Tasks.Task.Run(() =>
             {
                 var list = GameChain.ReadLocalHeroes(hm);
-                return list.Count == 0 ? GameChain.ReadActiveHeroes(hm) : list;
+                if (list.Count == 0) list = GameChain.ReadActiveHeroes(hm);
+                // Resolve the hero field layout here (worker) so the card
+                // builds below are cache hits on the UI thread.
+                if (list.Count > 0) HeroFields.Of(list[0]);
+                return list;
             });
 
             int shown = 0;
@@ -163,7 +165,8 @@ public partial class HeroViewerView : UserControl
 
     private Border? TryBuildHeroCard(int hero)
     {
-        int nativeAddr = hero + OFF_HERO_NATIVE;
+        var f = HeroFields.Of(hero);
+        int nativeAddr = hero + f.Native;
         HeroNative native;
         HeroUser u;
         try
@@ -184,12 +187,12 @@ public partial class HeroViewerView : UserControl
 
         // Class display name (instance, archetype template as fallback).
         // One accent colour for every class — per-class colours read noisy.
-        string className = ReadFString(hero + OFF_CLASS_DISPLAYNAME);
+        string className = ReadFString(hero + f.ClassDisplayName);
         if (string.IsNullOrWhiteSpace(className))
         {
-            int tmpl = RdPtr(hero + OFF_HERO_TEMPLATE);
+            int tmpl = RdPtr(hero + f.Template);
             if (IsGamePtr(tmpl))
-                className = ReadFString(tmpl + OFF_CLASS_DISPLAYNAME);
+                className = ReadFString(tmpl + f.ClassDisplayName); // archetype: same class
         }
         if (string.IsNullOrWhiteSpace(className)) className = "Hero";
 
@@ -284,8 +287,8 @@ public partial class HeroViewerView : UserControl
         body.Children.Add(towerRow);
 
         // ── Equipment ──
-        int heldHe = RdPtr(hero + OFF_HERO_WEAPON);
-        var equipment = ReadPtrArray(hero + OFF_HERO_EQUIPMENTS);
+        int heldHe = RdPtr(hero + f.Weapon);
+        var equipment = ReadPtrArray(hero + f.Equipments);
 
         var equipStack = new StackPanel { Margin = new Thickness(14, 10, 14, 12) };
         equipStack.Children.Add(SectionLabel($"E Q U I P M E N T   ·   {equipment.Count}"));

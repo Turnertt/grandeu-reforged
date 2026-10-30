@@ -300,6 +300,7 @@ public partial class ItemPickerDialog : Window
     private SessionRead ReadSession(int world, List<MultiplayerItem>? knownFloor,
                                     IProgress<ScanProgress> progress, CancellationToken cancel)
     {
+        LayoutRegistry.Ensure();
         var players = MultiplayerEquipment.Read(world, cancel);
         var floor = new List<MultiplayerItem>();
         var notes = new List<string>();

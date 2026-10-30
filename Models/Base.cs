@@ -95,13 +95,34 @@ internal sealed class Base
 		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 		"Modinator", "modinator_log.txt");
 
-	// ONE SESSION PER FILE. BeginSession truncates at startup, so a user who
-	// sends their log sends exactly the run that went wrong — not months of
-	// accumulated noise, and with no second file to forget to attach. The cap
-	// only guards against a runaway loop filling the disk mid-session.
+	// The session before this one. BeginSession moves the current log here
+	// at startup instead of discarding it, so a user who restarts the tool
+	// after hitting a bug (the natural thing to do) still has that session.
+	// One generation only: two obvious files, never a folder to dig through.
+	public static readonly string PrevLogPath = System.IO.Path.Combine(
+		System.IO.Path.GetDirectoryName(LogPath)!, "modinator_log.prev.txt");
+
+	// ONE SESSION PER FILE (plus the one previous, above). A user who sends
+	// their log sends exactly the run that went wrong — not months of
+	// accumulated noise. The cap only guards against a runaway loop filling
+	// the disk mid-session.
 	private const long LogCapBytes = 5L * 1024 * 1024;
 	private static readonly object LogLock = new();
 	private static bool _logCapped;
+
+	// Last line of every session that closed normally. Its absence from the
+	// previous log means that session crashed or was killed — reported at
+	// the top of the next one and in COPY REPORT.
+	private const string SessionEndMarker = "=== session ended cleanly ===";
+
+	// Previous session's outcome, set by BeginSession: true = ended cleanly,
+	// false = crashed / killed, null = no previous log (or one from an
+	// older build that didn't write the marker).
+	public static bool? PreviousSessionEndedCleanly { get; private set; }
+
+	// LOGGING NEVER READS GAME MEMORY. Everything below comes from the OS,
+	// the game's exe file on disk and the tool's own state, so the log keeps
+	// working exactly when memory reads are what broke.
 
 	// Verbose per-tick diagnostics — STILL Debug-only, deliberately. These
 	// fire from the Auto-Kill loop and the scan paths; writing them every tick
@@ -114,7 +135,7 @@ internal sealed class Base
 	// users are asked to share, so it has to exist in the Release build.
 	public static void LogEvent(string message) => WriteLog(message);
 
-	// Start a fresh session log, discarding the previous run's.
+	// Start a fresh session log, keeping the previous run's as PrevLogPath.
 	public static void BeginSession(string header)
 	{
 		lock (LogLock)
@@ -123,6 +144,14 @@ internal sealed class Base
 			try
 			{
 				System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LogPath)!);
+				PreviousSessionEndedCleanly = null;
+				if (System.IO.File.Exists(LogPath))
+				{
+					PreviousSessionEndedCleanly = EndedCleanly(LogPath);
+					System.IO.File.Move(LogPath, PrevLogPath, overwrite: true);
+				}
+				if (PreviousSessionEndedCleanly == false)
+					header += "\n(previous session did not end cleanly — crashed or was force-closed; see modinator_log.prev.txt)";
 				System.IO.File.WriteAllText(LogPath, header + "\n");
 				// A rotated file left by an older build would otherwise sit
 				// there forever — and it is exactly the one a confused user
@@ -132,6 +161,145 @@ internal sealed class Base
 			}
 			catch { }
 		}
+	}
+
+	// Last line of a normal shutdown (App.OnExit). Written even with the
+	// log switched off or capped, like the header — it is a marker, not
+	// content.
+	public static void EndSession()
+	{
+		lock (LogLock)
+		{
+			try { System.IO.File.AppendAllText(LogPath, $"[{DateTime.Now:HH:mm:ss.fff}] {SessionEndMarker}\n"); }
+			catch { }
+		}
+	}
+
+	// null when the log predates the marker: an older build's log has no
+	// marker even when it shut down normally, so absence proves nothing.
+	private static bool? EndedCleanly(string path)
+	{
+		try
+		{
+			string first;
+			using (var r = new System.IO.StreamReader(path)) first = r.ReadLine() ?? "";
+			if (!first.Contains("| admin ")) return null;
+			using var fs = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite);
+			long start = Math.Max(0, fs.Length - 512);
+			fs.Seek(start, System.IO.SeekOrigin.Begin);
+			byte[] tail = new byte[fs.Length - start];
+			int read = fs.Read(tail, 0, tail.Length);
+			return Encoding.UTF8.GetString(tail, 0, read).Contains(SessionEndMarker);
+		}
+		catch { return null; }
+	}
+
+	// One block per game process: where the exe is, its version, and
+	// whether it is the same build as last time — the line that answers
+	// "did a patch break it". Read from the exe FILE (never game memory),
+	// once per pid, from both attach paths (Base.OpenProcess and the
+	// Auto-Kill handle). The game-closed line comes from the OS's process
+	// exit notification, so it costs nothing and needs no polling.
+	private static int _loggedGamePid;
+	private static Process? _watchedGame;
+
+	public static void LogGameAttach(int pid)
+	{
+		try
+		{
+			if (pid == 0) return;
+			lock (LogLock)
+			{
+				if (pid == _loggedGamePid) return;
+				_loggedGamePid = pid;
+			}
+			string path = "";
+			try { using var p = Process.GetProcessById(pid); path = p.MainModule?.FileName ?? ""; } catch { }
+			if (path.Length == 0) path = ImagePathOf(pid); // MainModule can fail across bitness (ARM64 build)
+			var sb = new StringBuilder($"Game attached: DunDefGame pid {pid}");
+			if (path.Length == 0) sb.Append(" — exe path unavailable");
+			else
+			{
+				sb.Append("\n    exe     : " + path);
+				try
+				{
+					var fi = new System.IO.FileInfo(path);
+					var vi = FileVersionInfo.GetVersionInfo(path);
+					sb.Append($"\n    file    : {fi.Length:N0} bytes, modified {fi.LastWriteTime:yyyy-MM-dd HH:mm}, " +
+							  $"version {(string.IsNullOrWhiteSpace(vi.FileVersion) ? "(none)" : vi.FileVersion)}");
+				}
+				catch { }
+				uint stamp = ReadPeStampFromFile(path);
+				if (stamp != 0)
+				{
+					string build = $"0x{stamp:X8} ({DateTimeOffset.FromUnixTimeSeconds(stamp).UtcDateTime:yyyy-MM-dd})";
+					var prefs = Modinator.Prefs.Current;
+					string? last = prefs.LastGameBuild;
+					string verdict = string.IsNullOrEmpty(last) ? "first time seen"
+								   : last == build ? "same build as last time"
+								   : "NEW GAME BUILD — last seen " + last;
+					sb.Append($"\n    build   : {build} — {verdict}");
+					if (last != build) { prefs.LastGameBuild = build; prefs.Save(); }
+				}
+			}
+			LogEvent(sb.ToString());
+
+			try
+			{
+				var watch = Process.GetProcessById(pid);
+				watch.EnableRaisingEvents = true;
+				watch.Exited += (_, _) => LogEvent($"Game closed: DunDefGame pid {pid} exited");
+				var old = System.Threading.Interlocked.Exchange(ref _watchedGame, watch);
+				try { old?.Dispose(); } catch { }
+			}
+			catch { }
+		}
+		catch { }
+	}
+
+	// Named apart from Base.OpenProcess (the attach) so the two can't be confused.
+	[DllImport("kernel32", EntryPoint = "OpenProcess", SetLastError = true)]
+	private static extern IntPtr OpenProcessForQuery(uint access, bool inherit, int pid);
+	[DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+	private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder name, ref int size);
+	[DllImport("kernel32")]
+	private static extern bool CloseHandle(IntPtr handle);
+
+	// Exe path via PROCESS_QUERY_LIMITED_INFORMATION — no memory access.
+	private static string ImagePathOf(int pid)
+	{
+		IntPtr h = IntPtr.Zero;
+		try
+		{
+			h = OpenProcessForQuery(0x1000, false, pid);
+			if (h == IntPtr.Zero) return "";
+			var sb = new StringBuilder(1024);
+			int size = sb.Capacity;
+			return QueryFullProcessImageName(h, 0, sb, ref size) ? sb.ToString() : "";
+		}
+		catch { return ""; }
+		finally { if (h != IntPtr.Zero) CloseHandle(h); }
+	}
+
+	// PE COFF TimeDateStamp from the exe on disk — the same value the
+	// Auto-Kill path reads out of the loaded module, without touching the
+	// process.
+	private static uint ReadPeStampFromFile(string path)
+	{
+		try
+		{
+			using var fs = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete);
+			using var br = new System.IO.BinaryReader(fs);
+			if (br.ReadUInt16() != 0x5A4D) return 0; // "MZ"
+			fs.Seek(0x3C, System.IO.SeekOrigin.Begin);
+			int e_lfanew = br.ReadInt32();
+			if (e_lfanew <= 0 || e_lfanew > 0x10000) return 0;
+			fs.Seek(e_lfanew, System.IO.SeekOrigin.Begin);
+			if (br.ReadUInt32() != 0x00004550u) return 0; // "PE\0\0"
+			fs.Seek(e_lfanew + 8, System.IO.SeekOrigin.Begin);
+			return br.ReadUInt32();
+		}
+		catch { return 0; }
 	}
 
 	private static void WriteLog(string message)
@@ -1131,6 +1299,7 @@ internal sealed class Base
 			return false;
 		}
 		_lastAttachVerify = DateTime.Now;
+		LogGameAttach(process.Id);
 		return true;
 	}
 }

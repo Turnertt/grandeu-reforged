@@ -18,6 +18,8 @@ internal static class MaxCompat
 {
     // weaponType (EWeaponType byte) is at object+0x824 = item-Address +
     // 0x7EC — outside the marshaled ItemNative. Read 1 byte for weapons.
+    // Readers use DupeMemory.WeaponTypeItemOffset (by name); this is the
+    // documented fallback value.
     public const int WeaponTypeOffset = 0x7EC;
 
     // Set on every weapon family in testing.

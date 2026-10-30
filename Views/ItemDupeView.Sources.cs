@@ -105,6 +105,7 @@ public partial class ItemDupeView
 
     private ItemNative ReadOwnedTarget(MainWindow main, int address)
     {
+        if (!LayoutRegistry.ItemBlockOk(out string why)) throw new InvalidOperationException(why);
         _targetSession.Check();
         var target = DupeMemory.ReadItem(address);
         if (_sacrificialId is not ItemIdentity id || !id.Matches(target))
@@ -119,7 +120,8 @@ public partial class ItemDupeView
         if (!owned)
             foreach (int hero in GameChain.ReadLocalHeroes(hm))
             {
-                if (DupeMemory.ReadArray(hero + 0x5B0, 128).Contains(equipment) || GameChain.RdInt(hero + 0x5C8) == equipment)
+                var f = HeroFields.Of(hero);
+                if (DupeMemory.ReadArray(hero + f.Equipments, 128).Contains(equipment) || GameChain.RdInt(hero + f.Weapon) == equipment)
                 { owned = true; break; }
             }
         if (!owned) throw new InvalidOperationException("The target is no longer in your item box or on one of your heroes. Pick it again.");

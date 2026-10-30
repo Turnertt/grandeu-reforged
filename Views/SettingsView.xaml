@@ -247,7 +247,7 @@
                                    Foreground="{StaticResource TextPrimaryBrush}"
                                    FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
                     </DockPanel>
-                    <TextBlock Text="The switch keeps a log of what the tool did this session — one file, replaced each time you start, never sent anywhere on its own. Send that file and a copied report together when something breaks."
+                    <TextBlock Text="The switch keeps a log of what the tool did this session — one file per session (the previous one is kept beside it), never sent anywhere on its own. Send that file and a copied report together when something breaks."
                                Foreground="{StaticResource TextSecondaryBrush}"
                                FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
                     <Grid Margin="0,12,0,0">
@@ -263,7 +263,7 @@
                     </Grid>
                     <WrapPanel Margin="0,14,0,0">
                         <Button Content="OPEN LOG" Padding="14,6" Height="30" Margin="0,0,10,0"
-                                ToolTip="Show this session's log file in Explorer so you can attach it."
+                                ToolTip="Show this session's log file in Explorer so you can attach it. The previous session is kept beside it as modinator_log.prev.txt."
                                 Click="BtnOpenLog_Click" />
                         <Button Content="COPY REPORT" Padding="14,6" Height="30"
                                 ToolTip="Copy a full read-only diagnostic to the clipboard — paste it when asking for help."

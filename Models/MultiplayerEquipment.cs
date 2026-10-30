@@ -19,28 +19,35 @@ internal static class MultiplayerEquipment
 {
     // SDK/DD_Engine_classes.hpp: WorldInfo.GRI +3D0, GRI.PRIArray +264,
     // PlayerReplicationInfo.PlayerName +230. SDK/DD_UDKGame_classes.hpp:
-    // DunDefPlayerReplicationInfo.myHero +358; HeroEquipments +5B0,
-    // HeroWeaponEquipment +5C8. SDK cross-checked; MP live validation pending.
-    // Remote controllers are not replicated, so this never walks one.
-    private const int PriHero = 0x358;
+    // DunDefPlayerReplicationInfo.myHero +358; hero fields via HeroFields.
+    // SDK cross-checked; MP live validation pending. Each is read by name
+    // (GameReflection) with these literals as the fallback when the reader
+    // isn't trusted. Remote controllers are not replicated, so this never
+    // walks one.
+    private static int Off(int obj, string field, int fallback)
+    {
+        int o = GameReflection.FieldOffset(obj, field);
+        return o > 0 ? o : fallback;
+    }
 
     public static List<int> Players(int world)
     {
         if (!DupeMemory.IsObject(world)) return new();
-        int gri = GameChain.RdInt(world + 0x3D0);
+        int gri = GameChain.RdInt(world + Off(world, "GRI", 0x3D0));
         if (!DupeMemory.IsObject(gri)) return new();
-        return DupeMemory.ReadArray(gri + 0x264, 128).Distinct().Where(DupeMemory.IsObject).ToList();
+        return DupeMemory.ReadArray(gri + Off(gri, "PRIArray", 0x264), 128).Distinct().Where(DupeMemory.IsObject).ToList();
     }
 
     private static List<int> Equipment(int hero)
     {
         if (!DupeMemory.IsObject(hero)) throw new InvalidOperationException("Player equipment is not available yet.");
         // Same hero-content bounds as GameChain; read failure is unavailable.
-        int level = GameChain.RdInt(hero + 0x52C), cap = GameChain.RdInt(hero + 0x530);
+        var f = HeroFields.Of(hero);
+        int level = GameChain.RdInt(hero + f.Level), cap = GameChain.RdInt(hero + f.LevelCap);
         if (level < 0 || level > 1000 || cap < 1 || cap > 10000)
             throw new InvalidOperationException("Player hero layout could not be verified.");
-        var items = DupeMemory.ReadArray(hero + 0x5B0, 128);
-        int weapon = GameChain.RdInt(hero + 0x5C8);
+        var items = DupeMemory.ReadArray(hero + f.Equipments, 128);
+        int weapon = GameChain.RdInt(hero + f.Weapon);
         if (GameChain.IsGamePtr(weapon)) items.Add(weapon);
         return items.Distinct().ToList();
     }
@@ -57,9 +64,9 @@ internal static class MultiplayerEquipment
             cancel.ThrowIfCancellationRequested();
             try
             {
-                int hero = GameChain.RdInt(pri + PriHero);
-                string playerName = Watermark.StripColorTags(DupeMemory.ReadString(pri + 0x230));
-                string heroName = Watermark.StripColorTags(DupeMemory.ReadString(hero + 0x564));
+                int hero = GameChain.RdInt(pri + Off(pri, "myHero", 0x358));
+                string playerName = Watermark.StripColorTags(DupeMemory.ReadString(pri + Off(pri, "PlayerName", 0x230)));
+                string heroName = Watermark.StripColorTags(DupeMemory.ReadString(hero + HeroFields.Of(hero).Name));
                 foreach (int equipment in Equipment(hero))
                 {
                     try
@@ -85,7 +92,7 @@ internal static class MultiplayerEquipment
     {
         if (item.Floor != null) { FloorEquipment.Verify(item, world); return; }
         item.Session.Check();
-        if (!Players(world).Contains(item.Pri) || GameChain.RdInt(item.Pri + PriHero) != item.Hero ||
+        if (!Players(world).Contains(item.Pri) || GameChain.RdInt(item.Pri + Off(item.Pri, "myHero", 0x358)) != item.Hero ||
             !Equipment(item.Hero).Contains(unchecked(item.Address - 0x38)) ||
             !item.Identity.Matches(DupeMemory.ReadItem(item.Address)))
             throw new InvalidOperationException("That player left, changed heroes, or unequipped the item. Pick their equipment again.");

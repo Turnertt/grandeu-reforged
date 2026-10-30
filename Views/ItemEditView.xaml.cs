@@ -29,6 +29,8 @@ public partial class ItemEditView : UserControl
     // Returns false (and explains in the status pill) when it is not.
     private bool VerifyStillSameItem(out ItemNative live)
     {
+        live = default;
+        if (!LayoutRegistry.ItemBlockOk(out string why)) { StatusText.Text = "Not written — " + why; return false; }
         int size = Marshal.SizeOf(typeof(ItemNative));
         live = Base.Push<ItemNative>(Base.Instance.ReadMemory(Address, size));
         if (!_hasIdentity || _openedIdentity.Matches(live)) return true;
@@ -39,6 +41,9 @@ public partial class ItemEditView : UserControl
     public ItemEditView(int address, string name)
     {
         InitializeComponent();
+        // Item Search scans on the UI thread, so the layout check may not
+        // have run this attach; start it now (worker) for the write gate.
+        _ = System.Threading.Tasks.Task.Run(LayoutRegistry.Ensure);
         // Less-used actions live under MORE: saving to the template library,
         // and DELETE (kept away from UPDATE on purpose).
         BtnMore.Content = DropMenu.ButtonContent("MORE");
@@ -180,7 +185,7 @@ public partial class ItemEditView : UserControl
             SetHint(TxtEquipmentTemplate, user.EquipmentTemplate ?? "");
 
             // Weapon class (EWeaponType) — read-only. Lives outside the
-            // marshaled ItemNative (Address + MaxCompat.WeaponTypeOffset);
+            // marshaled ItemNative (DupeMemory.WeaponTypeItemOffset, by name);
             // only meaningful for weapons. Empty catch per the memory-read
             // convention — a failed read just shows the dash.
             if (user.EquipmentType == EquipmentType.Weapon)
@@ -188,7 +193,7 @@ public partial class ItemEditView : UserControl
                 string cls = "—";
                 try
                 {
-                    byte[]? wb = Base.Instance.ReadMemory(Address + MaxCompat.WeaponTypeOffset, 1);
+                    byte[]? wb = Base.Instance.ReadMemory(Address + DupeMemory.WeaponTypeItemOffset(Address), 1);
                     if (wb != null && wb.Length > 0) cls = WeaponClass.Name(wb[0]);
                 }
                 catch { }
@@ -691,14 +696,14 @@ public partial class ItemEditView : UserControl
             // ── Weapon stats — class-aware via shared MaxCompat (same rules
             // the bulk path uses; see max_item_weapontype_research.md).
             // weaponType lives outside the marshaled ItemNative
-            // (object+0x824 = Address + MaxCompat.WeaponTypeOffset).
+            // (object+0x824, by name via DupeMemory.WeaponTypeItemOffset).
             bool isWeapon = cur.EquipmentType == EquipmentType.Weapon;
             byte wt = 0;
             if (isWeapon)
             {
                 try
                 {
-                    byte[]? b = Base.Instance.ReadMemory(Address + MaxCompat.WeaponTypeOffset, 1);
+                    byte[]? b = Base.Instance.ReadMemory(Address + DupeMemory.WeaponTypeItemOffset(Address), 1);
                     if (b != null && b.Length > 0) wt = b[0];
                 }
                 catch { }

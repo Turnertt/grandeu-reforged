@@ -264,14 +264,14 @@ public partial class MainWindow : Window
                             ri.Quality = QualityDisplay.Name(user.Quality2);
                             // Weapon class gate (EWeaponType) lives outside the
                             // marshaled ItemNative — a 1-byte read at
-                            // addr + MaxCompat.WeaponTypeOffset. Weapons only;
+                            // addr + DupeMemory.WeaponTypeItemOffset (by name). Weapons only;
                             // inner catch so a failed read just omits the tag.
                             string clsSuffix = "";
                             if (user.EquipmentType == EquipmentType.Weapon)
                             {
                                 try
                                 {
-                                    byte[]? wb = Base.Instance.ReadMemory(addr + MaxCompat.WeaponTypeOffset, 1);
+                                    byte[]? wb = Base.Instance.ReadMemory(addr + DupeMemory.WeaponTypeItemOffset(addr), 1);
                                     if (wb != null && wb.Length > 0)
                                         clsSuffix = "  " + WeaponClass.Name(wb[0]);
                                 }
@@ -608,6 +608,13 @@ public partial class MainWindow : Window
               $"  on {Environment.OSVersion.Version}  {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}");
         }
         catch { }
+        L("last session: " + (Base.PreviousSessionEndedCleanly switch
+        {
+            true => "ended cleanly",
+            false => "DID NOT END CLEANLY (crash or force-close) — attach modinator_log.prev.txt too",
+            _ => "no record",
+        }));
+        L("game build : last seen " + (Prefs.Current.LastGameBuild ?? "none yet") + "  (from the exe file)");
 
         try
         {
@@ -626,6 +633,8 @@ public partial class MainWindow : Window
         L($"attached   : scanner pid={Base.AttachedPid}  (0 = not attached)");
         L($"log file   : {Base.LogPath}");
         L($"             {(System.IO.File.Exists(Base.LogPath) ? "exists — send this file too" : "not present (error log switched off, or nothing logged yet)")}");
+        if (System.IO.File.Exists(Base.PrevLogPath))
+            L($"             previous session: {Base.PrevLogPath}");
 
         lock (_scanStateGate)
         {
@@ -648,7 +657,7 @@ public partial class MainWindow : Window
                       : ""));
                 L($"seed       : 0x{_pawnVtable:X8}  ({(_pawnVtable == 0 ? "not learned yet" : "in use")})");
 
-                static string Off(int cur, int def) => $"0x{cur:X}({(cur == def ? "default" : "learned")})";
+                static string Off(int cur, int def) => cur == def ? $"0x{cur:X}(= built-in)" : $"0x{cur:X}(learned; built-in 0x{def:X})";
                 L($"offsets    : box {Off(GameChain.ItemBoxOffset, Tunables.DefaultItemBoxOffset)}  " +
                   $"heroes {Off(GameChain.LocalHeroesOffset, Tunables.DefaultLocalHeroesOffset)}  " +
                   $"manager {Off(GameChain.HeroManagerOffset, Tunables.DefaultHeroManagerOffset)}");
@@ -687,6 +696,10 @@ public partial class MainWindow : Window
                     // reader proved itself and which slots it reads through.
                     L("globals    : " + GameReflection.GlobalsStatus.Replace("\n", "\n             "));
                     L("trust      : " + GameReflection.TrustDetail.Replace("\n", "\n             "));
+                    // Every hardcoded offset checked by name (LayoutRegistry):
+                    // the summary, then only the MOVED / unknown rows.
+                    LayoutRegistry.Ensure();
+                    L("layout     : " + LayoutRegistry.Report.Replace("\n", "\n             "));
                 }
 
                 int wi = _cachedWorldInfo;
@@ -699,6 +712,11 @@ public partial class MainWindow : Window
                     uint fl = IsHeapPtr(griF) ? ReadLevelFlags(griF) : 0;
                     L($"level flags: GRI+0x{_lvlFlagsOff:X}=0x{fl:X8}  IsLobbyLevel mask 0x{_lvlMaskLobby:X} -> {((fl & _lvlMaskLobby) != 0 ? "set" : "clear")}  " +
                       $"IsGameplayLevel mask 0x{_lvlMaskGame:X} -> {((fl & _lvlMaskGame) != 0 ? "set" : "clear")}  ({_lvlFlagsSource})");
+                }
+                {
+                    static string Ok(string pause) => pause.Length == 0 ? "ok" : pause;
+                    L($"ak layout  : {(_akLayoutPid != 0 && _akLayoutPid == _akTargetPid ? _akLayoutSource : "not checked yet (checked once Auto-Kill's loop finds a world)")}");
+                    L($"             kill {Ok(_akKillPause)} · towers {Ok(_akTowerPause)} · mana {Ok(_akManaPause)} · units {Ok(_akUnitsPause)} · speed {Ok(_akSpeedPause)}");
                 }
 
                 // AWorldInfo.Game (AGameInfo*) exists ONLY on the server/host
@@ -775,8 +793,8 @@ public partial class MainWindow : Window
                 // to tell that from a dead pointer is to see both numbers.
                 int mctl = IsHeapPtr(chosen) ? ReadU32(chosen + OFF_PAWN_CONTROLLER) : 0;
                 if (IsHeapPtr(mctl))
-                    L($"mana       : controller=0x{mctl:X8}  cur(+0x{OFF_PC_MANAPOWER:X})={ReadU32(mctl + OFF_PC_MANAPOWER)}  " +
-                      $"max(+0x{OFF_PC_MAXMANAPOWER:X})={ReadU32(mctl + OFF_PC_MAXMANAPOWER)}  (gate wants max in 1..1000000)");
+                    L($"mana       : controller=0x{mctl:X8}  cur(+0x{_offPcManaPower:X})={ReadU32(mctl + _offPcManaPower)}  " +
+                      $"max(+0x{_offPcMaxManaPower:X})={ReadU32(mctl + _offPcMaxManaPower)}  (gate wants max in 1..1000000)");
                 else
                     L("mana       : no controller on the selected pawn");
                 L($"mana write : {(_unlimitedMana ? (_manaGateReason ?? "writing normally") : "toggle is off")}");
@@ -835,6 +853,7 @@ public partial class MainWindow : Window
 
     public void SetSimulateG(bool on)
     {
+        if (Base.SimulateG != on) Base.LogEvent("Simulate G: " + (on ? "on" : "off"));
         Base.SimulateG = on;
         if (TbSimulateG.IsChecked != on) TbSimulateG.IsChecked = on;
         SyncSettingsView();
@@ -847,6 +866,7 @@ public partial class MainWindow : Window
     // GrandeuReforged-Source, which has no AppPrefs); default off.
     public void SetUnlimitedMana(bool on)
     {
+        if (_unlimitedMana != on) Base.LogEvent("Unlimited Mana: " + (on ? "on" : "off"));
         _unlimitedMana = on;
         if (TbUnlimitedMana.IsChecked != on) TbUnlimitedMana.IsChecked = on;
         RefreshAkLoop();
@@ -859,6 +879,7 @@ public partial class MainWindow : Window
     // off (parity with GrandeuReforged-Source).
     public void SetMaxTowerUnits(bool on)
     {
+        if (_maxTowerUnits != on) Base.LogEvent("Max Tower Units: " + (on ? "on" : "off"));
         _maxTowerUnits = on;
         if (TbMaxTowerUnits.IsChecked != on) TbMaxTowerUnits.IsChecked = on;
         RefreshAkLoop();
@@ -867,6 +888,7 @@ public partial class MainWindow : Window
 
     public void SetAutoKillEnabled(bool on)
     {
+        if (_autoKillEnabled != on) Base.LogEvent("Auto-Kill: " + (on ? "on" : "off"));
         _autoKillEnabled = on;
         if (TbAutoKill.IsChecked != on) TbAutoKill.IsChecked = on;
         if (on)
@@ -972,6 +994,8 @@ public partial class MainWindow : Window
         v = Math.Clamp(v, 0.05f, 15.0f);
         TxtGameSpeed.Text = v.ToString("0.##",
             System.Globalization.CultureInfo.InvariantCulture);
+        if (_speedMultiplier != v)
+            Base.LogEvent("Game speed: " + v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "x");
         _speedMultiplier = v;
         if (v == 1.0f && _cachedWorldInfo != 0)
             AKWrite(_cachedWorldInfo + OFF_WI_TIMEDILATION, FloatBits(1.0f));
@@ -1138,6 +1162,7 @@ public partial class MainWindow : Window
         if (item.Genus != Base.Genus.Misc && item.Genus != Base.Genus.Location) return;
 
         item.IsFrozen = !item.IsFrozen;
+        Base.LogEvent($"Freeze {(item.IsFrozen ? "on" : "off")}: {item.Genus} 0x{item.Address:X8}");
 
         try
         {
@@ -1643,6 +1668,16 @@ public partial class MainWindow : Window
             SetAkStatus($"Auto Kill: found WorldInfo 0x{wi:X8}");
         }
 
+        // Once per attach, on a side task: check this build's layout by name
+        // (StartAkLayoutTask). Needs the Scanner on the same pid as the AK
+        // handle — the object-list world route attaches it. Keyed on the
+        // game pid, not the handle: toggling a feature reopens the handle
+        // (RefreshAkLoop) but the game, and so its layout, is the same.
+        if (_akLayoutPid != 0 && _akLayoutPid != _akTargetPid) ResetAkLayout(); // game restarted: literals until re-checked
+        if (_akLayoutPid != _akTargetPid && !_akLayoutPending && Base.AttachedPid == _akTargetPid &&
+            Environment.TickCount64 >= _akLayoutRetryAt)
+            StartAkLayoutTask();
+
         // Read PawnList head
         byte[]? plData = AKRead(_cachedWorldInfo + 0x041C, 4);
         if (plData == null) { _cachedWorldInfo = 0; _cachedPlayerPawn = 0; return; }
@@ -1658,10 +1693,10 @@ public partial class MainWindow : Window
         // Offsets (DD_ModMenu SDK):
         //   +0x0034  UObject::Class*                (DD_Core_classes.hpp)
         //   +0x0230  APawn::NextPawn*               (DD_Engine_classes.hpp)
-        //   +0x0324  DDTopDownPawn::Health
-        //   +0x0328  DDTopDownPawn::MaxHealth
+        //   +0x0324  APawn::Health                  (DD_Engine_classes.hpp)
+        //   +0x0328  APawn::HealthMax               (DD_Engine_classes.hpp)
         //   +0x038C  APawn::PlayerReplicationInfo*  (DD_Engine_classes.hpp)
-        var chain = new List<(int addr, int hp, int hpMax, uint klass, uint pri)>(64);
+        var chain = new List<(int addr, int hp, int hpMax, uint klass, uint pri, float lifeSpan)>(64);
         int cur = head;
         var visited = new HashSet<int>();
         while (IsHeapPtr(cur) && visited.Add(cur) && visited.Count <= AK_CHAIN_MAX)
@@ -1683,7 +1718,7 @@ public partial class MainWindow : Window
             if (priData != null && priData.Length >= 4)
                 pri = BitConverter.ToUInt32(priData, 0);
 
-            chain.Add((cur, hp, hpMax, klass, pri));
+            chain.Add((cur, hp, hpMax, klass, pri, BitConverter.ToSingle(pd, OFF_ACTOR_LIFESPAN)));
             if (np == 0) break;
             cur = np;
         }
@@ -1779,6 +1814,9 @@ public partial class MainWindow : Window
             // remove or "unify" it. The PRI-selected playerPawn skip below is
             // purely ADDITIVE protection for states where the player is not
             // the tail; an extra skip can only spare a pawn, never kill one.
+            // A Moved engine field the kill writes through pauses this loop
+            // only (AdoptAkLayout); the tower sweep has its own pause.
+            if (_akKillPause.Length == 0)
             for (int i = 0; i < chain.Count - 1; i++) // tail skip (historical — see above)
             {
                 var p = chain[i];
@@ -1818,6 +1856,21 @@ public partial class MainWindow : Window
                 // level destruction on a separate code path, which is NOT
                 // gated by SpawnIn, so enemies die within ~50ms regardless
                 // of spawn state.
+                //
+                // Plausibility gate (mirrors the mana / tower ones): these
+                // three writes land at fixed offsets on every enemy pawn
+                // 10x/s, so a layout shift would stomp unknown fields
+                // silently. Loose on purpose — real enemies can read
+                // hp > hpMax briefly (buffs / heals); a pointer read as hp
+                // is in the millions, and LifeSpan must be a sane float
+                // (0 = never expires, else a small countdown).
+                float ls = p.lifeSpan; // from the chain's pawn read, same tick
+                if (p.hp > p.hpMax * 4L + 1000 || !(ls >= 0f && ls < 1e6f))
+                {
+                    if (_loggedUnkilledPawns.Add($"gate:{p.addr:X8}"))
+                        Base.Log($"KillGate: pawn 0x{p.addr:X8} hp={p.hp}/{p.hpMax} lifespan={ls} — skipped");
+                    continue;
+                }
                 AKWrite(p.addr + 0x0324, 0);
                 AKWrite(p.addr + 0x0328, 1);
                 AKWrite(p.addr + OFF_ACTOR_LIFESPAN, unchecked((int)0x3D4CCCCD));
@@ -1830,7 +1883,7 @@ public partial class MainWindow : Window
             // cleanup (auras, chaining refs, TargetableActors itself), so
             // unlike the older Health=0/bDeleteMe attempts this doesn't
             // leak dangling ptrs.
-            towersKilled = KillEnemyTargetableActors();
+            if (_akTowerPause.Length == 0) towersKilled = KillEnemyTargetableActors();
             // Only log when we actually killed something — idle ticks with
             // killed=0 used to dominate the log file.
             if (towersKilled > 0)
@@ -1849,7 +1902,7 @@ public partial class MainWindow : Window
         // "do nothing" so the user's natural gameplay isn't overwritten.
         // Runs outside the grace gate since it's not damage-related.
         float speed = _speedMultiplier;
-        if (speed != 1.0f && _cachedWorldInfo != 0)
+        if (speed != 1.0f && _cachedWorldInfo != 0 && _akSpeedPause.Length == 0)
             AKWrite(_cachedWorldInfo + OFF_WI_TIMEDILATION, FloatBits(speed));
 
         // Unlimited mana — refill the local player controller's ManaPower to
@@ -1873,14 +1926,16 @@ public partial class MainWindow : Window
                 ? ReadU32(_cachedPlayerPawn + OFF_PAWN_CONTROLLER)
                 : 0;
 
-            if (_playerPick < PlayerPawnPick.LocalPlayer)
+            if (_akManaPause.Length > 0)
+                _manaGateReason = _akManaPause;
+            else if (_playerPick < PlayerPawnPick.LocalPlayer)
                 _manaGateReason = $"skipped — couldn't identify your character (pick={_playerPick}). " +
                                   "In an online game this happens when the tool locks onto another player.";
             else if (!IsHeapPtr(ctrl))
                 _manaGateReason = "skipped — your character's Controller (+0x22C) didn't resolve";
             else
             {
-                int maxMana = ReadU32(ctrl + OFF_PC_MAXMANAPOWER);
+                int maxMana = ReadU32(ctrl + _offPcMaxManaPower);
                 // Sanity: real in-mission mana caps are small (≈2k), so 1M is
                 // 500× headroom while sitting BELOW the heap-pointer range
                 // (0x01000000 = 16.7M) — if a DD1 patch ever shifts the
@@ -1889,12 +1944,12 @@ public partial class MainWindow : Window
                 // no-op instead of stomping an unknown field every tick.
                 if (maxMana > 0 && maxMana <= 1_000_000)
                 {
-                    AKWrite(ctrl + OFF_PC_MANAPOWER, maxMana);
+                    AKWrite(ctrl + _offPcManaPower, maxMana);
                     _manaGateReason = null; // writing normally
                 }
                 else
                 {
-                    _manaGateReason = $"skipped — MaxManaPower at controller+0x{OFF_PC_MAXMANAPOWER:X} read " +
+                    _manaGateReason = $"skipped — MaxManaPower at controller+0x{_offPcMaxManaPower:X} read " +
                                       $"{maxMana}, outside the plausible range (controller layout may have shifted)";
                 }
             }
@@ -1905,7 +1960,7 @@ public partial class MainWindow : Window
         // GRI+0x039C; write BOTH dwords every tick (value, then a zeroed
         // upper half) or the tower allocator crashes. GRI is valid here —
         // we're past the gameplay-level gate, which already deref'd it.
-        if (_maxTowerUnits && _cachedWorldInfo != 0)
+        if (_maxTowerUnits && _cachedWorldInfo != 0 && _akUnitsPause.Length == 0)
         {
             int gri = ReadU32(_cachedWorldInfo + OFF_WI_GRI);
             if (IsHeapPtr(gri))
@@ -1917,11 +1972,11 @@ public partial class MainWindow : Window
                 // shifts the GRI layout this offset reads a float/pointer/
                 // garbage (> 1M or negative) and the 8-byte write is skipped
                 // instead of corrupting two unknown dwords every tick.
-                int curUnits = ReadU32(gri + OFF_GRI_MAXTOWERUNITS);
+                int curUnits = ReadU32(gri + _offGriMaxTowerUnits);
                 if (curUnits >= 0 && curUnits <= 1_000_000)
                 {
-                    AKWrite(gri + OFF_GRI_MAXTOWERUNITS, MAX_TOWER_UNITS_VALUE);
-                    AKWrite(gri + OFF_GRI_MAXTOWERUNITS + 4, 0);
+                    AKWrite(gri + _offGriMaxTowerUnits, MAX_TOWER_UNITS_VALUE);
+                    AKWrite(gri + _offGriMaxTowerUnits + 4, 0);
                 }
             }
         }
@@ -1935,7 +1990,7 @@ public partial class MainWindow : Window
             if (_unlimitedMana) on.Add(_manaGateReason == null ? "mana" : "mana (gated)");
             if (_maxTowerUnits) on.Add("towers");
             if (speed != 1.0f) on.Add($"{speed:0.##}x");
-            SetAkStatus("Auto Kill: off (lobby)" + (on.Count > 0 ? " · " + string.Join(" · ", on) : ""));
+            SetAkStatus("Auto Kill: off (lobby)" + (on.Count > 0 ? " · " + string.Join(" · ", on) : "") + AkPauseSummary());
             return;
         }
         if (learnOnly)
@@ -1943,11 +1998,11 @@ public partial class MainWindow : Window
             SetAkStatus($"Auto Kill: learning ({_heroClasses.Count} hero cls)");
             return;
         }
-        string bits = $"Kill: {killed}e";
+        string bits = _autoKillEnabled && _akKillPause.Length > 0 ? "Kill " + _akKillPause : $"Kill: {killed}e";
         if (towersKilled > 0) bits += $" + {towersKilled}t";
         if (protectedHeroes > 0) bits += $" · {protectedHeroes} hero safe";
         if (speed != 1.0f) bits += $" · {speed:0.##}x";
-        SetAkStatus(bits);
+        SetAkStatus(bits + AkPauseSummary());
     }
 
     // Walks AMain::TargetableActors (enemy towers, crystals, bosses) and
@@ -1989,7 +2044,7 @@ public partial class MainWindow : Window
         }
 
         // TArray<AActor*> layout: Data (4 bytes), Count (4), Max (4).
-        byte[]? hdr = AKRead(gameInfo + OFF_GAME_TARGETABLE, 12);
+        byte[]? hdr = AKRead(gameInfo + _offGameTargetable, 12);
         if (hdr == null || hdr.Length < 12) { _towerStatus = "no TArray"; return 0; }
         int dataPtr = BitConverter.ToInt32(hdr, 0);
         int count   = BitConverter.ToInt32(hdr, 4);
@@ -2013,7 +2068,7 @@ public partial class MainWindow : Window
             int actor = BitConverter.ToInt32(arr, i * 4);
             if (!IsHeapPtr(actor)) continue;
 
-            int team = ReadU32(actor + OFF_DDT_TARGETING_TEAM);
+            int team = ReadU32(actor + _offDdtTargetingTeam);
             if (team == 0) team0++;
             else if (team == 1) team1++;
             else if (team == 2) team2++;
@@ -2257,6 +2312,124 @@ public partial class MainWindow : Window
         return unchecked((uint)ReadU32(gri + _lvlFlagsOff));
     }
 
+    // Layout verdicts for the attached game (LayoutRegistry), taken ONCE per
+    // attached pid on a side task (StartAkLayoutTask). The tick only reads
+    // these fields under _scanStateGate; it never resolves anything.
+    //   Game-class offsets (the mana pair, MaxTowerUnits, TargetableActors,
+    //   TargetingTeam) are ADOPTED when the game moved them and the new
+    //   offset passes a sanity check (inside the class, 4-aligned).
+    //   Engine offsets stay literal (DECISIONS: used before any class is
+    //   known and without the Scanner, and never moved); a Moved verdict on
+    //   one PAUSES the feature that writes through it, naming the field.
+    //   Unknown keeps today's behavior on both — the per-tick plausibility
+    //   gates stay the guard.
+    private int    _akLayoutPid;           // pid the fields below describe (0 = literals, not checked)
+    private volatile bool _akLayoutPending; // side task in flight
+    private long   _akLayoutRetryAt;       // registry undecided (waiting / torn) — retry no sooner
+    private string _akKillPause = "", _akTowerPause = "", _akManaPause = "", _akUnitsPause = "", _akSpeedPause = "";
+    private int _offPcManaPower = OFF_PC_MANAPOWER, _offPcMaxManaPower = OFF_PC_MAXMANAPOWER;
+    private int _offGriMaxTowerUnits = OFF_GRI_MAXTOWERUNITS;
+    private int _offGameTargetable = OFF_GAME_TARGETABLE, _offDdtTargetingTeam = OFF_DDT_TARGETING_TEAM;
+    private string _akLayoutSource = "compiled literals (not checked yet)";
+
+    private void StartAkLayoutTask()
+    {
+        _akLayoutPending = true;
+        int pid = _akTargetPid;
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                // The check itself runs OUTSIDE the scan gate (it may walk
+                // the object list once, ~0.3–0.8 s); only the adopt below
+                // holds it, so ticks never wait on the walk.
+                LayoutRegistry.Ensure();
+                if (!LayoutRegistry.Decided)
+                {
+                    lock (_scanStateGate) _akLayoutRetryAt = Environment.TickCount64 + 5_000;
+                    return;
+                }
+                lock (_scanStateGate)
+                {
+                    if (pid != _akTargetPid || Base.AttachedPid != pid) return; // game restarted meanwhile
+                    AdoptAkLayout();
+                    _akLayoutPid = pid;
+                }
+            }
+            catch { }
+            finally { _akLayoutPending = false; }
+        });
+    }
+
+    // Literals back for a new game process.
+    private void ResetAkLayout()
+    {
+        _akLayoutPid = 0;
+        _akKillPause = _akTowerPause = _akManaPause = _akUnitsPause = _akSpeedPause = "";
+        _offPcManaPower = OFF_PC_MANAPOWER; _offPcMaxManaPower = OFF_PC_MAXMANAPOWER;
+        _offGriMaxTowerUnits = OFF_GRI_MAXTOWERUNITS;
+        _offGameTargetable = OFF_GAME_TARGETABLE; _offDdtTargetingTeam = OFF_DDT_TARGETING_TEAM;
+        _akLayoutSource = "compiled literals (not checked yet)";
+    }
+
+    private void AdoptAkLayout()
+    {
+        ResetAkLayout();
+        static string Paused(params (string cls, string field)[] rows)
+        {
+            foreach (var (cls, field) in rows)
+            {
+                string note = LayoutRegistry.MovedNote(cls, field);
+                if (note.Length > 0) return "paused — " + note;
+            }
+            return "";
+        }
+        _akKillPause = Paused(("Pawn", "Health"), ("Pawn", "HealthMax"), ("Actor", "LifeSpan"), ("Pawn", "NextPawn"),
+                              ("WorldInfo", "PawnList"), ("Pawn", "PlayerReplicationInfo"));
+        _akTowerPause = Paused(("WorldInfo", "Game"), ("Actor", "LifeSpan"));
+        _akManaPause = Paused(("Pawn", "Controller"));
+        _akUnitsPause = Paused(("WorldInfo", "GRI"));
+        _akSpeedPause = Paused(("WorldInfo", "TimeDilation"));
+
+        var adopted = new List<string>();
+        int Adopt(string cls, string field, int literal, int width, ref string pause)
+        {
+            var v = LayoutRegistry.Of(cls, field);
+            if (!v.IsMoved) return literal; // Match = the same value; Unknown = today's behavior
+            int size = LayoutRegistry.ClassSize(cls);
+            if (v.Actual > 0 && (v.Actual & 3) == 0 && size > 0 && v.Actual + width <= size)
+            {
+                adopted.Add($"{cls}.{field} +0x{v.Actual:X} (was +0x{literal:X})");
+                return v.Actual;
+            }
+            if (pause.Length == 0)
+                pause = $"paused — {cls}.{field} moved and its new offset +0x{v.Actual:X} failed the sanity check";
+            return literal;
+        }
+        _offPcManaPower      = Adopt("DunDefPlayerController", "ManaPower", OFF_PC_MANAPOWER, 4, ref _akManaPause);
+        _offPcMaxManaPower   = Adopt("DunDefPlayerController", "MaxManaPower", OFF_PC_MAXMANAPOWER, 4, ref _akManaPause);
+        // 8: the engine stores MaxTowerUnits in an 8-byte slot (see OFF_GRI_MAXTOWERUNITS).
+        _offGriMaxTowerUnits = Adopt("DunDefGameReplicationInfo", "MaxTowerUnits", OFF_GRI_MAXTOWERUNITS, 8, ref _akUnitsPause);
+        _offGameTargetable   = Adopt("Main", "TargetableActors", OFF_GAME_TARGETABLE, 12, ref _akTowerPause);
+        _offDdtTargetingTeam = Adopt("DunDefDamageableTarget", "TargetingTeam", OFF_DDT_TARGETING_TEAM, 4, ref _akTowerPause);
+
+        bool verified = LayoutRegistry.Of("DunDefPlayerController", "ManaPower").Kind != LayoutRegistry.Kind.Unknown;
+        _akLayoutSource = (verified ? "verified by name" : "compiled literals (" + LayoutRegistry.Of("DunDefPlayerController", "ManaPower").Reason + ")") +
+            $" — mana +0x{_offPcManaPower:X}/+0x{_offPcMaxManaPower:X}, units +0x{_offGriMaxTowerUnits:X}, " +
+            $"targetable +0x{_offGameTargetable:X}, team +0x{_offDdtTargetingTeam:X}" +
+            (adopted.Count > 0 ? "; adopted " + string.Join(", ", adopted) : "");
+        Base.LogEvent("AKLayout: " + _akLayoutSource);
+        foreach (var (name, pause) in new[] { ("Auto-Kill", _akKillPause), ("enemy towers", _akTowerPause),
+                                              ("Mana", _akManaPause), ("Max Tower Units", _akUnitsPause), ("game speed", _akSpeedPause) })
+            if (pause.Length > 0) Base.LogEvent($"AKLayout: {name} {pause}");
+    }
+
+    private string AkPauseSummary()
+    {
+        int n = new[] { _akKillPause, _akTowerPause, _akManaPause, _akUnitsPause, _akSpeedPause }.Count(s => s.Length > 0);
+        return n == 0 ? "" : $" · layout: {n} paused";
+    }
+
     // Accumulated across ticks within one session. Cleared whenever Auto-Kill
     // is toggled off → on (so a stale class from a crashed session doesn't
     // persist). Never shrinks otherwise — DD1 UClass pointers are stable
@@ -2345,6 +2518,7 @@ public partial class MainWindow : Window
         if (pid == 0) return IntPtr.Zero;
         _akHandle = OpenProcess2(0x1F0FFF, false, pid); // PROCESS_ALL_ACCESS
         _akTargetPid = pid;
+        if (_akHandle != IntPtr.Zero) Base.LogGameAttach(pid); // once per pid; exe file only
         return _akHandle;
     }
 
@@ -2527,6 +2701,7 @@ public partial class MainWindow : Window
     // none). A miss backs off for 2 s: during a loading screen no world is
     // live, and re-walking 250k objects every 100 ms tick would be waste.
     private DateTime _objWorldRetryAfterUtc = DateTime.MinValue;
+    private int _objWorldLogged; // last WorldInfo logged (ObjWorld line dedupe)
 
     private int FindWorldInfoViaObjectList()
     {
@@ -2565,7 +2740,14 @@ public partial class MainWindow : Window
                 Base.Log("ObjWorld: no live WorldInfo in the object list (" + GameReflection.ObjectListStatus + ")");
                 return 0;
             }
-            Base.LogEvent($"ObjWorld: WorldInfo 0x{best:X8} via object list ({bestPawns} pawns) '{GameReflection.ObjectPath(best)}'");
+            // Logged only when the answer changes: during a wave the cached
+            // WorldInfo is re-validated away as pawns die, so this re-runs
+            // every tick and used to log the same world ~10x a second.
+            if (best != _objWorldLogged)
+            {
+                _objWorldLogged = best;
+                Base.LogEvent($"ObjWorld: WorldInfo 0x{best:X8} via object list ({bestPawns} pawns) '{GameReflection.ObjectPath(best)}'");
+            }
             return best;
         }
         catch

@@ -293,7 +293,7 @@ public partial class ForgeViewerView : UserControl
 
         if (mode == SourceMode.Hero || mode == SourceMode.All)
             foreach (int hero in GameChain.ReadActiveHeroes(heroMgr)) // ActiveHeroes (self-healing offset)
-                foreach (int he in ReadPtrArray(hero + 0x5B0))     // UDunDefHero.HeroEquipments
+                foreach (int he in ReadPtrArray(hero + HeroFields.Of(hero).Equipments))
                 {
                     int addr = he + 0x38;
                     en.Addresses.Add(addr);
@@ -745,8 +745,11 @@ public partial class ForgeViewerView : UserControl
         var names = new Dictionary<int, string>();
         if (!IsGamePtr(heroMgr)) return names;
 
-        int dataPtr = RdPtr(heroMgr + 0x98);   // ItemFolders TArray.Data
-        int num     = RdInt(heroMgr + 0x9C);   // ItemFolders TArray.Num
+        // ItemFolders by name; 0x98 (live-verified) when the reader isn't trusted.
+        int folders = GameReflection.FieldOffset(heroMgr, "ItemFolders");
+        if (folders <= 0) folders = 0x98;
+        int dataPtr = RdPtr(heroMgr + folders);       // ItemFolders TArray.Data
+        int num     = RdInt(heroMgr + folders + 4);   // ItemFolders TArray.Num
         if (!IsGamePtr(dataPtr) || num <= 0 || num > 100000) return names;
 
         const int Stride = 24;                 // sizeof(FItemFolder)

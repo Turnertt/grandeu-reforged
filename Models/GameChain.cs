@@ -74,6 +74,9 @@ internal static class GameChain
         int hop = vp != 0 ? GameReflection.FieldOffset(vp, "TheHeroManager") : -1;
         if (hop > 0 && RdPtr(vp + hop) == hm && hop != HeroManagerOffset) Tunables.PinHeroManagerOffset(hop);
         Base.Log($"Chain: HeroManager 0x{hm:X8} via object list (hop {(hop > 0 ? $"+0x{hop:X}" : "unknown")})");
+        // Every caller is a worker (Forge / Hero scans, pickers, COPY REPORT)
+        // that just walked the object list: check the layout once per attach.
+        LayoutRegistry.Ensure();
         return hm;
     }
 

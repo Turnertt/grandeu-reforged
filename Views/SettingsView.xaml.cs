@@ -89,7 +89,8 @@ public partial class SettingsView : UserControl
         try
         {
             var fi = new System.IO.FileInfo(Base.LogPath);
-            TxtStatusLog.Text = fi.Exists ? FormatSize(fi.Length) + " this session" : "Empty so far";
+            TxtStatusLog.Text = (fi.Exists ? FormatSize(fi.Length) + " this session" : "Empty so far")
+                + (System.IO.File.Exists(Base.PrevLogPath) ? " · previous session kept" : "");
         }
         catch { TxtStatusLog.Text = "Empty so far"; }
     }

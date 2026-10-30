@@ -1,5 +1,5 @@
 // DD1 UE3 enum UDKGame._DataTypes.EWeaponType (uint8). This is the weapon's
-// class gate — read as a single byte at item Address + MaxCompat.WeaponTypeOffset
+// class gate — read as a single byte at item Address + DupeMemory.WeaponTypeItemOffset
 // (0x7EC), OUTSIDE the marshaled ItemNative. Display-only here.
 //
 // Observed class map is counter-intuitive (see DD1_INTERNALS.md §5):

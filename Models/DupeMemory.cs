@@ -31,7 +31,7 @@ internal sealed record DupeSourceShape(string ClassPath, string ArchetypePath, i
             if (ArchetypePath.Length > 0 && GameChain.IsGamePtr(archetype) && GameReflection.ObjectPath(archetype) == ArchetypePath) return 2;
             if (Base.Instance.ReadMemory(obj + 0xDA, 1)[0] != EquipmentType) return 0;
             if (WeaponType is int weapon && EquipmentType == (int)global::EquipmentType.Weapon &&
-                Base.Instance.ReadMemory(obj + DupeMemory.WeaponTypeObjectOffset, 1)[0] != weapon) return 0;
+                Base.Instance.ReadMemory(obj + DupeMemory.WeaponTypeOffset(obj), 1)[0] != weapon) return 0;
             return 1;
         }
         catch { return 0; }
@@ -41,6 +41,17 @@ internal sealed record DupeSourceShape(string ClassPath, string ArchetypePath, i
 internal static class DupeMemory
 {
     public const int WeaponTypeObjectOffset = 0x824; // UHeroEquipment.weaponType (EWeaponType)
+
+    // UHeroEquipment.weaponType by name; WeaponTypeObjectOffset (live-verified,
+    // DD1_INTERNALS §8b) when the reader isn't trusted this attach.
+    public static int WeaponTypeOffset(int obj)
+    {
+        int o = GameReflection.FieldOffset(obj, "weaponType");
+        return o > 0 ? o : WeaponTypeObjectOffset;
+    }
+
+    // The same byte relative to the item (ItemNative) address = object + 0x38.
+    public static int WeaponTypeItemOffset(int item) => WeaponTypeOffset(unchecked(item - 0x38)) - 0x38;
 
     public static bool IsObject(int p)
     {
