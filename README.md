@@ -127,8 +127,6 @@ build-portable.ps1    Self-contained portable build (x86; -Arm64 switch)
 ## Credits
 
 - The original **Grandeu** author, whose decompiled WinForms tool was the structural starting point for this rewrite.
-- The **DD_ModMenu** project, for documenting offsets and reverse-engineering work that informed the auto-kill and enemy-tower logic.
-- The **Dungeon Defenders modding community**, for years of reverse-engineering work on UE3 struct layouts and item internals.
 
 ## Which download do I need?
 
